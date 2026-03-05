@@ -15,12 +15,16 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Footer, Header, Input, Static
+from textual.widgets import Collapsible, Footer, Header, Input, Static
 
 from worker_ai.models import Role
 from worker_core.agent import AgentEventType, AgentSession
+from worker_core.cmux import is_cmux
+import worker_core.cmux as cmux
 from worker_core.config import load_config, resolve_model
+from worker_core.prompts import load_prompts, render_prompt
 from worker_core.sessions import SessionStore
+from worker_core.skills import inject_skill, list_skills, load_skills
 from worker_core.tools.builtins import create_builtin_tools
 
 
@@ -79,7 +83,66 @@ class MessageWidget(Static):
         self.refresh()
 
 
-# ── Main App ──────────────────────────────────────────────────────
+class StatusFooter(Static):
+    """Custom footer showing model, tokens, cost, context %."""
+
+    DEFAULT_CSS = """
+    StatusFooter {
+        height: 1;
+        background: $surface;
+        color: $text-muted;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._model: str = ""
+        self._total_input: int = 0
+        self._total_output: int = 0
+        self._total_cost: float = 0.0
+        self._context_pct: float = 0.0
+        self._in_cmux: bool = is_cmux()
+
+    def render(self) -> Text:
+        parts: list[str] = []
+        if self._model:
+            parts.append(self._model)
+        parts.append(f"{self._total_input + self._total_output} tok")
+        if self._total_cost > 0:
+            parts.append(f"${self._total_cost:.4f}")
+        if self._context_pct > 0:
+            parts.append(f"ctx {self._context_pct:.0%}")
+        if self._in_cmux:
+            parts.append("cmux")
+        return Text(" \u2502 ".join(parts))
+
+    def update_usage(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        input_price: float = 0.0,
+        output_price: float = 0.0,
+    ) -> None:
+        self._total_input += input_tokens
+        self._total_output += output_tokens
+        self._total_cost += (
+            input_tokens * input_price / 1_000_000
+            + output_tokens * output_price / 1_000_000
+        )
+        self.refresh()
+
+    def update_context_pct(self, estimated_tokens: int, context_window: int) -> None:
+        if context_window > 0:
+            self._context_pct = estimated_tokens / context_window
+        self.refresh()
+
+    def set_model(self, model: str) -> None:
+        self._model = model
+        self.refresh()
+
+
+# ── Main App ──────────────────────────────────────────────────
 
 
 class WorkerApp(App):
@@ -88,6 +151,9 @@ class WorkerApp(App):
     TITLE = "Worker"
 
     CSS = """
+    #main-content {
+        height: 1fr;
+    }
     #chat-scroll {
         height: 1fr;
     }
@@ -95,15 +161,16 @@ class WorkerApp(App):
         height: auto;
     }
     #input-bar {
-        dock: bottom;
         height: auto;
         max-height: 6;
+        margin: 0 1;
     }
     """
 
     BINDINGS = [
         Binding("ctrl+c", "quit", "Quit"),
         Binding("ctrl+l", "clear", "Clear"),
+        Binding("ctrl+o", "toggle_tools", "Toggle tools"),
     ]
 
     def __init__(
@@ -125,12 +192,20 @@ class WorkerApp(App):
         self._extensions: list[Any] = []
         self._current_widget: MessageWidget | None = None
         self._ws: Any = None  # websocket connection for remote mode
+        self._prompts: dict[str, str] = {}  # loaded prompt templates
+        self._skills: dict[str, Any] = {}  # loaded skills (Skill objects)
+        self._active_theme: str = "dark"
+        self._tool_collapsibles: list[Collapsible] = []
+        self._input_price: float = 0.0  # per 1M tokens
+        self._output_price: float = 0.0
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with VerticalScroll(id="chat-scroll"):
-            yield Vertical(id="chat-container")
-        yield Input(placeholder="Type a message... (Enter to send)", id="input-bar")
+        with Vertical(id="main-content"):
+            with VerticalScroll(id="chat-scroll"):
+                yield Vertical(id="chat-container")
+            yield Input(placeholder="Type a message... (Enter to send)", id="input-bar")
+            yield StatusFooter(id="status-footer")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -138,6 +213,20 @@ class WorkerApp(App):
             self.sub_title = f"remote: {self.remote_url}"
         else:
             await self._init_local_session()
+
+        # Apply theme from config
+        config = load_config(os.getcwd())
+        self._active_theme = config.ui.theme
+        self._apply_theme(self._active_theme)
+
+        # Load prompts and skills
+        project_dir = os.getcwd()
+        self._prompts = load_prompts(project_dir)
+        self._skills = load_skills(project_dir)
+
+        # Apply custom keybindings from config
+        for key, action in config.keybindings.bindings.items():
+            self.bind(key, action, description=action)
 
     async def _init_local_session(self) -> None:
         from worker_ai.providers import create_default_registry
@@ -214,6 +303,20 @@ class WorkerApp(App):
                     self._add_message("\U0001f4cb [Restored session]", role="tool")
 
         self.sub_title = f"{provider_name}/{model_id}"
+        self.query_one("#status-footer", StatusFooter).set_model(
+            f"{provider_name}/{model_id}"
+        )
+
+        # Try to get pricing from catalog (fire-and-forget)
+        try:
+            from worker_ai.models_catalog import ModelsCatalog
+
+            cat_model = await ModelsCatalog.get_model(provider_name, model_id)
+            if cat_model:
+                self._input_price = cat_model.input_price_per_m
+                self._output_price = cat_model.output_price_per_m
+        except Exception:
+            pass
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -222,12 +325,18 @@ class WorkerApp(App):
 
         event.input.value = ""
 
-        # Handle bash commands with "!" prefix
+        # Handle bash commands: !! = local only, ! = send output to LLM
+        if text.startswith("!!"):
+            cmd = text[2:].strip()
+            if cmd:
+                self._add_message(f"$ {cmd}", role="user")
+                self._run_bash(cmd, send_to_llm=False)
+            return
         if text.startswith("!"):
             cmd = text[1:].strip()
             if cmd:
                 self._add_message(f"$ {cmd}", role="user")
-                self._run_bash(cmd)
+                self._run_bash(cmd, send_to_llm=True)
             return
 
         # Handle slash commands
@@ -255,20 +364,29 @@ class WorkerApp(App):
         elif cmd == "/help":
             self._add_message(
                 "Commands:\n"
-                "  /model              \u2014 show current model\n"
-                "  /model <p/model>    \u2014 switch model\n"
-                "  /models             \u2014 list all available models\n"
-                "  /connect <provider> \u2014 login to a provider\n"
-                "  /resume             \u2014 list and resume a session\n"
-                "  /sessions           \u2014 list recent sessions\n"
-                "  /compact [prompt]   \u2014 compact conversation history\n"
-                "  /name <title>       \u2014 rename current session\n"
-                "  /tree               \u2014 show session message tree\n"
-                "  /fork [index]       \u2014 fork session from message index\n"
-                "  /reload             \u2014 hot-reload extensions\n"
-                "  /clear              \u2014 clear chat & start new session\n"
-                "  /quit               \u2014 exit\n"
-                "  ! <command>         \u2014 run a shell command",
+                "  /model              — show current model\n"
+                "  /model <p/model>    — switch model\n"
+                "  /models             — list all available models\n"
+                "  /connect <provider> — login to a provider\n"
+                "  /resume             — list and resume a session\n"
+                "  /sessions           — list recent sessions\n"
+                "  /compact [prompt]   — compact conversation history\n"
+                "  /name <title>       — rename current session\n"
+                "  /tree               — show session message tree\n"
+                "  /fork [index]       — fork session from message index\n"
+                "  /prompts            — list prompt templates\n"
+                "  /skill:<name>       — load a skill into session\n"
+                "  /skills             — list available skills\n"
+                "  /theme [name]       — switch theme (dark/light/monokai/dracula)\n"
+                "  /export [file]      — export session to HTML\n"
+                "  /reload             — hot-reload extensions, prompts, skills\n"
+                "  /split [dir]        — open cmux split pane (cmux only)\n"
+                "  /browser [url]      — open browser pane (cmux only)\n"
+                "  /clear              — clear chat & start new session\n"
+                "  /quit               — exit\n"
+                "  ! <command>         — run cmd & send output to LLM\n"
+                "  !! <command>        — run cmd (local only)\n"
+                "  Ctrl+O              — toggle tool output",
                 role="tool",
             )
         elif cmd == "/model":
@@ -297,12 +415,29 @@ class WorkerApp(App):
             await self._cmd_tree()
         elif cmd == "/fork":
             await self._cmd_fork(arg)
+        elif cmd == "/prompts":
+            self._cmd_prompts()
+        elif cmd.startswith("/skill:"):
+            self._cmd_skill(cmd[7:])  # strip "/skill:"
+        elif cmd == "/skills":
+            self._cmd_skills_list()
+        elif cmd == "/theme":
+            self._cmd_theme(arg)
+        elif cmd == "/export":
+            self._cmd_export(arg)
+        elif cmd == "/split":
+            await self._cmd_split(arg)
+        elif cmd == "/browser":
+            await self._cmd_browser(arg)
         elif cmd == "/reload":
             await self._cmd_reload()
         else:
-            # Check extension commands
+            # Check prompt templates as /name commands
             cmd_name = cmd.lstrip("/")
-            if self._session and cmd_name in self._session.hooks.commands:
+            if cmd_name in self._prompts:
+                self._cmd_use_prompt(cmd_name, arg)
+            # Check extension commands
+            elif self._session and cmd_name in self._session.hooks.commands:
                 handler = self._session.hooks.commands[cmd_name]
                 try:
                     result = await handler(arg)
@@ -322,24 +457,47 @@ class WorkerApp(App):
 
         widget = self._add_message("", role="assistant")
 
+        # cmux: set status to thinking
+        await cmux.set_status("state", "thinking", icon="brain", color="#89b4fa")
+
         async for event in self._session.run(text):
             if event.type == AgentEventType.TEXT_DELTA:
                 widget.append_content(event.content)
             elif event.type == AgentEventType.TOOL_CALL:
-                self._add_message(f"⚙ {event.tool_name}({', '.join(f'{k}={v!r}' for k, v in event.tool_args.items())})", role="tool")
+                tool_label = f"⚙ {event.tool_name}({', '.join(f'{k}={v!r}' for k, v in event.tool_args.items())})"
+                self._add_tool_message(tool_label)
+                # cmux: update status to tool call
+                await cmux.set_status("state", f"tool: {event.tool_name}", icon="gear", color="#f9e2af")
+                await cmux.log(f"tool: {event.tool_name}", source="worker")
             elif event.type == AgentEventType.TOOL_RESULT:
                 output = event.content[:200] + "..." if len(event.content) > 200 else event.content
-                self._add_message(f"  → {output}", role="tool")
+                self._add_tool_message(f"  → {output}")
             elif event.type == AgentEventType.ERROR:
                 self._add_message(event.error, role="error")
+                await cmux.log(event.error, level="error", source="worker")
             elif event.type == AgentEventType.COMPACT:
                 self._add_message("\U0001f4cb Session auto-compacted.", role="tool")
             elif event.type == AgentEventType.DONE:
+                footer = self.query_one("#status-footer", StatusFooter)
                 if event.usage:
-                    self._add_message(
-                        f"tokens: {event.usage.input_tokens} in / {event.usage.output_tokens} out",
-                        role="tool",
+                    footer.update_usage(
+                        event.usage.input_tokens,
+                        event.usage.output_tokens,
+                        self._input_price,
+                        self._output_price,
                     )
+                # Update context % in footer
+                if self._session:
+                    est = self._session._estimate_tokens()
+                    footer.update_context_pct(est, self._session.context_window)
+                    # cmux: update progress bar with context usage
+                    if self._session.context_window > 0:
+                        pct = est / self._session.context_window
+                        await cmux.set_progress(min(pct, 1.0), label=f"ctx {pct:.0%}")
+
+        # cmux: set status to idle, notify completion
+        await cmux.set_status("state", "idle", icon="check", color="#a6e3a1")
+        await cmux.notify("Worker", subtitle="Task complete")
 
         self._scroll_to_bottom()
 
@@ -664,8 +822,165 @@ class WorkerApp(App):
         except Exception as e:
             self._add_message(f"Fork failed: {e}", role="error")
 
+    # ── Prompt template commands ──────────────────────────────
+
+    def _cmd_prompts(self) -> None:
+        """List available prompt templates."""
+        if not self._prompts:
+            self._add_message("No prompt templates found.\n"
+                              "Place .md files in ~/.config/worker/prompts/ "
+                              "or .worker/prompts/", role="tool")
+            return
+        lines = ["Prompt templates (use /<name> [args]):"]
+        for name in sorted(self._prompts):
+            preview = self._prompts[name][:80].replace("\n", " ")
+            lines.append(f"  /{name} — {preview}…")
+        self._add_message("\n".join(lines), role="tool")
+
+    def _cmd_use_prompt(self, name: str, arg: str) -> None:
+        """Execute a prompt template by name."""
+        template = self._prompts.get(name)
+        if not template:
+            self._add_message(f"Prompt template '{name}' not found.", role="error")
+            return
+
+        # Build variables from arg (key=value pairs or just {{input}})
+        variables: dict[str, str] = {"input": arg} if arg else {}
+        if arg and "=" in arg:
+            variables = {}
+            for pair in arg.split():
+                if "=" in pair:
+                    k, _, v = pair.partition("=")
+                    variables[k] = v
+                else:
+                    variables.setdefault("input", "")
+                    variables["input"] += (" " if variables.get("input") else "") + pair
+
+        rendered = render_prompt(template, variables)
+        self._add_message(rendered, role="user")
+
+        if self.remote_url:
+            self._run_remote(rendered)
+        else:
+            self._run_local(rendered)
+
+    # ── Skills commands ─────────────────────────────────────
+
+    def _cmd_skills_list(self) -> None:
+        """List available skills."""
+        if not self._skills:
+            self._add_message("No skills found.\n"
+                              "Place .md files in ~/.config/worker/skills/ "
+                              "or .worker/skills/", role="tool")
+            return
+        lines = ["Available skills (use /skill:<name> to load):"]
+        for sk in sorted(self._skills.values(), key=lambda s: s.name):
+            desc = f" — {sk.description}" if sk.description else ""
+            lines.append(f"  {sk.name}{desc}")
+        self._add_message("\n".join(lines), role="tool")
+
+    def _cmd_skill(self, name: str) -> None:
+        """Load a skill into the current session's system prompt."""
+        if not self._session:
+            self._add_message("No active session.", role="error")
+            return
+
+        skill = self._skills.get(name)
+        if not skill:
+            available = ", ".join(sorted(self._skills)) or "none"
+            self._add_message(
+                f"Skill '{name}' not found. Available: {available}", role="error",
+            )
+            return
+
+        # Inject into system prompt
+        self._session.system_prompt = inject_skill(
+            self._session.system_prompt, skill,
+        )
+        self._session.messages[0].content = self._session.system_prompt
+        self._add_message(
+            f"Skill '{name}' loaded into session.", role="tool",
+        )
+
+    # ── Theme commands ──────────────────────────────────────
+
+    def _cmd_theme(self, name: str) -> None:
+        """Switch or list themes."""
+        from worker_tui.themes import list_themes, load_themes
+
+        themes = load_themes(os.getcwd())
+
+        if not name:
+            available = ", ".join(sorted(themes))
+            self._add_message(
+                f"Current theme: {self._active_theme}\n"
+                f"Available: {available}\n"
+                f"Usage: /theme <name>",
+                role="tool",
+            )
+            return
+
+        if name not in themes:
+            available = ", ".join(sorted(themes))
+            self._add_message(
+                f"Unknown theme '{name}'. Available: {available}", role="error",
+            )
+            return
+
+        self._apply_theme(name)
+        self._add_message(f"Theme switched to: {name}", role="tool")
+
+    def _apply_theme(self, name: str) -> None:
+        """Apply a theme's CSS to the app."""
+        from worker_tui.themes import load_themes
+
+        themes = load_themes(os.getcwd())
+        css = themes.get(name)
+        if css:
+            self.stylesheet.add_source(css, read_from=("theme", name))
+            self.stylesheet.reparse()
+            self._active_theme = name
+            self.refresh()
+
+    # ── Export command ───────────────────────────────────────
+
+    def _cmd_export(self, arg: str) -> None:
+        """Export session to HTML."""
+        from datetime import datetime
+
+        from worker_ai.models import Role
+        from worker_core.export import export_html
+
+        if not self._session:
+            self._add_message("No active session.", role="error")
+            return
+
+        messages = [
+            m for m in self._session.messages
+            if m.role in (Role.USER, Role.ASSISTANT)
+        ]
+        if not messages:
+            self._add_message("Nothing to export.", role="error")
+            return
+
+        html = export_html(
+            messages,
+            title=f"Worker — {self._session.model}",
+            model=self._session.model,
+            session_id=self._session.session_id,
+        )
+        filename = arg or f"worker-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.html"
+        try:
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(html)
+            self._add_message(f"Exported to {filename}", role="tool")
+        except OSError as e:
+            self._add_message(f"Export failed: {e}", role="error")
+
+    # ── Reload & extensions ─────────────────────────────────
+
     async def _cmd_reload(self) -> None:
-        """Hot-reload extensions."""
+        """Hot-reload extensions, prompts, and skills."""
         from worker_core.extensions import reload_extensions_async
 
         if not self._session:
@@ -681,9 +996,16 @@ class WorkerApp(App):
             tools.extend(ext.get_tools())
         self._session.tools = {t.name: t for t in tools}
 
+        # Reload prompts and skills
+        project_dir = os.getcwd()
+        self._prompts = load_prompts(project_dir)
+        self._skills = load_skills(project_dir)
+
         ext_names = [e.name for e in self._extensions if e.name]
         self._add_message(
-            f"Reloaded {len(self._extensions)} extension(s): {', '.join(ext_names) or 'none'}",
+            f"Reloaded: {len(self._extensions)} extension(s), "
+            f"{len(self._prompts)} prompt(s), "
+            f"{len(self._skills)} skill(s)",
             role="tool",
         )
 
@@ -696,8 +1018,13 @@ class WorkerApp(App):
     # ── Bash execution ────────────────────────────────────────
 
     @work(exclusive=True, thread=False)
-    async def _run_bash(self, cmd: str) -> None:
-        """Execute a shell command and display the output."""
+    async def _run_bash(self, cmd: str, send_to_llm: bool = False) -> None:
+        """Execute a shell command and display the output.
+
+        If *send_to_llm* is True (``!`` prefix), the output is also
+        forwarded to the LLM as a user message.  ``!!`` prefix keeps
+        the output local only.
+        """
         try:
             proc = await asyncio.create_subprocess_shell(
                 cmd,
@@ -714,11 +1041,39 @@ class WorkerApp(App):
                 self._add_message(output, role="tool")
             if proc.returncode != 0:
                 self._add_message(f"exit code: {proc.returncode}", role="error")
+
+            # Forward output to LLM if requested
+            if send_to_llm and output and self._session:
+                llm_text = f"Output of `{cmd}`:\n```\n{output}\n```"
+                self._add_message(llm_text, role="user")
+                if self.remote_url:
+                    self._run_remote(llm_text)
+                else:
+                    self._run_local(llm_text)
         except Exception as e:
             self._add_message(f"Command failed: {e}", role="error")
         self._scroll_to_bottom()
 
-    # ── Helpers ────────────────────────────────────────────────────
+    # ── cmux commands ────────────────────────────────────────
+
+    async def _cmd_split(self, arg: str) -> None:
+        """Open a cmux split pane."""
+        if not is_cmux():
+            self._add_message("Not running in cmux.", role="error")
+            return
+        direction = arg if arg in ("left", "right", "up", "down") else "right"
+        result = await cmux.new_split(direction)  # type: ignore[arg-type]
+        self._add_message(f"Split pane opened: {result or direction}", role="tool")
+
+    async def _cmd_browser(self, arg: str) -> None:
+        """Open a cmux browser pane."""
+        if not is_cmux():
+            self._add_message("Not running in cmux.", role="error")
+            return
+        result = await cmux.browser_open(arg)
+        self._add_message(f"Browser opened: {result or arg or '(empty)'}", role="tool")
+
+    # ── Helpers ──────────────────────────────────────────────
 
     def _add_message(self, content: str, role: str = "assistant") -> MessageWidget:
         container = self.query_one("#chat-container", Vertical)
@@ -727,13 +1082,29 @@ class WorkerApp(App):
         self._scroll_to_bottom()
         return widget
 
+    def _add_tool_message(self, content: str) -> Collapsible:
+        """Add a tool message wrapped in a collapsible container."""
+        container = self.query_one("#chat-container", Vertical)
+        widget = MessageWidget(content, role="tool")
+        collapsible = Collapsible(widget, title="⚙ tool", collapsed=False)
+        container.mount(collapsible)
+        self._tool_collapsibles.append(collapsible)
+        self._scroll_to_bottom()
+        return collapsible
+
     def _scroll_to_bottom(self) -> None:
         scroll = self.query_one("#chat-scroll", VerticalScroll)
         scroll.scroll_end(animate=False)
 
+    def action_toggle_tools(self) -> None:
+        """Ctrl+O: toggle all tool output collapsibles."""
+        for c in self._tool_collapsibles:
+            c.collapsed = not c.collapsed
+
     async def action_clear(self) -> None:
         container = self.query_one("#chat-container", Vertical)
         container.remove_children()
+        self._tool_collapsibles.clear()
         if self._session:
             new_id = str(uuid.uuid4())
             if self._store:

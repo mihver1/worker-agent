@@ -81,6 +81,12 @@ class UIConfig(BaseModel):
     render_markdown: bool = True
 
 
+class KeybindingsConfig(BaseModel):
+    """Custom keybindings — keys are Textual key strings, values are action names."""
+
+    bindings: dict[str, str] = Field(default_factory=dict)
+
+
 class WorkerConfig(BaseModel):
     agent: AgentConfig = Field(default_factory=AgentConfig)
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
@@ -89,6 +95,7 @@ class WorkerConfig(BaseModel):
     extensions: ExtensionsConfig = Field(default_factory=ExtensionsConfig)
     sessions: SessionsConfig = Field(default_factory=SessionsConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
+    keybindings: KeybindingsConfig = Field(default_factory=KeybindingsConfig)
 
 
 # ── Load config ───────────────────────────────────────────────────

@@ -25,8 +25,20 @@ from worker_core.config import (
 @click.pass_context
 def cli(ctx: click.Context, prompt: str | None, continue_session: bool, resume_id: str | None) -> None:
     """Worker — extensible Python coding agent."""
+    # Check for migrations on startup
+    from worker_core.migrations import check_and_migrate
+
+    check_and_migrate()
+
     if prompt:
-        asyncio.run(_print_mode(prompt, continue_session=continue_session, resume_id=resume_id or ""))
+        # Support piped stdin: cat file.txt | worker -p "explain this"
+        stdin_content = ""
+        if not sys.stdin.isatty():
+            stdin_content = sys.stdin.read()
+        full_prompt = prompt
+        if stdin_content:
+            full_prompt = f"{stdin_content}\n\n{prompt}"
+        asyncio.run(_print_mode(full_prompt, continue_session=continue_session, resume_id=resume_id or ""))
         return
     if ctx.invoked_subcommand is None:
         # Default: local mode (TUI + agent in-process)
@@ -193,6 +205,14 @@ def ext_search(query: str) -> None:
             click.echo(f"    install: worker ext install {m.get('repo', m['name'])}")
     except Exception as e:
         click.echo(f"Search failed: {e}", err=True)
+
+
+@cli.command()
+def rpc() -> None:
+    """Start JSON-RPC server on stdin/stdout (for embedding)."""
+    from worker_server.rpc import run_rpc
+
+    asyncio.run(run_rpc())
 
 
 @cli.command()

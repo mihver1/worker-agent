@@ -246,6 +246,8 @@ class AgentSession:
     def _build_system_prompt(custom: str, project_dir: str) -> str:
         from pathlib import Path
 
+        from worker_core.skills import build_skills_header, load_skills
+
         parts: list[str] = []
 
         # Check for SYSTEM.md override (project then global)
@@ -334,6 +336,12 @@ class AgentSession:
 
         if context_parts:
             parts.extend(context_parts)
+
+        # Inject skills headers (Claude Code style)
+        skills = load_skills(project_dir)
+        header = build_skills_header(skills)
+        if header:
+            parts.append(header)
 
         return "\n\n".join(parts)
 
