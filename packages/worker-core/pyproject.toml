@@ -1,0 +1,24 @@
+[project]
+name = "worker-core"
+version = "0.1.0"
+description = "Agent runtime — tool loop, sessions, extensions, config, permissions"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "worker-ai",
+    "pydantic>=2.0",
+    "aiosqlite>=0.20",
+    "tomli>=2.0; python_version < '3.11'",
+    "tomli-w>=1.0",
+    "click>=8.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/worker_core"]
+
+[tool.uv.sources]
+worker-ai = { workspace = true }

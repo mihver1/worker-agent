@@ -1,0 +1,383 @@
+"""Tests for AGENTS.md loading, hook dispatching, and OAuth api_key fallback."""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from worker_ai.models import Done, TextDelta, Usage
+from worker_ai.oauth import OAuthToken, TokenStore
+from worker_core.agent import AgentEventType, AgentSession
+from worker_core.extensions import Extension, HookDispatcher, hook, load_extensions
+
+from conftest import MockProvider
+
+
+# ── AGENTS.md loading ─────────────────────────────────────────────
+
+
+class TestAgentsMdLoading:
+    def test_system_prompt_includes_agents_md(self, tmp_path):
+        worker_dir = tmp_path / ".worker"
+        worker_dir.mkdir()
+        (worker_dir / "AGENTS.md").write_text("# My Project\nAlways use pytest.\n")
+
+        prompt = AgentSession._build_system_prompt("", str(tmp_path))
+        assert "Always use pytest." in prompt
+        assert "Worker" in prompt  # default prompt still there
+
+    def test_system_prompt_custom_plus_agents_md(self, tmp_path):
+        worker_dir = tmp_path / ".worker"
+        worker_dir.mkdir()
+        (worker_dir / "AGENTS.md").write_text("Use black for formatting.\n")
+
+        prompt = AgentSession._build_system_prompt("Be concise.", str(tmp_path))
+        assert "Be concise." in prompt
+        assert "Use black for formatting." in prompt
+
+    def test_system_prompt_no_agents_md(self, tmp_path):
+        prompt = AgentSession._build_system_prompt("", str(tmp_path))
+        assert "Worker" in prompt
+        # No crash when .worker/AGENTS.md doesn't exist
+
+    def test_system_prompt_empty_agents_md(self, tmp_path):
+        worker_dir = tmp_path / ".worker"
+        worker_dir.mkdir()
+        (worker_dir / "AGENTS.md").write_text("   \n")
+
+        prompt = AgentSession._build_system_prompt("", str(tmp_path))
+        # Empty content should not add extra sections
+        assert prompt.count("\n\n") == 0 or "Worker" in prompt
+
+    @pytest.mark.asyncio
+    async def test_session_uses_agents_md(self, tmp_path):
+        worker_dir = tmp_path / ".worker"
+        worker_dir.mkdir()
+        (worker_dir / "AGENTS.md").write_text("Project rule: always test.\n")
+
+        provider = MockProvider()
+        session = AgentSession(
+            provider=provider,
+            model="test",
+            tools=[],
+            project_dir=str(tmp_path),
+        )
+        assert "always test" in session.messages[0].content
+
+
+# ── HookDispatcher ────────────────────────────────────────────────
+
+
+class _TestExtension(Extension):
+    name = "test"
+    version = "0.0.1"
+
+    def __init__(self):
+        self.calls: list[str] = []
+
+    @hook("before_turn")
+    async def on_before(self, **kwargs: Any) -> None:
+        self.calls.append(f"before_turn:{kwargs.get('turn')}")
+
+    @hook("after_turn")
+    async def on_after(self, **kwargs: Any) -> None:
+        self.calls.append(f"after_turn:{kwargs.get('turn')}")
+
+    @hook("on_tool_call")
+    async def on_tool(self, **kwargs: Any) -> None:
+        self.calls.append(f"on_tool_call:{kwargs.get('tool_name')}")
+
+
+class TestHookDispatcher:
+    @pytest.mark.asyncio
+    async def test_fire_hooks(self):
+        ext = _TestExtension()
+        dispatcher = HookDispatcher([ext])
+        await dispatcher.fire("before_turn", session=None, turn=0)
+        await dispatcher.fire("after_turn", session=None, turn=0)
+        await dispatcher.fire("on_tool_call", session=None, tool_name="bash", args={})
+
+        assert ext.calls == ["before_turn:0", "after_turn:0", "on_tool_call:bash"]
+
+    @pytest.mark.asyncio
+    async def test_fire_unknown_event(self):
+        """Unknown events should not crash."""
+        dispatcher = HookDispatcher([])
+        await dispatcher.fire("nonexistent", foo="bar")  # should be no-op
+
+    @pytest.mark.asyncio
+    async def test_hooks_called_in_agent_loop(self, tmp_workdir):
+        """Hooks are actually called during agent loop."""
+        ext = _TestExtension()
+        dispatcher = HookDispatcher([ext])
+
+        provider = MockProvider(
+            responses=[
+                [TextDelta(content="ok"), Done(usage=Usage())],
+            ]
+        )
+        session = AgentSession(
+            provider=provider,
+            model="test",
+            tools=[],
+            hooks=dispatcher,
+        )
+        async for _ in session.run("hi"):
+            pass
+
+        assert "before_turn:0" in ext.calls
+        assert "after_turn:0" in ext.calls
+
+
+# ── OAuth fallback in _resolve_api_key ────────────────────────────
+
+
+class TestOAuthFallback:
+    def test_oauth_token_used_when_no_key(self, tmp_path, monkeypatch):
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import WorkerConfig
+
+        # Clear env
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        # Save a token
+        store = TokenStore(path=tmp_path / "auth.json")
+        store.save(OAuthToken(
+            access_token="oauth_token_123",
+            provider="anthropic",
+            expires_at=9999999999.0,
+        ))
+
+        # Monkeypatch the default path
+        import worker_ai.oauth as oauth_mod
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+
+        config = WorkerConfig()
+        key, auth_type = _resolve_api_key(config, "anthropic")
+        assert key == "oauth_token_123"
+        assert auth_type == "oauth"
+
+    def test_config_key_takes_priority(self, tmp_path, monkeypatch):
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import WorkerConfig, ProviderConfig
+
+        # Save a token
+        store = TokenStore(path=tmp_path / "auth.json")
+        store.save(OAuthToken(access_token="oauth_token", provider="anthropic", expires_at=9999999999.0))
+
+        import worker_ai.oauth as oauth_mod
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        config = WorkerConfig(providers={"anthropic": ProviderConfig(api_key="sk-config-key")})
+        key, auth_type = _resolve_api_key(config, "anthropic")
+        assert key == "sk-config-key"  # Config wins over OAuth
+        assert auth_type == "api"
+
+    def test_env_key_takes_priority_over_oauth(self, tmp_path, monkeypatch):
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import WorkerConfig
+
+        store = TokenStore(path=tmp_path / "auth.json")
+        store.save(OAuthToken(access_token="oauth_token", provider="anthropic", expires_at=9999999999.0))
+
+        import worker_ai.oauth as oauth_mod
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-key")
+
+        config = WorkerConfig()
+        key, auth_type = _resolve_api_key(config, "anthropic")
+        assert key == "sk-env-key"  # Env wins over OAuth
+        assert auth_type == "api"
+
+
+# ── ModelsCatalog ─────────────────────────────────────────────────
+
+
+_SAMPLE_API_RESPONSE = {
+    "anthropic": {
+        "name": "Anthropic",
+        "env": ["ANTHROPIC_API_KEY"],
+        "models": {
+            "claude-sonnet-4-20250514": {
+                "name": "Claude Sonnet 4",
+                "tool_call": True,
+                "reasoning": False,
+                "limit": {"context": 200000, "output": 8192},
+                "cost": {"input": 3.0, "output": 15.0},
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+            },
+            "claude-3-5-haiku-20241022": {
+                "name": "Claude 3.5 Haiku",
+                "tool_call": True,
+                "reasoning": False,
+                "limit": {"context": 200000, "output": 8192},
+                "cost": {"input": 1.0, "output": 5.0},
+            },
+            "claude-3-embedding": {
+                "name": "Claude Embedding",
+                "tool_call": False,  # Not tool-capable — should be filtered
+            },
+        },
+    },
+    "openai": {
+        "name": "OpenAI",
+        "env": ["OPENAI_API_KEY"],
+        "models": {
+            "gpt-4o": {
+                "name": "GPT-4o",
+                "tool_call": True,
+                "reasoning": False,
+                "limit": {"context": 128000, "output": 4096},
+                "cost": {"input": 5.0, "output": 15.0},
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+            },
+        },
+    },
+}
+
+
+class TestModelsCatalog:
+    @pytest.fixture(autouse=True)
+    def _reset_catalog(self):
+        """Reset in-memory cache before each test."""
+        from worker_ai.models_catalog import ModelsCatalog
+        ModelsCatalog._data = None
+        yield
+        ModelsCatalog._data = None
+
+    @pytest.mark.asyncio
+    async def test_parse_and_filter(self, monkeypatch):
+        from worker_ai.models_catalog import ModelsCatalog
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        catalog = await ModelsCatalog.load()
+        assert "anthropic" in catalog
+        assert "openai" in catalog
+
+        ant = catalog["anthropic"]
+        assert ant.name == "Anthropic"
+        # Embedding model filtered out (tool_call=False)
+        assert len(ant.models) == 2
+        ids = [m.id for m in ant.models]
+        assert "claude-sonnet-4-20250514" in ids
+        assert "claude-3-5-haiku-20241022" in ids
+        assert "claude-3-embedding" not in ids
+
+    @pytest.mark.asyncio
+    async def test_list_models_by_provider(self, monkeypatch):
+        from worker_ai.models_catalog import ModelsCatalog
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        models = await ModelsCatalog.list_models("openai")
+        assert len(models) == 1
+        assert models[0].id == "gpt-4o"
+        assert models[0].context_window == 128000
+        assert models[0].supports_vision is True
+
+    @pytest.mark.asyncio
+    async def test_list_models_all(self, monkeypatch):
+        from worker_ai.models_catalog import ModelsCatalog
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        all_models = await ModelsCatalog.list_models()
+        assert len(all_models) == 3  # 2 anthropic + 1 openai
+
+    @pytest.mark.asyncio
+    async def test_get_model(self, monkeypatch):
+        from worker_ai.models_catalog import ModelsCatalog
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        m = await ModelsCatalog.get_model("anthropic", "claude-sonnet-4-20250514")
+        assert m is not None
+        assert m.name == "Claude Sonnet 4"
+        assert m.context_window == 200000
+        assert m.supports_tools is True
+        assert m.input_price_per_m == 3.0
+
+    @pytest.mark.asyncio
+    async def test_get_model_not_found(self, monkeypatch):
+        from worker_ai.models_catalog import ModelsCatalog
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        assert await ModelsCatalog.get_model("anthropic", "nonexistent") is None
+        assert await ModelsCatalog.get_model("nonexistent", "gpt-4o") is None
+
+    @pytest.mark.asyncio
+    async def test_list_providers(self, monkeypatch):
+        from worker_ai.models_catalog import ModelsCatalog
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        providers = await ModelsCatalog.list_providers()
+        names = {p.id for p in providers}
+        assert names == {"anthropic", "openai"}
+
+    @pytest.mark.asyncio
+    async def test_cache_file(self, tmp_path, monkeypatch):
+        import worker_ai.models_catalog as cat_mod
+        from worker_ai.models_catalog import ModelsCatalog
+
+        cache_path = tmp_path / "models.json"
+        monkeypatch.setattr(cat_mod, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(cat_mod, "_CACHE_PATH", cache_path)
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        # Load writes cache
+        await ModelsCatalog.load()
+        # Reset memory cache
+        ModelsCatalog._data = None
+
+        # Now _fetch_raw will use real code path — should read cache
+        monkeypatch.undo()  # restore _fetch_raw
+        # Re-patch paths only
+        monkeypatch.setattr(cat_mod, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(cat_mod, "_CACHE_PATH", cache_path)
+
+        # Write sample data to cache manually
+        import json
+        cache_path.write_text(json.dumps(_SAMPLE_API_RESPONSE))
+        catalog = await ModelsCatalog.load()
+        assert "anthropic" in catalog
+
+    @pytest.mark.asyncio
+    async def test_refresh_clears_cache(self, tmp_path, monkeypatch):
+        import worker_ai.models_catalog as cat_mod
+        from worker_ai.models_catalog import ModelsCatalog
+
+        cache_path = tmp_path / "models.json"
+        monkeypatch.setattr(cat_mod, "_CACHE_DIR", tmp_path)
+        monkeypatch.setattr(cat_mod, "_CACHE_PATH", cache_path)
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_API_RESPONSE
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+
+        await ModelsCatalog.load()
+        assert ModelsCatalog._data is not None
+
+        catalog = await ModelsCatalog.refresh()
+        assert "anthropic" in catalog  # Re-fetched

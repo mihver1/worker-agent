@@ -1,0 +1,22 @@
+[project]
+name = "worker-tui"
+version = "0.1.0"
+description = "Terminal UI client for Worker agent"
+requires-python = ">=3.12"
+license = "MIT"
+dependencies = [
+    "worker-core",
+    "websockets>=14.0",
+    "textual>=1.0",
+    "rich>=13.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/worker_tui"]
+
+[tool.uv.sources]
+worker-core = { workspace = true }
