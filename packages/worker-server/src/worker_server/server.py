@@ -174,12 +174,22 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
 # ── Server entrypoint ─────────────────────────────────────────────
 
 
-async def run_server(host: str = "0.0.0.0", port: int = 7432, auth_token: str = "") -> None:
-    """Start WebSocket + REST server."""
+async def run_server(
+    host: str | None = None, port: int | None = None, auth_token: str = "",
+) -> None:
+    """Start WebSocket + REST server.
+
+    *host* and *port* override ``config.server.host`` / ``config.server.port``.
+    If not provided, values from the loaded config are used.
+    """
     from aiohttp import web
 
     config = load_config(os.getcwd())
     state = ServerState(config=config)
+
+    # Use explicit args → config → defaults
+    host = host or config.server.host
+    port = port if port is not None else config.server.port
 
     token = auth_token or config.server.auth_token
     if not token:

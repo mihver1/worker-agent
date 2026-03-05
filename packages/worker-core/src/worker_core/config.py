@@ -31,6 +31,7 @@ class AgentConfig(BaseModel):
     temperature: float = 0.0
     max_turns: int = 50
     system_prompt: str = ""
+    thinking: str = "off"  # off | minimal | low | medium | high | xhigh
 
 
 class ProviderConfig(BaseModel):
@@ -51,7 +52,7 @@ class PermissionsConfig(BaseModel):
 
 
 class ServerConfig(BaseModel):
-    host: str = "0.0.0.0"
+    host: str = "127.0.0.1"
     port: int = 7432
     auth_token: str = ""
     tls_cert: str = ""
@@ -174,7 +175,14 @@ model = "anthropic/claude-sonnet-4-20250514"
 # Можно также использовать .worker/AGENTS.md в проекте
 # system_prompt = "You are a senior Python developer."
 
-# ── Провайдеры ────────────────────────────────────────────────
+# Extended thinking / reasoning
+# off — отключено
+# minimal | low | medium | high | xhigh — уровни бюджета
+# Anthropic: budget_tokens (1024..16384)
+# OpenAI o-series: reasoning_effort (low/medium/high)
+# thinking = "off"
+
+# ── Провайдеры
 # Каждый провайдер — отдельная секция [providers.<name>]
 # type: anthropic | openai | openai_compat | kimi | google
 #       | bedrock | azure_openai | ollama | huggingface

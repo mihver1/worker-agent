@@ -307,6 +307,7 @@ async def _print_mode(
         project_dir=cwd,
         temperature=config.agent.temperature,
         max_turns=config.agent.max_turns,
+        thinking_level=config.agent.thinking,  # type: ignore[arg-type]
         store=store,
         session_id=session_id,
         auto_compact=config.sessions.auto_compact,
@@ -320,6 +321,8 @@ async def _print_mode(
     async for event in session.run(prompt):
         if event.type == AgentEventType.TEXT_DELTA:
             print(event.content, end="", flush=True)
+        elif event.type == AgentEventType.REASONING_DELTA:
+            print(event.content, end="", flush=True, file=sys.stderr)
         elif event.type == AgentEventType.TOOL_CALL:
             print(f"\n[tool: {event.tool_name}]", file=sys.stderr)
         elif event.type == AgentEventType.TOOL_RESULT:

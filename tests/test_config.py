@@ -114,7 +114,7 @@ class TestWorkerConfigDefaults:
     def test_all_defaults(self):
         config = WorkerConfig()
         assert config.agent.max_turns == 50
-        assert config.server.host == "0.0.0.0"
+        assert config.server.host == "127.0.0.1"
         assert config.sessions.auto_compact is True
         assert config.ui.theme == "dark"
         assert config.ui.show_cost is True

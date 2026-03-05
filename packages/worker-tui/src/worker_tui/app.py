@@ -284,6 +284,7 @@ class WorkerApp(App):
             system_prompt=config.agent.system_prompt,
             temperature=config.agent.temperature,
             max_turns=config.agent.max_turns,
+            thinking_level=config.agent.thinking,  # type: ignore[arg-type]
             store=self._store,
             session_id=session_id,
             auto_compact=config.sessions.auto_compact,
@@ -359,7 +360,7 @@ class WorkerApp(App):
         if cmd == "/clear":
             await self.action_clear()
         elif cmd == "/quit":
-            await self._close_store()
+            await self._cleanup()
             self.exit()
         elif cmd == "/help":
             self._add_message(
@@ -377,6 +378,7 @@ class WorkerApp(App):
                 "  /prompts            — list prompt templates\n"
                 "  /skill:<name>       — load a skill into session\n"
                 "  /skills             — list available skills\n"
+                "  /thinking [level]   — set thinking (off/minimal/low/medium/high/xhigh)\n"
                 "  /theme [name]       — switch theme (dark/light/monokai/dracula)\n"
                 "  /export [file]      — export session to HTML\n"
                 "  /reload             — hot-reload extensions, prompts, skills\n"
@@ -423,6 +425,8 @@ class WorkerApp(App):
             self._cmd_skills_list()
         elif cmd == "/theme":
             self._cmd_theme(arg)
+        elif cmd == "/thinking":
+            self._cmd_thinking(arg)
         elif cmd == "/export":
             self._cmd_export(arg)
         elif cmd == "/split":
@@ -455,28 +459,53 @@ class WorkerApp(App):
             self._add_message("Session not initialized.", role="error")
             return
 
-        widget = self._add_message("", role="assistant")
+        widget: MessageWidget | None = None
+        reasoning_widget: MessageWidget | None = None
+        had_tool_calls = False
 
         # cmux: set status to thinking
         await cmux.set_status("state", "thinking", icon="brain", color="#89b4fa")
 
         async for event in self._session.run(text):
-            if event.type == AgentEventType.TEXT_DELTA:
+            if event.type == AgentEventType.REASONING_DELTA:
+                # Show thinking in a collapsible block
+                if reasoning_widget is None:
+                    reasoning_widget = MessageWidget("", role="reasoning")
+                    container = self.query_one("#chat-container", Vertical)
+                    collapsible = Collapsible(
+                        reasoning_widget, title="💡 thinking", collapsed=True,
+                    )
+                    container.mount(collapsible)
+                    self._tool_collapsibles.append(collapsible)
+                reasoning_widget.append_content(event.content)
+
+            elif event.type == AgentEventType.TEXT_DELTA:
+                # After tool calls, create a new widget so text appears AFTER tools
+                if widget is None or had_tool_calls:
+                    widget = self._add_message("", role="assistant")
+                    had_tool_calls = False
+                    reasoning_widget = None  # reset for next turn
                 widget.append_content(event.content)
+
             elif event.type == AgentEventType.TOOL_CALL:
+                had_tool_calls = True
                 tool_label = f"⚙ {event.tool_name}({', '.join(f'{k}={v!r}' for k, v in event.tool_args.items())})"
                 self._add_tool_message(tool_label)
                 # cmux: update status to tool call
                 await cmux.set_status("state", f"tool: {event.tool_name}", icon="gear", color="#f9e2af")
                 await cmux.log(f"tool: {event.tool_name}", source="worker")
+
             elif event.type == AgentEventType.TOOL_RESULT:
                 output = event.content[:200] + "..." if len(event.content) > 200 else event.content
                 self._add_tool_message(f"  → {output}")
+
             elif event.type == AgentEventType.ERROR:
                 self._add_message(event.error, role="error")
                 await cmux.log(event.error, level="error", source="worker")
+
             elif event.type == AgentEventType.COMPACT:
                 self._add_message("\U0001f4cb Session auto-compacted.", role="tool")
+
             elif event.type == AgentEventType.DONE:
                 footer = self.query_one("#status-footer", StatusFooter)
                 if event.usage:
@@ -902,7 +931,33 @@ class WorkerApp(App):
             f"Skill '{name}' loaded into session.", role="tool",
         )
 
-    # ── Theme commands ──────────────────────────────────────
+    # ── Thinking command ──────────────────────────────────────────
+
+    def _cmd_thinking(self, arg: str) -> None:
+        """Set or show thinking level."""
+        valid = ("off", "minimal", "low", "medium", "high", "xhigh")
+        if not self._session:
+            self._add_message("No active session.", role="error")
+            return
+        if not arg:
+            self._add_message(
+                f"Current thinking level: {self._session.thinking_level}\n"
+                f"Available: {', '.join(valid)}\n"
+                f"Usage: /thinking <level>",
+                role="tool",
+            )
+            return
+        level = arg.strip().lower()
+        if level not in valid:
+            self._add_message(
+                f"Invalid level '{level}'. Available: {', '.join(valid)}",
+                role="error",
+            )
+            return
+        self._session.thinking_level = level  # type: ignore[assignment]
+        self._add_message(f"Thinking level set to: {level}", role="tool")
+
+    # ── Theme commands ────────────────────────────────────────────
 
     def _cmd_theme(self, name: str) -> None:
         """Switch or list themes."""
@@ -1100,6 +1155,26 @@ class WorkerApp(App):
         """Ctrl+O: toggle all tool output collapsibles."""
         for c in self._tool_collapsibles:
             c.collapsed = not c.collapsed
+
+    async def action_quit(self) -> None:
+        """Override default quit to clean up async resources."""
+        await self._cleanup()
+        self.exit()
+
+    async def _cleanup(self) -> None:
+        """Close all open async resources."""
+        await self._close_store()
+        if self._session and self._session.provider:
+            try:
+                await self._session.provider.close()
+            except Exception:
+                pass
+        if self._ws:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
 
     async def action_clear(self) -> None:
         container = self.query_one("#chat-container", Vertical)
