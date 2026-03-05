@@ -124,6 +124,7 @@ class GoogleProvider(Provider):
         tools: list[ToolDef] | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        thinking_level: str = "off",
     ) -> AsyncIterator[StreamEvent]:
         system, contents = _build_contents(messages)
 
@@ -131,6 +132,15 @@ class GoogleProvider(Provider):
             "contents": contents,
             "generationConfig": {"temperature": temperature},
         }
+        # Google thinking config
+        if thinking_level != "off":
+            budget_map = {
+                "minimal": 1024, "low": 2048, "medium": 4096,
+                "high": 8192, "xhigh": 16384,
+            }
+            body["generationConfig"]["thinkingConfig"] = {
+                "thinkingBudget": budget_map.get(thinking_level, 4096)
+            }
         if system:
             body["systemInstruction"] = {"parts": [{"text": system}]}
         if max_tokens:

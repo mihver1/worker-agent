@@ -27,6 +27,7 @@ class Provider(ABC):
         tools: list[ToolDef] | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        thinking_level: str = "off",
     ) -> AsyncIterator[StreamEvent]:
         """Stream a chat completion from the provider."""
         ...  # pragma: no cover

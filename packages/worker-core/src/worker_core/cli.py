@@ -20,17 +20,19 @@ from worker_core.config import (
 
 @click.group(invoke_without_command=True)
 @click.option("-p", "--prompt", default=None, help="One-shot prompt (print mode)")
+@click.option("-c", "--continue", "continue_session", is_flag=True, help="Continue the most recent session")
+@click.option("-r", "--resume", "resume_id", default=None, help="Resume a specific session by ID")
 @click.pass_context
-def cli(ctx: click.Context, prompt: str | None) -> None:
+def cli(ctx: click.Context, prompt: str | None, continue_session: bool, resume_id: str | None) -> None:
     """Worker — extensible Python coding agent."""
     if prompt:
-        asyncio.run(_print_mode(prompt))
+        asyncio.run(_print_mode(prompt, continue_session=continue_session, resume_id=resume_id or ""))
         return
     if ctx.invoked_subcommand is None:
         # Default: local mode (TUI + agent in-process)
         from worker_tui.app import run_tui
 
-        run_tui()
+        run_tui(continue_session=continue_session, resume_id=resume_id or "")
 
 
 @cli.command()
@@ -131,6 +133,39 @@ def ext_remove(name: str) -> None:
         click.echo("Error: 'uv' not found.", err=True)
 
 
+@ext.command("update")
+@click.argument("name", required=False, default=None)
+def ext_update(name: str | None) -> None:
+    """Update an extension (or all if no name given)."""
+    import subprocess
+
+    from worker_core.extensions import discover_extensions
+
+    if name:
+        click.echo(f"Updating extension '{name}'...")
+        result = subprocess.run(
+            ["uv", "pip", "install", "--upgrade", name],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            click.echo(f"Extension '{name}' updated.")
+        else:
+            click.echo(f"Update failed:\n{result.stderr}", err=True)
+    else:
+        extensions = discover_extensions()
+        if not extensions:
+            click.echo("No extensions to update.")
+            return
+        click.echo(f"Updating {len(extensions)} extension(s)...")
+        for ext_name in extensions:
+            result = subprocess.run(
+                ["uv", "pip", "install", "--upgrade", ext_name],
+                capture_output=True, text=True,
+            )
+            status = "\u2713" if result.returncode == 0 else "\u2717"
+            click.echo(f"  {status} {ext_name}")
+
+
 @ext.command("search")
 @click.argument("query")
 def ext_search(query: str) -> None:
@@ -181,10 +216,18 @@ def login(provider: str) -> None:
 # ── Print mode ────────────────────────────────────────────────────
 
 
-async def _print_mode(prompt: str) -> None:
+async def _print_mode(
+    prompt: str,
+    *,
+    continue_session: bool = False,
+    resume_id: str = "",
+) -> None:
     """One-shot prompt: run agent, print result to stdout."""
+    import uuid as _uuid
+
     from worker_ai.providers import create_default_registry
     from worker_core.agent import AgentEventType, AgentSession
+    from worker_core.sessions import SessionStore
     from worker_core.tools.builtins import create_builtin_tools
 
     config = load_config(os.getcwd())
@@ -206,6 +249,36 @@ async def _print_mode(prompt: str) -> None:
 
     cwd = os.getcwd()
     tools = create_builtin_tools(cwd)
+
+    # Load extensions
+    from worker_core.extensions import load_extensions
+
+    extensions, hooks = load_extensions()
+    for ext_ in extensions:
+        tools.extend(ext_.get_tools())
+
+    # Session store
+    store = SessionStore(config.sessions.db_path)
+    await store.open()
+
+    session_id = ""
+    prior_messages = None
+
+    if resume_id:
+        info = await store.get_session(resume_id)
+        if info:
+            session_id = info.id
+            prior_messages = await store.get_messages(session_id)
+    elif continue_session:
+        last = await store.get_last_session()
+        if last:
+            session_id = last.id
+            prior_messages = await store.get_messages(session_id)
+
+    if not session_id:
+        session_id = str(_uuid.uuid4())
+        await store.create_session(session_id, model_id)
+
     session = AgentSession(
         provider=provider,
         model=model_id,
@@ -214,7 +287,15 @@ async def _print_mode(prompt: str) -> None:
         project_dir=cwd,
         temperature=config.agent.temperature,
         max_turns=config.agent.max_turns,
+        store=store,
+        session_id=session_id,
+        auto_compact=config.sessions.auto_compact,
+        compact_threshold=config.sessions.compact_threshold,
+        hooks=hooks,
     )
+
+    if prior_messages:
+        session.messages.extend(prior_messages)
 
     async for event in session.run(prompt):
         if event.type == AgentEventType.TEXT_DELTA:
@@ -225,9 +306,12 @@ async def _print_mode(prompt: str) -> None:
             pass  # Tool results go through the agent loop
         elif event.type == AgentEventType.ERROR:
             print(f"\nError: {event.error}", file=sys.stderr)
+        elif event.type == AgentEventType.COMPACT:
+            print("\n[compacted]", file=sys.stderr)
         elif event.type == AgentEventType.DONE:
             print()  # Final newline
 
+    await store.close()
     await provider.close()
 
 

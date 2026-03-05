@@ -40,6 +40,7 @@ class MockProvider(Provider):
         tools: list[ToolDef] | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        thinking_level: str = "off",
     ) -> AsyncIterator[StreamEvent]:
         self.calls.append(
             {"model": model, "messages": messages, "tools": tools}

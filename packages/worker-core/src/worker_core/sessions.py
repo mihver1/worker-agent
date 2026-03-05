@@ -82,7 +82,7 @@ class SessionStore:
 
     async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
         cursor = await self.db.execute(
-            "SELECT id, title, model, created_at, updated_at FROM sessions ORDER BY updated_at DESC LIMIT ?",
+            "SELECT id, title, model, created_at, updated_at FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT ?",
             (limit,),
         )
         rows = await cursor.fetchall()
@@ -183,6 +183,59 @@ class SessionStore:
             (session_id, Role.SYSTEM.value, f"[Compacted history]\n{summary}", _now()),
         )
         await self.db.commit()
+
+    async def get_session(self, session_id: str) -> SessionInfo | None:
+        cursor = await self.db.execute(
+            "SELECT id, title, model, created_at, updated_at FROM sessions WHERE id = ?",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        return SessionInfo(**dict(row)) if row else None
+
+    async def get_last_session(self) -> SessionInfo | None:
+        """Return the most recently updated session, or None."""
+        sessions = await self.list_sessions(limit=1)
+        return sessions[0] if sessions else None
+
+    async def rename_session(self, session_id: str, title: str) -> None:
+        await self.db.execute(
+            "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+            (title, _now(), session_id),
+        )
+        await self.db.commit()
+
+    async def fork_session(
+        self,
+        source_id: str,
+        new_id: str,
+        title: str = "",
+        up_to_message_idx: int | None = None,
+    ) -> None:
+        """Copy messages from source session into a new session."""
+        source = await self.get_session(source_id)
+        if not source:
+            raise ValueError(f"Session '{source_id}' not found")
+
+        await self.create_session(
+            new_id, source.model, title=title or f"Fork of {source.title}",
+        )
+
+        messages = await self.get_messages(source_id)
+        if up_to_message_idx is not None:
+            messages = messages[: up_to_message_idx + 1]
+
+        for msg in messages:
+            await self.add_message(new_id, msg)
+
+    async def get_message_nodes(self, session_id: str) -> list[dict]:
+        """Get raw message rows with metadata for tree view."""
+        cursor = await self.db.execute(
+            "SELECT id, parent_id, role, content, created_at FROM messages "
+            "WHERE session_id = ? ORDER BY id ASC",
+            (session_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(r) for r in rows]
 
 
 def _now() -> str:

@@ -13,7 +13,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
-from worker_core.extensions import Extension, hook
+from worker_core.extensions import CommandHandler, Extension, hook
 from worker_core.tools import Tool
 from worker_ai.models import ToolDef, ToolParam
 
@@ -57,6 +57,15 @@ class ExampleExtension(Extension):
     def get_tools(self) -> list[Tool]:
         """Return extra tools to register with the agent."""
         return [TimestampTool()]
+
+    def get_commands(self) -> dict[str, CommandHandler]:
+        """Return slash commands."""
+        return {"time": self._cmd_time}
+
+    async def _cmd_time(self, arg: str) -> str | None:
+        """Handle /time command."""
+        fmt = arg.strip() or "%Y-%m-%d %H:%M:%S"
+        return datetime.now(timezone.utc).strftime(fmt)
 
     @hook("before_turn")
     async def log_turn_start(self, session: Any, turn: int) -> None:

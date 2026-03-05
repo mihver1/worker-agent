@@ -171,6 +171,7 @@ class AnthropicProvider(Provider):
         tools: list[ToolDef] | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        thinking_level: str = "off",
     ) -> AsyncIterator[StreamEvent]:
         system, api_msgs = _build_messages(messages)
 
@@ -181,6 +182,14 @@ class AnthropicProvider(Provider):
             "temperature": temperature,
             "stream": True,
         }
+        # Anthropic extended thinking (budget tokens)
+        if thinking_level != "off":
+            budget_map = {
+                "minimal": 1024, "low": 2048, "medium": 4096,
+                "high": 8192, "xhigh": 16384,
+            }
+            budget = budget_map.get(thinking_level, 4096)
+            body["thinking"] = {"type": "enabled", "budget_tokens": budget}
         if system:
             body["system"] = system
         if tools:

@@ -178,6 +178,7 @@ class OpenAICompatProvider(Provider):
         tools: list[ToolDef] | None = None,
         temperature: float = 0.0,
         max_tokens: int | None = None,
+        thinking_level: str = "off",
     ) -> AsyncIterator[StreamEvent]:
         api_msgs = _build_messages(messages)
 
@@ -188,6 +189,13 @@ class OpenAICompatProvider(Provider):
             "stream": True,
             "stream_options": {"include_usage": True},
         }
+        # OpenAI reasoning models: reasoning_effort
+        if thinking_level != "off":
+            effort_map = {
+                "minimal": "low", "low": "low", "medium": "medium",
+                "high": "high", "xhigh": "high",
+            }
+            body["reasoning_effort"] = effort_map.get(thinking_level, "medium")
         if max_tokens:
             body["max_tokens"] = max_tokens
         if tools:

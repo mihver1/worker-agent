@@ -233,10 +233,41 @@ class BashTool(Tool):
 
 
 def create_builtin_tools(working_dir: str = ".") -> list[Tool]:
-    """Create the 4 default built-in tools."""
+    """Create the 4 default coding tools (read, write, edit, bash)."""
     return [
         ReadTool(working_dir),
         WriteTool(working_dir),
         EditTool(working_dir),
         BashTool(working_dir),
+    ]
+
+
+def create_all_tools(working_dir: str = ".") -> list[Tool]:
+    """Create all 7 built-in tools including grep, find, ls."""
+    from worker_core.tools.find import FindTool
+    from worker_core.tools.grep import GrepTool
+    from worker_core.tools.ls import LsTool
+
+    return [
+        ReadTool(working_dir),
+        WriteTool(working_dir),
+        EditTool(working_dir),
+        BashTool(working_dir),
+        GrepTool(working_dir),
+        FindTool(working_dir),
+        LsTool(working_dir),
+    ]
+
+
+def create_readonly_tools(working_dir: str = ".") -> list[Tool]:
+    """Create read-only tools for exploration (read, grep, find, ls)."""
+    from worker_core.tools.find import FindTool
+    from worker_core.tools.grep import GrepTool
+    from worker_core.tools.ls import LsTool
+
+    return [
+        ReadTool(working_dir),
+        GrepTool(working_dir),
+        FindTool(working_dir),
+        LsTool(working_dir),
     ]

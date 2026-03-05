@@ -1,16 +1,28 @@
-"""Extension system — discovery, loading, hooks."""
+"""Extension system — discovery, loading, hooks, commands."""
 
 from __future__ import annotations
 
+import importlib
 import importlib.metadata
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from typing import Any
+
+from worker_core.tools import Tool
+
+# ── Types ─────────────────────────────────────────────────────────
+
+CommandHandler = Callable[[str], Awaitable[str | None]]
+"""Async function receiving arg string, returning optional response text."""
+
+
+# ── Base classes ──────────────────────────────────────────────────
 
 
 class Extension:
     """Base class for worker extensions.
 
-    Subclass this and declare tools/hooks via decorators.
+    Subclass this and declare tools, hooks, and commands.
     """
 
     name: str = ""
@@ -21,6 +33,18 @@ class Extension:
 
     async def on_unload(self) -> None:
         """Called when the extension is unloaded."""
+
+    def get_tools(self) -> list[Tool]:
+        """Return extra tools to register with the agent."""
+        return []
+
+    def get_commands(self) -> dict[str, CommandHandler]:
+        """Return slash commands to register in the TUI.
+
+        Keys are command names (without /), values are async handlers.
+        Example: {"mycommand": self.handle_mycommand}
+        """
+        return {}
 
 
 class TuiExtension:
@@ -48,8 +72,10 @@ class WebExtension:
 def hook(event: str) -> Callable[..., Any]:
     """Decorator to mark a method as a lifecycle hook.
 
-    Supported events: before_turn, after_turn, on_tool_call,
-    on_session_start, on_session_end, on_compaction.
+    Supported events:
+        before_turn, after_turn, on_tool_call, before_tool_call,
+        on_session_start, on_session_end, on_compaction,
+        on_message, on_error.
     """
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
@@ -85,6 +111,7 @@ class HookDispatcher:
 
     def __init__(self, extensions: list[Extension] | None = None):
         self._hooks: dict[str, list[Callable[..., Any]]] = {}
+        self._commands: dict[str, CommandHandler] = {}
         for ext in extensions or []:
             self._register(ext)
 
@@ -94,27 +121,61 @@ class HookDispatcher:
             if callable(method) and hasattr(method, "_hook_event"):
                 event = method._hook_event
                 self._hooks.setdefault(event, []).append(method)
+        try:
+            self._commands.update(ext.get_commands())
+        except Exception:
+            pass
+
+    @property
+    def commands(self) -> dict[str, CommandHandler]:
+        """Slash commands registered by extensions."""
+        return self._commands
 
     async def fire(self, event: str, **kwargs: Any) -> None:
         """Fire all hooks for the given event."""
-        import inspect
-
         for fn in self._hooks.get(event, []):
             result = fn(**kwargs)
             if inspect.isawaitable(result):
                 await result
 
+    async def fire_filter(self, event: str, value: Any, **kwargs: Any) -> Any:
+        """Fire hooks that can modify a value (pipeline pattern).
+
+        Each hook receives `value=...` plus kwargs.  If a hook returns
+        a non-None result, the value is replaced for subsequent hooks.
+        """
+        for fn in self._hooks.get(event, []):
+            result = fn(value=value, **kwargs)
+            if inspect.isawaitable(result):
+                result = await result
+            if result is not None:
+                value = result
+        return value
+
 
 def load_extensions() -> tuple[list[Extension], HookDispatcher]:
     """Discover, instantiate, and return extensions + hook dispatcher."""
     classes = discover_extensions()
-    instances = []
+    instances: list[Extension] = []
     for name, cls in classes.items():
         try:
             instances.append(cls())
         except Exception:
             continue
     return instances, HookDispatcher(instances)
+
+
+async def reload_extensions_async(
+    current_instances: list[Extension] | None = None,
+) -> tuple[list[Extension], HookDispatcher]:
+    """Hot-reload: unload current extensions, invalidate caches, re-discover."""
+    for ext in current_instances or []:
+        try:
+            await ext.on_unload()
+        except Exception:
+            pass
+    importlib.invalidate_caches()
+    return load_extensions()
 
 
 def discover_tui_extensions() -> dict[str, type[TuiExtension]]:
