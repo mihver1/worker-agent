@@ -591,6 +591,11 @@ class TestTuiAutocompleteIntegration:
 
 
 class TestRemoteTransportHelpers:
+    def test_remote_rest_base_url_uses_rest_sidecar_port(self):
+        from worker_tui.remote_control import remote_rest_base_url
+
+        assert remote_rest_base_url("ws://example.com:7432") == "http://example.com:7433"
+        assert remote_rest_base_url("wss://example.com:443") == "https://example.com:444"
     def test_remote_headers_with_token(self):
         from worker_tui.app import WorkerApp
 
@@ -614,3 +619,109 @@ class TestRemoteTransportHelpers:
         assert payload["content"] == "hello"
         assert isinstance(payload["session_id"], str)
         assert payload["session_id"]
+
+
+class TestRemoteModeCommandRouting:
+    @pytest.mark.asyncio
+    async def test_model_command_reads_remote_session_state(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                return {"session": {"id": session_id, "model": "openai/gpt-4.1"}}
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._handle_command("/model")
+
+        assert seen_messages == [("Current model: openai/gpt-4.1", "tool")]
+
+    @pytest.mark.asyncio
+    async def test_double_bang_routes_to_remote_shell(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from worker_tui.app import WorkerApp
+
+        _patch_tui_test_context(monkeypatch)
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        calls: list[tuple[str, bool]] = []
+        monkeypatch.setattr(app, "_command_menu_visible", lambda: False)
+        monkeypatch.setattr(app, "_hide_command_menu", lambda: None)
+        monkeypatch.setattr(app, "call_after_refresh", lambda callback: None)
+        monkeypatch.setattr(app, "_add_message", lambda content, role="assistant": None)
+        monkeypatch.setattr(
+            app,
+            "_run_remote_bash",
+            lambda cmd, send_to_llm=False: calls.append((cmd, send_to_llm)),
+        )
+        event = SimpleNamespace(
+            value="!! pwd",
+            input=SimpleNamespace(value="!! pwd"),
+        )
+
+        await app.on_input_submitted(event)
+
+        assert calls == [("pwd", False)]
+
+    @pytest.mark.asyncio
+    async def test_switch_model_uses_remote_control_client(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def set_session_model(self, session_id: str, model: str):
+                return {"session": {"id": session_id, "model": model}}
+
+        class _Footer:
+            def __init__(self):
+                self.model = ""
+
+            def set_model(self, model: str) -> None:
+                self.model = model
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: footer  # type: ignore[method-assign]
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._switch_model("openai/gpt-4.1")
+
+        assert footer.model == "openai/gpt-4.1"
+        assert seen_messages[-1] == ("Switched to openai/gpt-4.1", "tool")
+
+    @pytest.mark.asyncio
+    async def test_single_bang_routes_to_remote_shell_with_llm_forwarding(self, monkeypatch):
+        from types import SimpleNamespace
+
+        from worker_tui.app import WorkerApp
+
+        _patch_tui_test_context(monkeypatch)
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        calls: list[tuple[str, bool]] = []
+        monkeypatch.setattr(app, "_command_menu_visible", lambda: False)
+        monkeypatch.setattr(app, "_hide_command_menu", lambda: None)
+        monkeypatch.setattr(app, "call_after_refresh", lambda callback: None)
+        monkeypatch.setattr(app, "_add_message", lambda content, role="assistant": None)
+        monkeypatch.setattr(
+            app,
+            "_run_remote_bash",
+            lambda cmd, send_to_llm=False: calls.append((cmd, send_to_llm)),
+        )
+        event = SimpleNamespace(
+            value="! pwd",
+            input=SimpleNamespace(value="! pwd"),
+        )
+
+        await app.on_input_submitted(event)
+
+        assert calls == [("pwd", True)]

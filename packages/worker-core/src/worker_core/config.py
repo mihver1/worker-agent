@@ -7,6 +7,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, Literal
 
+import tomli_w
 from pydantic import BaseModel, Field
 
 # ── Config paths ──────────────────────────────────────────────────
@@ -143,6 +144,36 @@ def load_config(project_dir: str | None = None) -> WorkerConfig:
             config = WorkerConfig.model_validate(merged)
 
     return config
+
+
+def persist_server_auth_token(token: str, project_dir: str | None = None) -> Path:
+    """Persist server auth token to the config file that owns the effective setting."""
+    target = GLOBAL_CONFIG
+    data: dict[str, Any] = {}
+
+    if GLOBAL_CONFIG.exists():
+        with open(GLOBAL_CONFIG, "rb") as f:
+            data = tomllib.load(f)
+
+    if project_dir:
+        project_config = Path(project_dir) / ".worker" / "config.toml"
+        if project_config.exists():
+            with open(project_config, "rb") as f:
+                project_data = tomllib.load(f)
+            project_server = project_data.get("server")
+            if isinstance(project_server, dict) and "auth_token" in project_server:
+                target = project_config
+                data = project_data
+
+    server_data = data.get("server")
+    if not isinstance(server_data, dict):
+        server_data = {}
+        data["server"] = server_data
+    server_data["auth_token"] = token
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(tomli_w.dumps(data), encoding="utf-8")
+    return target
 
 
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> None:

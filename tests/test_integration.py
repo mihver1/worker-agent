@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from conftest import MockProvider
 from worker_ai.models import Done, TextDelta, Usage
-from worker_ai.oauth import OAuthToken, TokenStore
+from worker_ai.oauth import OAuthToken, RemoteOAuthChallenge, TokenStore
 from worker_core.config import ProviderConfig, ProviderModelConfig, WorkerConfig
 from worker_core.extensions import discover_extensions
 from worker_server.server import ServerState, _create_rest_app, handle_client
@@ -393,6 +393,74 @@ class TestCliLogin:
         assert "GH_TOKEN" in result.output
 
 
+class TestCliConnect:
+    def test_worker_connect_passes_forward_credentials(self, monkeypatch):
+        import worker_tui.app as tui_app
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        captured: dict[str, str] = {}
+
+        def fake_run_tui(**kwargs):
+            captured.update(kwargs)
+
+        monkeypatch.setattr(tui_app, "run_tui", fake_run_tui)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_mod.cli,
+            [
+                "connect",
+                "ws://host:7432",
+                "--token",
+                "tok_test",
+                "--forward-credentials",
+                "all",
+            ],
+        )
+
+        assert result.exit_code == 0
+        assert captured == {
+            "remote_url": "ws://host:7432",
+            "auth_token": "tok_test",
+            "forward_credentials": "all",
+        }
+
+class TestCliServe:
+    def test_worker_serve_passes_stdout_announcer(self, monkeypatch):
+        import worker_server.server as server_mod
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        captured: dict[str, object] = {}
+
+        async def fake_run_server(**kwargs):
+            captured.update(kwargs)
+            announce = kwargs["announce"]
+            assert callable(announce)
+            announce("Worker server starting")
+            announce("  Auth token: wkr_test_token")
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        monkeypatch.setattr(server_mod, "run_server", fake_run_server)
+        monkeypatch.setattr(cli_mod.asyncio, "run", run_coro)
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["serve", "--host", "0.0.0.0", "--port", "9000"])
+
+        assert result.exit_code == 0
+        assert captured["host"] == "0.0.0.0"
+        assert captured["port"] == 9000
+        assert "Worker server starting" in result.output
+        assert "Auth token: wkr_test_token" in result.output
+
+
 class TestCliExtensions:
     def test_ext_install_uses_no_sources(self, monkeypatch):
         from click.testing import CliRunner
@@ -511,6 +579,171 @@ class TestRESTAPI:
             assert resp.status == 200
         assert provider.closed is True
         assert "sess-1" not in state.sessions
+
+    @pytest.mark.asyncio
+    async def test_session_get_returns_default_model_before_creation(self, state):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(
+                "/api/sessions/remote-session",
+                headers={"Authorization": "Bearer test_token"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["session"]["exists"] is False
+            assert data["session"]["model"] == state.config.agent.model
+
+    @pytest.mark.asyncio
+    async def test_remote_bash_endpoint_executes_command(self, state):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/sessions/remote-session/bash",
+                headers={"Authorization": "Bearer test_token"},
+                json={"command": "printf remote-bash-test"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["output"] == "remote-bash-test"
+            assert data["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_credentials_import_saves_overlay_and_oauth_token(
+        self,
+        state,
+        tmp_path,
+        monkeypatch,
+    ):
+        import worker_ai.oauth as oauth_mod
+        import worker_server.server as server_mod
+        from aiohttp.test_utils import TestClient, TestServer
+
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        saved_overlays: list[dict[str, object]] = []
+        monkeypatch.setattr(
+            server_mod,
+            "save_provider_overlay",
+            lambda overlay: saved_overlays.append(dict(overlay)),
+        )
+
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.post(
+                "/api/credentials/import",
+                headers={"Authorization": "Bearer test_token"},
+                json={
+                    "providers": [
+                        {
+                            "provider": "openai",
+                            "settings": {"base_url": "https://api.openai.com/v1"},
+                            "auth": {"kind": "api_key", "api_key": "sk-remote"},
+                        },
+                        {
+                            "provider": "anthropic",
+                            "settings": {},
+                            "auth": {
+                                "kind": "oauth_token",
+                                "token": {
+                                    "access_token": "oauth_remote",
+                                    "provider": "anthropic",
+                                    "expires_at": 9999999999.0,
+                                },
+                            },
+                        },
+                    ]
+                },
+            )
+            assert resp.status == 200
+            data = await resp.json()
+
+        assert data["imported"] == [
+            {"provider": "openai", "auth_kind": "api_key"},
+            {"provider": "anthropic", "auth_kind": "oauth_token"},
+        ]
+        assert state.provider_overlay["openai"].api_key == "sk-remote"
+        assert saved_overlays
+        saved_token = TokenStore(path=tmp_path / "auth.json").load("anthropic")
+        assert saved_token is not None
+        assert saved_token.access_token == "oauth_remote"
+
+    @pytest.mark.asyncio
+    async def test_oauth_broker_start_and_complete(self, state, tmp_path, monkeypatch):
+        import worker_ai.oauth as oauth_mod
+        import worker_server.server as server_mod
+        from aiohttp.test_utils import TestClient, TestServer
+
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+
+        fake_challenge = RemoteOAuthChallenge(
+            provider="openai",
+            flow_type="callback",
+            verifier="verifier",
+            state="state_123",
+            authorize_url="https://auth.example/authorize",
+            redirect_uri="http://127.0.0.1:1455/auth/callback",
+            expires_at=9999999999.0,
+        )
+
+        monkeypatch.setattr(
+            server_mod,
+            "start_remote_oauth_challenge",
+            lambda provider, *, redirect_uri="": (
+                fake_challenge,
+                {
+                    "provider": "openai",
+                    "flow_type": "callback",
+                    "authorize_url": "https://auth.example/authorize",
+                    "redirect_uri": redirect_uri,
+                },
+            ),
+        )
+
+        async def _fake_complete(challenge, payload):
+            assert challenge == fake_challenge
+            assert payload == {"code": "code_123", "state": "state_123"}
+            return OAuthToken(
+                access_token="oauth_from_broker",
+                provider=challenge.provider,
+                expires_at=9999999999.0,
+            )
+
+        monkeypatch.setattr(server_mod, "complete_remote_oauth_challenge", _fake_complete)
+
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            start = await client.post(
+                "/api/oauth/start",
+                headers={"Authorization": "Bearer test_token"},
+                json={
+                    "provider": "openai",
+                    "redirect_uri": "http://127.0.0.1:9999/auth/callback",
+                },
+            )
+            assert start.status == 200
+            start_data = await start.json()
+            assert start_data["provider"] == "openai"
+            assert start_data["flow_type"] == "callback"
+            login_id = start_data["login_id"]
+
+            complete = await client.post(
+                "/api/oauth/complete",
+                headers={"Authorization": "Bearer test_token"},
+                json={
+                    "login_id": login_id,
+                    "payload": {"code": "code_123", "state": "state_123"},
+                },
+            )
+            assert complete.status == 200
+            complete_data = await complete.json()
+
+        assert complete_data["status"] == "ok"
+        saved = TokenStore(path=tmp_path / "auth.json").load("openai")
+        assert saved is not None
+        assert saved.access_token == "oauth_from_broker"
 
 
 # ── WebSocket Protocol ────────────────────────────────────────────

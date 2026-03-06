@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import tomllib
+
 from worker_core.bootstrap import (
     provider_requires_api_key,
     resolve_provider_runtime_config,
@@ -13,6 +15,7 @@ from worker_core.config import (
     generate_global_config,
     generate_project_config,
     load_config,
+    persist_server_auth_token,
     resolve_model,
 )
 
@@ -387,6 +390,53 @@ class TestGenerateConfig:
         (tmp_path / "config.toml").write_text("custom content")
         generate_global_config()
         assert (tmp_path / "config.toml").read_text() == "custom content"
+
+class TestPersistServerAuthToken:
+    def test_creates_global_config_when_missing(self, tmp_path, monkeypatch):
+        import worker_core.config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "config.toml")
+
+        saved_path = persist_server_auth_token("wkr_first_run_token")
+
+        assert saved_path == tmp_path / "config.toml"
+        saved = tomllib.loads((tmp_path / "config.toml").read_text())
+        assert saved["server"]["auth_token"] == "wkr_first_run_token"
+        assert load_config("/nonexistent/path").server.auth_token == "wkr_first_run_token"
+    def test_updates_global_config_when_no_project_override(self, tmp_path, monkeypatch):
+        import worker_core.config as cfg_mod
+
+        monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "config.toml")
+        generate_global_config()
+
+        saved_path = persist_server_auth_token("wkr_test_token")
+
+        assert saved_path == tmp_path / "config.toml"
+        saved = tomllib.loads((tmp_path / "config.toml").read_text())
+        assert saved["server"]["auth_token"] == "wkr_test_token"
+        assert load_config("/nonexistent/path").server.auth_token == "wkr_test_token"
+
+    def test_updates_project_config_when_it_explicitly_owns_auth_token(self, tmp_path, monkeypatch):
+        import worker_core.config as cfg_mod
+
+        global_dir = tmp_path / "global"
+        monkeypatch.setattr(cfg_mod, "CONFIG_DIR", global_dir)
+        monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", global_dir / "config.toml")
+        generate_global_config()
+
+        project_dir = tmp_path / "project"
+        project_config = project_dir / ".worker" / "config.toml"
+        project_config.parent.mkdir(parents=True)
+        project_config.write_text("[server]\nauth_token = \"\"\n", encoding="utf-8")
+
+        saved_path = persist_server_auth_token("wkr_project_token", project_dir=str(project_dir))
+
+        assert saved_path == project_config
+        saved = tomllib.loads(project_config.read_text())
+        assert saved["server"]["auth_token"] == "wkr_project_token"
+        assert load_config(str(project_dir)).server.auth_token == "wkr_project_token"
 
 
 class TestWorkerConfigDefaults:

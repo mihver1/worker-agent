@@ -6,10 +6,14 @@ import asyncio
 import inspect
 import json
 import os
+import tempfile
+import urllib.parse
 import uuid
+import webbrowser
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from pathlib import Path
 from types import MethodType
 from typing import Any
 
@@ -55,6 +59,9 @@ from worker_core.provider_resolver import (
 from worker_core.sessions import SessionStore
 from worker_core.skills import inject_skill, load_skills
 from worker_core.tools.builtins import create_builtin_tools
+
+from worker_tui.credential_forwarding import collect_forward_credentials
+from worker_tui.remote_control import RemoteControlClient
 
 
 @dataclass(frozen=True, slots=True)
@@ -442,6 +449,87 @@ class PermissionScreen(ModalScreen[str]):
         self.dismiss("deny")
 
 
+class TextInputScreen(ModalScreen[str | None]):
+    """Modal dialog asking the user to paste or type a short value."""
+
+    CSS = """
+    TextInputScreen {
+        align: center middle;
+    }
+    #text-input-dialog {
+        width: 80;
+        max-height: 18;
+        padding: 1 2;
+        background: $surface;
+        border: thick $primary;
+    }
+    #text-input-title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #text-input-detail {
+        margin-bottom: 1;
+        color: $text-muted;
+    }
+    #text-input-field {
+        margin-bottom: 1;
+    }
+    #text-input-buttons {
+        height: 3;
+        align: center middle;
+    }
+    #text-input-buttons Button {
+        margin: 0 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "cancel", "Cancel", show=False),
+    ]
+
+    def __init__(
+        self,
+        title: str,
+        detail: str,
+        *,
+        placeholder: str = "",
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._title = title
+        self._detail = detail
+        self._placeholder = placeholder
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="text-input-dialog"):
+            yield Static(self._title, id="text-input-title")
+            yield Static(self._detail, id="text-input-detail")
+            yield Input(placeholder=self._placeholder, id="text-input-field")
+            with Horizontal(id="text-input-buttons"):
+                yield Button("Submit", id="btn-submit", variant="primary")
+                yield Button("Cancel", id="btn-cancel", variant="error")
+
+    def on_mount(self) -> None:
+        self.query_one("#text-input-field", Input).focus()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-submit":
+            self._submit()
+        else:
+            self.dismiss(None)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id == "text-input-field":
+            self._submit()
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+    def _submit(self) -> None:
+        value = self.query_one("#text-input-field", Input).value.strip()
+        self.dismiss(value or None)
+
+
 # ── Main App ──────────────────────────────────────────────────
 
 
@@ -488,6 +576,7 @@ class WorkerApp(App):
         *,
         remote_url: str = "",
         auth_token: str = "",
+        forward_credentials: str = "",
         continue_session: bool = False,
         resume_id: str = "",
         **kwargs: Any,
@@ -495,6 +584,7 @@ class WorkerApp(App):
         super().__init__(**kwargs)
         self.remote_url = remote_url
         self.auth_token = auth_token
+        self._forward_credentials_spec = forward_credentials
         self._continue_session = continue_session
         self._resume_id = resume_id
         self._session: AgentSession | None = None
@@ -504,6 +594,7 @@ class WorkerApp(App):
         self._current_widget: MessageWidget | None = None
         self._ws: Any = None  # websocket connection for remote mode
         self._remote_session_id = str(uuid.uuid4())
+        self._remote_control_client: RemoteControlClient | None = None
         self._prompts: dict[str, str] = {}  # loaded prompt templates
         self._skills: dict[str, Any] = {}  # loaded skills (Skill objects)
         self._active_theme: str = "dark"
@@ -525,13 +616,13 @@ class WorkerApp(App):
         yield Footer()
 
     async def on_mount(self) -> None:
+        config = load_config(os.getcwd())
         if self.remote_url:
             self.sub_title = f"remote: {self.remote_url}"
         else:
             await self._init_local_session()
 
         # Apply theme from config
-        config = load_config(os.getcwd())
         self._active_theme = config.ui.theme
         self._apply_theme(self._active_theme)
 
@@ -545,11 +636,70 @@ class WorkerApp(App):
         for key, action in config.keybindings.bindings.items():
             self.bind(key, action, description=action)
 
+        if self.remote_url:
+            await self._sync_remote_session_state()
+            if self._forward_credentials_spec:
+                await self._forward_remote_credentials(config)
+
         self.call_after_refresh(self._focus_input)
 
     def _focus_input(self) -> None:
         """Keep the main input focused for immediate typing."""
         self.query_one("#input-bar", Input).focus()
+
+    def _remote_control(self) -> RemoteControlClient:
+        if self._remote_control_client is None:
+            self._remote_control_client = RemoteControlClient(
+                self.remote_url,
+                auth_token=self.auth_token,
+            )
+        return self._remote_control_client
+
+    async def _sync_remote_session_state(self) -> None:
+        if not self.remote_url:
+            return
+        try:
+            payload = await self._remote_control().get_session(self._remote_session_id)
+        except Exception:
+            return
+        session = payload.get("session", {})
+        model = str(session.get("model", "")).strip()
+        if not model:
+            return
+        self._provider_model = model
+        self.query_one("#status-footer", StatusFooter).set_model(model)
+
+    async def _forward_remote_credentials(self, config: Any) -> None:
+        exports, skipped = await collect_forward_credentials(
+            self._forward_credentials_spec,
+            config,
+        )
+        if not exports and not skipped:
+            return
+
+        if exports:
+            try:
+                result = await self._remote_control().import_credentials(exports)
+            except Exception as exc:
+                self._add_message(f"Credential forwarding failed: {exc}", role="error")
+            else:
+                imported = result.get("imported", [])
+                if imported:
+                    providers = ", ".join(
+                        item.get("provider", "")
+                        for item in imported
+                        if item.get("provider")
+                    )
+                    if providers:
+                        self._add_message(
+                            f"Forwarded remote credentials: {providers}",
+                            role="tool",
+                        )
+        for item in skipped:
+            self._add_message(
+                f"Skipped forwarding {item.provider}: {item.reason}",
+                role="tool",
+            )
 
     async def _load_tui_extensions(self, config: Any) -> None:
         """Load TUI extensions and wire their widgets/keybindings into the app."""
@@ -831,13 +981,19 @@ class WorkerApp(App):
             cmd = text[2:].strip()
             if cmd:
                 self._add_message(f"$ {cmd}", role="user")
-                self._run_bash(cmd, send_to_llm=False)
+                if self.remote_url:
+                    self._run_remote_bash(cmd, send_to_llm=False)
+                else:
+                    self._run_bash(cmd, send_to_llm=False)
             return
         if text.startswith("!"):
             cmd = text[1:].strip()
             if cmd:
                 self._add_message(f"$ {cmd}", role="user")
-                self._run_bash(cmd, send_to_llm=True)
+                if self.remote_url:
+                    self._run_remote_bash(cmd, send_to_llm=True)
+                else:
+                    self._run_bash(cmd, send_to_llm=True)
             return
 
         # Handle slash commands
@@ -893,8 +1049,8 @@ class WorkerApp(App):
                 "  /browser [url]      — open browser pane (cmux only)\n"
                 "  /clear              — clear chat & start new session\n"
                 "  /quit               — exit\n"
-                "  ! <command>         — run cmd & send output to LLM\n"
-                "  !! <command>        — run cmd (local only)\n"
+                "  ! <command>         — run cmd on the active host & send output to LLM\n"
+                "  !! <command>        — run cmd on the active host\n"
                 "  Ctrl+O              — toggle tool output",
                 role="tool",
             )
@@ -902,7 +1058,16 @@ class WorkerApp(App):
             if arg:
                 await self._switch_model(arg)
             else:
-                model = self._session.model if self._session else "remote"
+                if self.remote_url:
+                    try:
+                        payload = await self._remote_control().get_session(self._remote_session_id)
+                        session = payload.get("session", {})
+                        model = str(session.get("model", "")).strip() or "remote"
+                    except Exception as exc:
+                        self._add_message(f"Failed to load remote model: {exc}", role="error")
+                        return
+                else:
+                    model = self._session.model if self._session else "remote"
                 self._add_message(f"Current model: {model}", role="tool")
         elif cmd == "/models":
             self._list_models()
@@ -1104,6 +1269,37 @@ class WorkerApp(App):
     @work(exclusive=True, thread=False)
     async def _list_models(self) -> None:
         """Show available models for connected providers only."""
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().list_models()
+            except Exception as exc:
+                self._add_message(f"Failed to load remote models: {exc}", role="error")
+                return
+            providers = payload.get("providers", [])
+            lines: list[str] = []
+            for provider in providers:
+                name = provider.get("name", provider.get("id", ""))
+                provider_id = provider.get("id", "")
+                lines.append(f"\n  {name}:")
+                for model in provider.get("models", []):
+                    context_window = model.get("context_window") or 0
+                    ctx = f"{context_window // 1000}k" if context_window else "?"
+                    lines.append(
+                        f"      {provider_id}/{model.get('id', '')}  "
+                        f"({model.get('name', '')}, {ctx} ctx)"
+                    )
+            if lines:
+                self._add_message(
+                    "Connected providers:\n" + "\n".join(lines),
+                    role="tool",
+                )
+            else:
+                self._add_message(
+                    "No connected providers. Use /providers to see supported providers "
+                    "and setup hints.",
+                    role="error",
+                )
+            return
         from worker_core.cli import _resolve_api_key
 
         config = load_config(os.getcwd())
@@ -1134,6 +1330,23 @@ class WorkerApp(App):
 
     async def _list_providers(self) -> None:
         """Show all supported providers with setup guidance."""
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().list_providers()
+            except Exception as exc:
+                self._add_message(f"Failed to load remote providers: {exc}", role="error")
+                return
+            entries = [
+                ProviderSetupEntry(
+                    id=str(item.get("id", "")),
+                    name=str(item.get("name", "")),
+                    status=str(item.get("status", "")),
+                    hint=str(item.get("hint", "")),
+                )
+                for item in payload.get("providers", [])
+            ]
+            self._add_message(format_provider_setup_entries(entries), role="tool")
+            return
         from worker_core.cli import _resolve_api_key
 
         config = load_config(os.getcwd())
@@ -1142,6 +1355,21 @@ class WorkerApp(App):
 
     async def _switch_model(self, model_str: str) -> None:
         """Switch to a different model (provider/model-id format)."""
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().set_session_model(
+                    self._remote_session_id,
+                    model_str,
+                )
+            except Exception as exc:
+                self._add_message(f"Failed to switch remote model: {exc}", role="error")
+                return
+            session = payload.get("session", {})
+            self._provider_model = str(session.get("model", "")).strip() or model_str
+            self.sub_title = self._provider_model
+            self.query_one("#status-footer", StatusFooter).set_model(self._provider_model)
+            self._add_message(f"Switched to {self._provider_model}", role="tool")
+            return
         if "/" not in model_str:
             self._add_message(
                 "Format: provider/model-id (e.g. anthropic/claude-sonnet-4-20250514)",
@@ -1222,6 +1450,9 @@ class WorkerApp(App):
     @work(exclusive=True, thread=False)
     async def _run_connect(self, provider_name: str) -> None:
         """Run OAuth login for a provider."""
+        if self.remote_url:
+            await self._run_remote_connect(provider_name)
+            return
         from worker_ai.oauth import get_oauth_provider, list_oauth_provider_names
         config = load_config(os.getcwd())
 
@@ -1248,6 +1479,208 @@ class WorkerApp(App):
             )
         except Exception as e:
             self._add_message(f"Login failed: {e}", role="error")
+
+    async def _run_remote_connect(self, provider_name: str) -> None:
+        from worker_ai.oauth import get_oauth_provider, list_oauth_provider_names
+        from worker_ai.provider_specs import get_provider_spec
+
+        canonical_id = (
+            get_provider_spec(provider_name).id
+            if get_provider_spec(provider_name) is not None
+            else provider_name
+        )
+        self._add_message(
+            f"Starting remote login for {canonical_id}...",
+            role="tool",
+        )
+
+        if canonical_id == "openai":
+            await self._run_remote_callback_oauth(canonical_id)
+            return
+        if canonical_id == "anthropic":
+            await self._run_remote_code_paste_oauth(canonical_id)
+            return
+
+        config = load_config(os.getcwd())
+        oauth = get_oauth_provider(canonical_id, config=config)
+        if oauth is None:
+            supported = ", ".join(list_oauth_provider_names())
+            self._add_message(
+                f"OAuth not supported for '{provider_name}'. "
+                f"{_provider_setup_hint_for_config(config, provider_name)}. "
+                f"Supported: {supported}",
+                role="error",
+            )
+            return
+        await self._run_remote_forwarded_oauth_login(canonical_id, config)
+
+    async def _run_remote_callback_oauth(self, provider_name: str) -> None:
+        redirect_uri, callback_future, server = await self._start_local_callback_listener()
+        try:
+            payload = await self._remote_control().start_oauth(
+                provider_name,
+                redirect_uri=redirect_uri,
+            )
+            authorize_url = str(payload.get("authorize_url", "")).strip()
+            if authorize_url:
+                self._add_message(
+                    f"Opening browser for remote {provider_name} login...",
+                    role="tool",
+                )
+                with suppress(Exception):
+                    webbrowser.open(authorize_url)
+            callback_payload = await asyncio.wait_for(callback_future, timeout=300)
+            await self._remote_control().complete_oauth(
+                str(payload.get("login_id", "")),
+                callback_payload,
+            )
+            self._add_message(
+                f"{provider_name.capitalize()} authorized on the remote server!",
+                role="tool",
+            )
+        except Exception as exc:
+            self._add_message(f"Remote login failed: {exc}", role="error")
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    async def _run_remote_code_paste_oauth(self, provider_name: str) -> None:
+        try:
+            payload = await self._remote_control().start_oauth(provider_name)
+            authorize_url = str(payload.get("authorize_url", "")).strip()
+            if authorize_url:
+                self._add_message(
+                    f"Opening browser for remote {provider_name} login...",
+                    role="tool",
+                )
+                with suppress(Exception):
+                    webbrowser.open(authorize_url)
+            code = await self.push_screen_wait(
+                TextInputScreen(
+                    f"{provider_name.capitalize()} authorization",
+                    "Paste the authorization code from the browser.",
+                    placeholder="authorization code",
+                )
+            )
+            if not code:
+                self._add_message("Remote login cancelled.", role="tool")
+                return
+            await self._remote_control().complete_oauth(
+                str(payload.get("login_id", "")),
+                {"code": code},
+            )
+            self._add_message(
+                f"{provider_name.capitalize()} authorized on the remote server!",
+                role="tool",
+            )
+        except Exception as exc:
+            self._add_message(f"Remote login failed: {exc}", role="error")
+
+    async def _run_remote_forwarded_oauth_login(self, provider_name: str, config: Any) -> None:
+        from worker_ai.oauth import TokenStore, get_oauth_provider
+
+        with tempfile.TemporaryDirectory(prefix="worker-remote-oauth-") as temp_dir:
+            temp_store = TokenStore(path=Path(temp_dir) / "auth.json")
+            oauth = get_oauth_provider(
+                provider_name,
+                config=config,
+                token_store=temp_store,
+            )
+            if oauth is None:
+                self._add_message(
+                    f"Remote login is not supported for '{provider_name}'.",
+                    role="error",
+                )
+                return
+            try:
+                token = await oauth.login()
+                settings = self._provider_forwarding_settings(config, provider_name)
+                await self._remote_control().import_credentials(
+                    [
+                        {
+                            "provider": provider_name,
+                            "settings": settings,
+                            "auth": {
+                                "kind": "oauth_token",
+                                "token": asdict(token),
+                            },
+                        }
+                    ]
+                )
+            except Exception as exc:
+                self._add_message(f"Remote login failed: {exc}", role="error")
+                return
+        self._add_message(
+            f"{provider_name.capitalize()} authorized on the remote server!",
+            role="tool",
+        )
+
+    def _provider_forwarding_settings(self, config: Any, provider_name: str) -> dict[str, Any]:
+        provider_config = get_provider_config(config, provider_name)
+        if provider_config is None:
+            return {}
+        data = provider_config.model_dump(exclude_defaults=True, exclude_none=True)
+        data.pop("api_key", None)
+        data.pop("env", None)
+        return data
+
+    async def _start_local_callback_listener(
+        self,
+    ) -> tuple[str, asyncio.Future[dict[str, str]], asyncio.AbstractServer]:
+        loop = asyncio.get_running_loop()
+        callback_future: asyncio.Future[dict[str, str]] = loop.create_future()
+
+        async def _handle_callback(
+            reader: asyncio.StreamReader,
+            writer: asyncio.StreamWriter,
+        ) -> None:
+            try:
+                data = await reader.read(8192)
+                request_line = data.decode(errors="replace").splitlines()[0]
+                parts = request_line.split(" ", 2)
+                target = parts[1] if len(parts) >= 2 else "/"
+                query = urllib.parse.parse_qs(urllib.parse.urlsplit(target).query)
+                error = query.get("error", [""])[0]
+                if error:
+                    detail = query.get("error_description", [error])[0]
+                    if not callback_future.done():
+                        callback_future.set_exception(RuntimeError(detail))
+                else:
+                    code = query.get("code", [""])[0]
+                    state = query.get("state", [""])[0]
+                    if code and not callback_future.done():
+                        callback_future.set_result({"code": code, "state": state})
+                    elif not callback_future.done():
+                        callback_future.set_exception(
+                            RuntimeError("Missing authorization code.")
+                        )
+                body = (
+                    "<html><body><h1>Authorized!</h1>"
+                    "<p>You can close this tab and return to Worker.</p>"
+                    "</body></html>"
+                )
+                response = (
+                    "HTTP/1.1 200 OK\r\n"
+                    "Content-Type: text/html; charset=utf-8\r\n"
+                    f"Content-Length: {len(body.encode('utf-8'))}\r\n"
+                    "Connection: close\r\n\r\n"
+                    f"{body}"
+                )
+                writer.write(response.encode("utf-8"))
+                await writer.drain()
+            finally:
+                writer.close()
+                with suppress(Exception):
+                    await writer.wait_closed()
+
+        server = await asyncio.start_server(_handle_callback, "127.0.0.1", 0)
+        sock = next(iter(server.sockets or ()), None)
+        if sock is None:
+            server.close()
+            await server.wait_closed()
+            raise RuntimeError("Failed to start local callback listener.")
+        port = sock.getsockname()[1]
+        return f"http://127.0.0.1:{port}/auth/callback", callback_future, server
 
     # ── Session commands ───────────────────────────────────────
 
@@ -1635,6 +2068,26 @@ class WorkerApp(App):
     # ── Bash execution ────────────────────────────────────────
 
     @work(exclusive=True, thread=False)
+    async def _run_remote_bash(self, cmd: str, send_to_llm: bool = False) -> None:
+        """Execute a shell command on the remote server and display the output."""
+        try:
+            payload = await self._remote_control().run_bash(self._remote_session_id, cmd)
+            output = str(payload.get("output", "")).rstrip()
+            exit_code = int(payload.get("exit_code", 0))
+            if output:
+                self._add_message(output, role="tool")
+            if exit_code != 0:
+                self._add_message(f"exit code: {exit_code}", role="error")
+
+            if send_to_llm and output:
+                llm_text = f"Output of `{cmd}`:\n```\n{output}\n```"
+                self._add_message(llm_text, role="user")
+                self._run_remote(llm_text)
+        except Exception as e:
+            self._add_message(f"Remote command failed: {e}", role="error")
+        self._scroll_to_bottom()
+
+    @work(exclusive=True, thread=False)
     async def _run_bash(self, cmd: str, send_to_llm: bool = False) -> None:
         """Execute a shell command and display the output.
 
@@ -1783,6 +2236,7 @@ class WorkerApp(App):
         self._hide_command_menu()
         if self.remote_url:
             self._remote_session_id = str(uuid.uuid4())
+            await self._sync_remote_session_state()
         if self._session:
             new_id = str(uuid.uuid4())
             if self._store:
@@ -1797,6 +2251,7 @@ class WorkerApp(App):
 def run_tui(
     remote_url: str = "",
     auth_token: str = "",
+    forward_credentials: str = "",
     continue_session: bool = False,
     resume_id: str = "",
 ) -> None:
@@ -1804,6 +2259,7 @@ def run_tui(
     app = WorkerApp(
         remote_url=remote_url,
         auth_token=auth_token,
+        forward_credentials=forward_credentials,
         continue_session=continue_session,
         resume_id=resume_id,
     )

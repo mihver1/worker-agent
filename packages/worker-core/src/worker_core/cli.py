@@ -94,16 +94,26 @@ def serve(host: str | None, port: int | None) -> None:
         kwargs["host"] = host
     if port:
         kwargs["port"] = port
+    kwargs["announce"] = click.echo
     asyncio.run(run_server(**kwargs))
 
 
 @cli.command()
 @click.argument("url")
 @click.option("--token", default="", help="Bearer auth token")
-def connect(url: str, token: str) -> None:
+@click.option(
+    "--forward-credentials",
+    default="",
+    help="Forward local credentials to the remote server (all or comma-separated providers)",
+)
+def connect(url: str, token: str, forward_credentials: str) -> None:
     """Connect TUI to a remote Worker server."""
     from worker_tui.app import run_tui
-
+    run_tui(
+        remote_url=url,
+        auth_token=token,
+        forward_credentials=forward_credentials,
+    )
     run_tui(remote_url=url, auth_token=token)
 
 

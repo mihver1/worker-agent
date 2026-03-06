@@ -55,6 +55,19 @@ class OAuthToken:
         return time.time() >= self.expires_at - 60  # 1 min buffer
 
 
+@dataclass(frozen=True)
+class RemoteOAuthChallenge:
+    """Provider-specific OAuth challenge data for remote broker flows."""
+
+    provider: str
+    flow_type: str
+    verifier: str
+    state: str
+    authorize_url: str
+    redirect_uri: str = ""
+    expires_at: float = 0.0
+
+
 def parse_jwt_claims(token: str) -> dict[str, Any]:
     """Decode JWT payload without verification (for extracting claims only)."""
     parts = token.split(".")
@@ -278,6 +291,172 @@ def _generate_pkce() -> tuple[str, str]:
     digest = hashlib.sha256(verifier.encode("ascii")).digest()
     challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
     return verifier, challenge
+
+
+def start_remote_oauth_challenge(
+    provider_name: str,
+    *,
+    redirect_uri: str = "",
+) -> tuple[RemoteOAuthChallenge, dict[str, Any]]:
+    """Create an OAuth broker challenge for remote/connect mode."""
+
+    resolved_name = _resolve_provider_id(provider_name)
+    verifier, challenge = _generate_pkce()
+    state = secrets.token_urlsafe(32)
+
+    if resolved_name == "openai":
+        if not redirect_uri:
+            raise RuntimeError("OpenAI remote OAuth requires a redirect_uri.")
+        params: dict[str, str] = {
+            "response_type": "code",
+            "client_id": OpenAIOAuth.CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "scope": OpenAIOAuth.SCOPE,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+        }
+        params.update(OpenAIOAuth.EXTRA_PARAMS)
+        authorize_url = (
+            f"{OpenAIOAuth.AUTH_URL}?{urllib.parse.urlencode(params)}"
+        )
+        challenge_data = RemoteOAuthChallenge(
+            provider=resolved_name,
+            flow_type="callback",
+            verifier=verifier,
+            state=state,
+            authorize_url=authorize_url,
+            redirect_uri=redirect_uri,
+            expires_at=time.time() + 300,
+        )
+        return challenge_data, {
+            "provider": resolved_name,
+            "flow_type": "callback",
+            "authorize_url": authorize_url,
+            "redirect_uri": redirect_uri,
+        }
+
+    if resolved_name == "anthropic":
+        params = urllib.parse.urlencode(
+            {
+                "client_id": AnthropicOAuth.CLIENT_ID,
+                "redirect_uri": AnthropicOAuth.REDIRECT_URI,
+                "response_type": "code",
+                "scope": AnthropicOAuth.SCOPE,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": state,
+            }
+        )
+        authorize_url = f"{AnthropicOAuth.AUTH_URL}?{params}"
+        challenge_data = RemoteOAuthChallenge(
+            provider=resolved_name,
+            flow_type="code_paste",
+            verifier=verifier,
+            state=state,
+            authorize_url=authorize_url,
+            redirect_uri=AnthropicOAuth.REDIRECT_URI,
+            expires_at=time.time() + 300,
+        )
+        return challenge_data, {
+            "provider": resolved_name,
+            "flow_type": "code_paste",
+            "authorize_url": authorize_url,
+        }
+
+    raise RuntimeError(
+        f"Remote OAuth broker is not supported for '{provider_name}'."
+    )
+
+
+async def complete_remote_oauth_challenge(
+    challenge: RemoteOAuthChallenge,
+    payload: dict[str, Any],
+) -> OAuthToken:
+    """Finish a remote OAuth challenge and return the resulting token."""
+
+    if challenge.expires_at > 0 and time.time() > challenge.expires_at:
+        raise TimeoutError("OAuth challenge expired. Start /connect again.")
+
+    if challenge.provider == "openai":
+        code = str(payload.get("code", "")).strip()
+        received_state = str(payload.get("state", "")).strip()
+        if not code:
+            raise RuntimeError("Missing authorization code.")
+        if received_state != challenge.state:
+            raise RuntimeError("Invalid state — possible CSRF")
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                OpenAIOAuth.TOKEN_URL,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                content=urllib.parse.urlencode(
+                    {
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "redirect_uri": challenge.redirect_uri,
+                        "client_id": OpenAIOAuth.CLIENT_ID,
+                        "code_verifier": challenge.verifier,
+                    }
+                ),
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        account_id = ""
+        id_token = data.get("id_token", "")
+        if id_token:
+            account_id = extract_openai_account_id(parse_jwt_claims(id_token))
+        if not account_id:
+            account_id = extract_openai_account_id(
+                parse_jwt_claims(data["access_token"])
+            )
+        return OAuthToken(
+            access_token=data["access_token"],
+            refresh_token=data.get("refresh_token", ""),
+            token_type=data.get("token_type", "Bearer"),
+            expires_at=time.time() + data.get("expires_in", 3600),
+            provider=challenge.provider,
+            account_id=account_id,
+        )
+
+    if challenge.provider == "anthropic":
+        code_input = str(payload.get("code", "")).strip()
+        if not code_input:
+            raise RuntimeError("Missing authorization code.")
+        parts = code_input.split("#")
+        code = parts[0]
+        received_state = str(payload.get("state", "")).strip() or (
+            parts[1] if len(parts) > 1 else challenge.state
+        )
+
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                AnthropicOAuth.TOKEN_URL,
+                headers={"Content-Type": "application/json"},
+                json={
+                    "code": code,
+                    "state": received_state,
+                    "grant_type": "authorization_code",
+                    "client_id": AnthropicOAuth.CLIENT_ID,
+                    "redirect_uri": challenge.redirect_uri,
+                    "code_verifier": challenge.verifier,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        return OAuthToken(
+            access_token=data["access_token"],
+            refresh_token=data.get("refresh_token", ""),
+            token_type=data.get("token_type", "Bearer"),
+            expires_at=time.time() + data.get("expires_in", 3600),
+            provider=challenge.provider,
+        )
+
+    raise RuntimeError(
+        f"Remote OAuth broker is not supported for '{challenge.provider}'."
+    )
 
 
 # ── Base OAuth provider ───────────────────────────────────────────
