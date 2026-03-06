@@ -28,6 +28,7 @@ die()   { err "$@"; exit 1; }
 
 # ── Helpers ───────────────────────────────────────────────
 command_exists() { command -v "$1" &>/dev/null; }
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 version_ge() {
     # Returns 0 if $1 >= $2 (semantic version comparison)
@@ -108,8 +109,25 @@ else
     ok "Python $MIN_PYTHON installed via uv"
 fi
 
-# ── Step 5: Clone / update repository ───────────────────
-if [[ -d "$INSTALL_DIR/.git" ]]; then
+# ── Step 5: Materialize repository ───────────────────────
+if [[ -f "$SCRIPT_DIR/pyproject.toml" ]] && [[ -d "$SCRIPT_DIR/packages/worker-core/src/worker_core" ]]; then
+    if [[ "$SCRIPT_DIR" == "$INSTALL_DIR" ]]; then
+        die "WORKER_INSTALL_DIR must not point to the current source checkout."
+    fi
+    info "Installing from local checkout in $SCRIPT_DIR..."
+    rm -rf "$INSTALL_DIR"
+    mkdir -p "$INSTALL_DIR"
+    tar \
+        -C "$SCRIPT_DIR" \
+        --exclude .git \
+        --exclude .venv \
+        --exclude .warp \
+        --exclude __pycache__ \
+        --exclude .pytest_cache \
+        --exclude .mypy_cache \
+        -cf - . | tar -C "$INSTALL_DIR" -xf -
+    ok "Copied local checkout into $INSTALL_DIR"
+elif [[ -d "$INSTALL_DIR/.git" ]]; then
     info "Updating existing installation in $INSTALL_DIR..."
     git -C "$INSTALL_DIR" fetch origin "$BRANCH" --quiet
     git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH" --quiet
@@ -136,7 +154,7 @@ WRAPPER="$BIN_DIR/worker"
 cat > "$WRAPPER" <<WRAPPER_EOF
 #!/usr/bin/env bash
 # Worker — auto-generated launcher
-exec uv run --directory "$INSTALL_DIR" worker "\$@"
+exec uv run --project "$INSTALL_DIR" worker "\$@"
 WRAPPER_EOF
 chmod +x "$WRAPPER"
 ok "Launcher created: $WRAPPER"
@@ -162,12 +180,14 @@ fi
 # ── Step 9: Run init if no config exists ─────────────────
 CONFIG_FILE="$HOME/.config/worker/config.toml"
 if [[ ! -f "$CONFIG_FILE" ]]; then
-    info "Running initial setup..."
-    "$WRAPPER" init 2>/dev/null || true
+    info "Creating global config..."
+    uv run --project "$INSTALL_DIR" python -c \
+        'from worker_core.config import generate_global_config; generate_global_config()' \
+        >/dev/null 2>&1 || true
     if [[ -f "$CONFIG_FILE" ]]; then
         ok "Config created: $CONFIG_FILE"
     else
-        warn "Auto-init skipped. Run 'worker init' manually to configure."
+        warn "Global config creation skipped. Run 'worker init' manually to configure."
     fi
 else
     ok "Config already exists: $CONFIG_FILE"
