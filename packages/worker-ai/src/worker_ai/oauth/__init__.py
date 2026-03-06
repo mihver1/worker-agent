@@ -42,12 +42,40 @@ class OAuthToken:
     expires_at: float = 0.0  # Unix timestamp
     scope: str = ""
     provider: str = ""
+    account_id: str = ""  # e.g. chatgpt_account_id for OpenAI
 
     @property
     def is_expired(self) -> bool:
         if self.expires_at <= 0:
             return False  # No expiry info → assume valid
         return time.time() >= self.expires_at - 60  # 1 min buffer
+
+
+def parse_jwt_claims(token: str) -> dict[str, Any]:
+    """Decode JWT payload without verification (for extracting claims only)."""
+    parts = token.split(".")
+    if len(parts) != 3:
+        return {}
+    try:
+        payload = parts[1]
+        # Add padding
+        padding = 4 - len(payload) % 4
+        if padding != 4:
+            payload += "=" * padding
+        data = base64.urlsafe_b64decode(payload)
+        return json.loads(data)
+    except Exception:
+        return {}
+
+
+def extract_openai_account_id(claims: dict[str, Any]) -> str:
+    """Extract chatgpt_account_id from JWT claims (access_token or id_token)."""
+    return (
+        claims.get("chatgpt_account_id")
+        or (claims.get("https://api.openai.com/auth") or {}).get("chatgpt_account_id")
+        or (claims.get("organizations", [{}])[0].get("id") if claims.get("organizations") else "")
+        or ""
+    )
 
 
 class TokenStore:
@@ -466,12 +494,21 @@ class _LocalCallbackOAuth(OAuthProvider):
             resp.raise_for_status()
             data = resp.json()
 
+        # Extract account_id from JWT
+        account_id = ""
+        id_token = data.get("id_token", "")
+        if id_token:
+            account_id = extract_openai_account_id(parse_jwt_claims(id_token))
+        if not account_id:
+            account_id = extract_openai_account_id(parse_jwt_claims(data["access_token"]))
+
         token = OAuthToken(
             access_token=data["access_token"],
             refresh_token=data.get("refresh_token", ""),
             token_type=data.get("token_type", "Bearer"),
             expires_at=time.time() + data.get("expires_in", 3600),
             provider=self.name,
+            account_id=account_id,
         )
         self.store.save(token)
         print(f"  {self.name.capitalize()} authorized!")
@@ -492,12 +529,22 @@ class _LocalCallbackOAuth(OAuthProvider):
             )
             resp.raise_for_status()
             data = resp.json()
+
+            # Preserve or re-extract account_id
+            account_id = token.account_id
+            id_token_str = data.get("id_token", "")
+            if id_token_str:
+                new_id = extract_openai_account_id(parse_jwt_claims(id_token_str))
+                if new_id:
+                    account_id = new_id
+
             return OAuthToken(
                 access_token=data["access_token"],
                 refresh_token=data.get("refresh_token", token.refresh_token),
                 token_type=data.get("token_type", "Bearer"),
                 expires_at=time.time() + data.get("expires_in", 3600),
                 provider=self.name,
+                account_id=account_id,
             )
 
 
