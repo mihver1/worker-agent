@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
 from typing import Any
 
 import pytest
-
+from conftest import MockProvider
 from worker_ai.models import Done, TextDelta, Usage
 from worker_ai.oauth import OAuthToken, TokenStore
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.extensions import Extension, HookDispatcher, hook, load_extensions
-
-from conftest import MockProvider
-
+from worker_core.agent import AgentSession
+from worker_core.extensions import Extension, HookDispatcher, hook
 
 # ── AGENTS.md loading ─────────────────────────────────────────────
 
@@ -136,62 +131,120 @@ class TestHookDispatcher:
 
 
 class TestOAuthFallback:
-    def test_oauth_token_used_when_no_key(self, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_oauth_token_used_when_no_key(self, tmp_path, monkeypatch):
         from worker_core.cli import _resolve_api_key
         from worker_core.config import WorkerConfig
 
-        # Clear env
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        # Save a token
         store = TokenStore(path=tmp_path / "auth.json")
-        store.save(OAuthToken(
-            access_token="oauth_token_123",
-            provider="anthropic",
-            expires_at=9999999999.0,
-        ))
+        store.save(
+            OAuthToken(
+                access_token="oauth_token_123",
+                provider="anthropic",
+                expires_at=9999999999.0,
+            )
+        )
 
-        # Monkeypatch the default path
         import worker_ai.oauth as oauth_mod
+
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
 
         config = WorkerConfig()
-        key, auth_type = _resolve_api_key(config, "anthropic")
+        key, auth_type = await _resolve_api_key(config, "anthropic")
         assert key == "oauth_token_123"
         assert auth_type == "oauth"
 
-    def test_config_key_takes_priority(self, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_config_key_takes_priority(self, tmp_path, monkeypatch):
         from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig, ProviderConfig
+        from worker_core.config import ProviderConfig, WorkerConfig
 
-        # Save a token
         store = TokenStore(path=tmp_path / "auth.json")
-        store.save(OAuthToken(access_token="oauth_token", provider="anthropic", expires_at=9999999999.0))
+        store.save(
+            OAuthToken(
+                access_token="oauth_token",
+                provider="anthropic",
+                expires_at=9999999999.0,
+            )
+        )
 
         import worker_ai.oauth as oauth_mod
+
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        config = WorkerConfig(providers={"anthropic": ProviderConfig(api_key="sk-config-key")})
-        key, auth_type = _resolve_api_key(config, "anthropic")
-        assert key == "sk-config-key"  # Config wins over OAuth
+        config = WorkerConfig(
+            providers={"anthropic": ProviderConfig(api_key="sk-config-key")}
+        )
+        key, auth_type = await _resolve_api_key(config, "anthropic")
+        assert key == "sk-config-key"
         assert auth_type == "api"
 
-    def test_env_key_takes_priority_over_oauth(self, tmp_path, monkeypatch):
+    @pytest.mark.asyncio
+    async def test_env_key_takes_priority_over_oauth(self, tmp_path, monkeypatch):
         from worker_core.cli import _resolve_api_key
         from worker_core.config import WorkerConfig
 
         store = TokenStore(path=tmp_path / "auth.json")
-        store.save(OAuthToken(access_token="oauth_token", provider="anthropic", expires_at=9999999999.0))
+        store.save(
+            OAuthToken(
+                access_token="oauth_token",
+                provider="anthropic",
+                expires_at=9999999999.0,
+            )
+        )
 
         import worker_ai.oauth as oauth_mod
+
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-key")
 
         config = WorkerConfig()
-        key, auth_type = _resolve_api_key(config, "anthropic")
-        assert key == "sk-env-key"  # Env wins over OAuth
+        key, auth_type = await _resolve_api_key(config, "anthropic")
+        assert key == "sk-env-key"
         assert auth_type == "api"
+
+    @pytest.mark.asyncio
+    async def test_expired_oauth_token_is_refreshed(self, tmp_path, monkeypatch):
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import WorkerConfig
+
+        store = TokenStore(path=tmp_path / "auth.json")
+        store.save(
+            OAuthToken(
+                access_token="expired_token",
+                refresh_token="refresh_token",
+                provider="anthropic",
+                expires_at=1.0,
+            )
+        )
+
+        import worker_ai.oauth as oauth_mod
+
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+        async def fake_refresh(self, token):
+            assert token.access_token == "expired_token"
+            return OAuthToken(
+                access_token="refreshed_token",
+                refresh_token="new_refresh_token",
+                provider="anthropic",
+                expires_at=9999999999.0,
+            )
+
+        monkeypatch.setattr(oauth_mod.AnthropicOAuth, "refresh", fake_refresh)
+
+        key, auth_type = await _resolve_api_key(WorkerConfig(), "anthropic")
+
+        assert key == "refreshed_token"
+        assert auth_type == "oauth"
+        saved = TokenStore(path=tmp_path / "auth.json").load("anthropic")
+        assert saved is not None
+        assert saved.access_token == "refreshed_token"
+        assert saved.refresh_token == "new_refresh_token"
 
 
 # ── ModelsCatalog ─────────────────────────────────────────────────

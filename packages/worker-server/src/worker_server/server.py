@@ -15,8 +15,11 @@ from websockets.asyncio.server import ServerConnection
 
 from worker_ai.providers import create_default_registry
 from worker_core.agent import AgentEventType, AgentSession
+from worker_core.bootstrap import (
+    bootstrap_runtime,
+    create_agent_session_from_bootstrap,
+)
 from worker_core.config import WorkerConfig, load_config, resolve_model
-from worker_core.tools.builtins import create_builtin_tools
 
 logger = logging.getLogger("worker.server")
 
@@ -67,18 +70,39 @@ async def _handle_message(ws: ServerConnection, msg: dict[str, Any], state: Serv
 
     # Get or create session
     if session_id not in state.sessions:
+        if len(state.sessions) >= state.config.server.max_sessions:
+            await ws.send(
+                json.dumps(
+                    {
+                        "type": "error",
+                        "error": (
+                            f"Maximum sessions reached "
+                            f"({state.config.server.max_sessions})"
+                        ),
+                    }
+                )
+            )
+            return
+        from worker_core.cli import _resolve_api_key
         provider_name, model_id = resolve_model(state.config)
-        registry = create_default_registry()
-
-        api_key = _resolve_api_key(state.config, provider_name)
-        prov_cfg = state.config.providers.get(provider_name)
-        kwargs: dict[str, str] = {}
-        if prov_cfg and prov_cfg.base_url:
-            kwargs["base_url"] = prov_cfg.base_url
-
-        provider = registry.create(provider_name, api_key=api_key, **kwargs)
-        tools = create_builtin_tools(os.getcwd())
-        session = AgentSession(provider=provider, model=model_id, tools=tools)
+        try:
+            runtime = await bootstrap_runtime(
+                state.config,
+                provider_name,
+                model_id,
+                project_dir=os.getcwd(),
+                resolve_api_key=_resolve_api_key,
+                include_extensions=True,
+            )
+            session = create_agent_session_from_bootstrap(
+                state.config,
+                runtime,
+                project_dir=os.getcwd(),
+                session_id=session_id,
+            )
+        except Exception as e:
+            await ws.send(json.dumps({"type": "error", "error": str(e)}))
+            return
         state.sessions[session_id] = session
 
     session = state.sessions[session_id]
@@ -109,34 +133,23 @@ async def _handle_message(ws: ServerConnection, msg: dict[str, Any], state: Serv
         await ws.send(json.dumps(payload))
 
 
-def _resolve_api_key(config: WorkerConfig, provider_name: str) -> str | None:
-    from worker_core.cli import _ENV_KEY_MAP
-
-    prov_cfg = config.providers.get(provider_name)
-    if prov_cfg and prov_cfg.api_key:
-        return prov_cfg.api_key
-    env_var = _ENV_KEY_MAP.get(provider_name)
-    if env_var:
-        return os.environ.get(env_var)
-    return None
-
-
 # ── REST API (aiohttp) ────────────────────────────────────────────
 
 
 def _create_rest_app(state: ServerState, token: str) -> Any:
     """Create aiohttp REST application for management endpoints."""
     from aiohttp import web
-
-    async def auth_middleware(app: web.Application, handler: Any) -> Any:
-        async def middleware_handler(request: web.Request) -> web.StreamResponse:
-            # Skip auth for health endpoint
-            if request.path == "/api/health":
-                return await handler(request)
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header != f"Bearer {token}":
-                return web.json_response({"error": "Unauthorized"}, status=401)
+    @web.middleware
+    async def auth_middleware(
+        request: web.Request, handler: Any,
+    ) -> web.StreamResponse:
+        # Skip auth for health endpoint
+        if request.path == "/api/health":
             return await handler(request)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header != f"Bearer {token}":
+            return web.json_response({"error": "Unauthorized"}, status=401)
+        return await handler(request)
         return middleware_handler
 
     async def handle_health(request: web.Request) -> web.Response:
@@ -160,7 +173,11 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
     async def handle_session_delete(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         if sid in state.sessions:
-            del state.sessions[sid]
+            session = state.sessions.pop(sid)
+            try:
+                await session.provider.close()
+            except Exception:
+                pass
             return web.json_response({"deleted": sid})
         return web.json_response({"error": "Session not found"}, status=404)
 

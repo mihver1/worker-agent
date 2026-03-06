@@ -2,18 +2,18 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
-
-import pytest
-
+from worker_core.bootstrap import (
+    provider_requires_api_key,
+    resolve_provider_runtime_config,
+)
 from worker_core.config import (
+    ProviderConfig,
     WorkerConfig,
+    _deep_merge,
     generate_global_config,
     generate_project_config,
     load_config,
     resolve_model,
-    _deep_merge,
 )
 
 
@@ -55,6 +55,45 @@ class TestDeepMerge:
         base = {"a": 1}
         _deep_merge(base, {"b": 2})
         assert base == {"a": 1, "b": 2}
+
+
+class TestProviderRuntimeConfig:
+    def test_provider_section_name_used_when_type_omitted(self):
+        config = WorkerConfig(
+            providers={"openai": ProviderConfig(api_key="sk-test")}
+        )
+        provider_type, kwargs = resolve_provider_runtime_config(config, "openai")
+        assert provider_type == "openai"
+        assert kwargs == {}
+
+    def test_openai_compat_alias_gets_default_base_url(self):
+        config = WorkerConfig()
+        provider_type, kwargs = resolve_provider_runtime_config(config, "groq")
+        assert provider_type == "openai_compat"
+        assert kwargs["base_url"] == "https://api.groq.com/openai/v1"
+
+    def test_provider_config_overrides_runtime_settings(self):
+        config = WorkerConfig(
+            providers={
+                "groq": ProviderConfig(
+                    type="openai_compat",
+                    base_url="https://proxy.example/v1",
+                    api_type="chat",
+                    api_version="2025-01-01",
+                )
+            }
+        )
+        provider_type, kwargs = resolve_provider_runtime_config(config, "groq")
+        assert provider_type == "openai_compat"
+        assert kwargs["base_url"] == "https://proxy.example/v1"
+        assert kwargs["api_type"] == "chat"
+        assert kwargs["api_version"] == "2025-01-01"
+
+    def test_provider_requires_api_key_false_for_ollama(self):
+        assert provider_requires_api_key(WorkerConfig(), "ollama") is False
+
+    def test_provider_requires_api_key_true_for_openai_compat_alias(self):
+        assert provider_requires_api_key(WorkerConfig(), "groq") is True
 
 
 class TestLoadConfig:

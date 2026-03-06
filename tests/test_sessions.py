@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-import os
-
 import pytest
-
 from worker_ai.models import Message, Role, ToolCall, ToolResult
 from worker_core.sessions import SessionStore
 
@@ -113,6 +110,13 @@ async def test_compact_messages(store):
     assert len(messages) == 1
     assert messages[0].role == Role.SYSTEM
     assert "Summary of conversation" in messages[0].content
+
+
+@pytest.mark.asyncio
+async def test_foreign_keys_enabled(store):
+    cursor = await store.db.execute("PRAGMA foreign_keys")
+    row = await cursor.fetchone()
+    assert row[0] == 1
 
 
 @pytest.mark.asyncio

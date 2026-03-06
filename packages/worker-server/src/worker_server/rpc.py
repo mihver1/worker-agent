@@ -22,11 +22,12 @@ import sys
 import uuid
 from typing import Any
 
-from worker_ai.providers import create_default_registry
 from worker_core.agent import AgentEventType, AgentSession
+from worker_core.bootstrap import (
+    bootstrap_runtime,
+    create_agent_session_from_bootstrap,
+)
 from worker_core.config import load_config, resolve_model
-from worker_core.extensions import load_extensions
-from worker_core.tools.builtins import create_builtin_tools
 
 
 def _jsonrpc_response(id: Any, result: Any) -> str:
@@ -54,32 +55,18 @@ class RpcServer:
 
         config = load_config(os.getcwd())
         provider_name, model_id = resolve_model(config)
-        registry = create_default_registry()
-        api_key, auth_type = _resolve_api_key(config, provider_name)
-
-        prov_cfg = config.providers.get(provider_name)
-        kwargs: dict[str, Any] = {}
-        if prov_cfg and prov_cfg.base_url:
-            kwargs["base_url"] = prov_cfg.base_url
-        if auth_type == "oauth":
-            kwargs["auth_type"] = "oauth"
-
-        provider = registry.create(provider_name, api_key=api_key, **kwargs)
-        tools = create_builtin_tools(os.getcwd())
-
-        extensions, hooks = load_extensions()
-        for ext in extensions:
-            tools.extend(ext.get_tools())
-
-        session = AgentSession(
-            provider=provider,
-            model=model_id,
-            tools=tools,
-            system_prompt=config.agent.system_prompt,
+        runtime = await bootstrap_runtime(
+            config,
+            provider_name,
+            model_id,
             project_dir=os.getcwd(),
-            temperature=config.agent.temperature,
-            max_turns=config.agent.max_turns,
-            hooks=hooks,
+            resolve_api_key=_resolve_api_key,
+            include_extensions=True,
+        )
+        session = create_agent_session_from_bootstrap(
+            config,
+            runtime,
+            project_dir=os.getcwd(),
         )
         return session
 
@@ -187,8 +174,16 @@ class RpcServer:
 
             await self.handle_request(data)
 
+    async def close(self) -> None:
+        if self._session:
+            await self._session.provider.close()
+            self._session = None
+
 
 async def run_rpc() -> None:
     """Entry point for the RPC server."""
     server = RpcServer()
-    await server.run()
+    try:
+        await server.run()
+    finally:
+        await server.close()

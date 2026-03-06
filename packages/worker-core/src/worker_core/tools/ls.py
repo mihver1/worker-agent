@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from pathlib import Path
 from typing import Any
@@ -46,15 +47,25 @@ class LsTool(Tool):
             stat = target.stat()
             return f"{target.name}  ({_format_size(stat.st_size)})"
 
-        lines: list[str] = []
-        self._list_dir(target, lines, depth=0, max_depth=max_depth, show_hidden=show_hidden)
+        # Offload blocking directory traversal to thread pool
+        lines: list[str] = await asyncio.to_thread(
+            self._list_dir_sync, target, max_depth, show_hidden,
+        )
 
         if not lines:
             return "(empty directory)"
         return "\n".join(lines)
 
-    def _list_dir(
-        self,
+    @staticmethod
+    def _list_dir_sync(
+        target: Path, max_depth: int, show_hidden: bool,
+    ) -> list[str]:
+        lines: list[str] = []
+        LsTool._walk(target, lines, depth=0, max_depth=max_depth, show_hidden=show_hidden)
+        return lines
+
+    @staticmethod
+    def _walk(
         directory: Path,
         lines: list[str],
         depth: int,
@@ -89,7 +100,7 @@ class LsTool(Tool):
                 suffix = f"  ({child_count} items)" if child_count >= 0 else ""
                 lines.append(f"{indent}{name}/{suffix}")
                 if depth + 1 < max_depth:
-                    self._list_dir(entry, lines, depth + 1, max_depth, show_hidden)
+                    LsTool._walk(entry, lines, depth + 1, max_depth, show_hidden)
             else:
                 try:
                     size = entry.stat().st_size

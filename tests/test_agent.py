@@ -6,6 +6,7 @@ import pytest
 
 from worker_ai.models import Done, TextDelta, ToolCallDelta, Usage
 from worker_core.agent import AgentEventType, AgentSession
+from worker_core.config import PermissionsConfig
 from worker_core.tools.builtins import create_builtin_tools
 
 from conftest import MockProvider
@@ -142,3 +143,36 @@ async def test_session_preserves_history():
     assert session.messages[0].role.value == "system"
     assert session.messages[1].content == "msg1"
     assert session.messages[3].content == "msg2"
+
+
+@pytest.mark.asyncio
+async def test_permission_denied_tool_call(tmp_workdir):
+    """Denied permissions should block tool execution and return an error result."""
+    provider = MockProvider(
+        responses=[
+            [
+                ToolCallDelta(
+                    id="tc_1",
+                    name="write",
+                    arguments={"path": "blocked.txt", "content": "secret"},
+                ),
+                Done(usage=Usage()),
+            ],
+            [TextDelta(content="handled"), Done(usage=Usage())],
+        ]
+    )
+    tools = create_builtin_tools(tmp_workdir)
+    session = AgentSession(
+        provider=provider,
+        model="test-model",
+        tools=tools,
+        permissions_config=PermissionsConfig(write="deny"),
+    )
+
+    events = []
+    async for event in session.run("create file"):
+        events.append(event)
+
+    tool_results = [e for e in events if e.type == AgentEventType.TOOL_RESULT]
+    assert len(tool_results) == 1
+    assert "denied" in tool_results[0].content.lower()

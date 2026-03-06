@@ -28,6 +28,7 @@ from worker_ai.models import (
 from worker_ai.provider import Provider
 
 from worker_core.extensions import HookDispatcher
+from worker_core.permissions import PermissionPolicy
 from worker_core.tools import Tool
 
 
@@ -90,6 +91,7 @@ class AgentSession:
         max_turns: int = 50,
         thinking_level: ThinkingLevel = "off",
         permission_callback: Any | None = None,
+        permissions_config: Any | None = None,
         hooks: HookDispatcher | None = None,
         store: SessionStore | None = None,
         session_id: str = "",
@@ -104,6 +106,11 @@ class AgentSession:
         self.max_turns = max_turns
         self.thinking_level: ThinkingLevel = thinking_level
         self.permission_callback = permission_callback
+        self.permission_policy: PermissionPolicy | None = None
+        if permissions_config is not None:
+            self.permission_policy = PermissionPolicy(
+                permissions_config, callback=permission_callback
+            )
         self.hooks = hooks or HookDispatcher()
 
         # Build system prompt: default + config + context files
@@ -460,6 +467,9 @@ class AgentSession:
 
             # Execute tool calls
             for i, tc in enumerate(tool_calls):
+                # Yield to event loop so UI stays responsive
+                await asyncio.sleep(0)
+
                 if self._abort_event.is_set():
                     yield AgentEvent(type=AgentEventType.ERROR, error="Aborted.")
                     return
@@ -480,13 +490,27 @@ class AgentSession:
                     result = f"Error: Unknown tool '{tc.name}'"
                     is_error = True
                 else:
-                    try:
-                        result = await tool.execute(**exec_args)
-                        is_error = False
-                    except Exception as e:
-                        await self.hooks.fire("on_error", session=self, error=e)
-                        result = f"Error executing {tc.name}: {e}"
-                        is_error = True
+                    if self.permission_policy is not None:
+                        permission = await self.permission_policy.check(tc.name, exec_args)
+                        if not permission.allowed:
+                            result = f"Error: {permission.reason}"
+                            is_error = True
+                        else:
+                            try:
+                                result = await tool.execute(**exec_args)
+                                is_error = False
+                            except Exception as e:
+                                await self.hooks.fire("on_error", session=self, error=e)
+                                result = f"Error executing {tc.name}: {e}"
+                                is_error = True
+                    else:
+                        try:
+                            result = await tool.execute(**exec_args)
+                            is_error = False
+                        except Exception as e:
+                            await self.hooks.fire("on_error", session=self, error=e)
+                            result = f"Error executing {tc.name}: {e}"
+                            is_error = True
 
                 yield AgentEvent(
                     type=AgentEventType.TOOL_RESULT,

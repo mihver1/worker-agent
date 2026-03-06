@@ -5,10 +5,9 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from typing import Any
 
 import click
-
-from typing import Any
 
 from worker_core.config import (
     generate_global_config,
@@ -20,10 +19,27 @@ from worker_core.config import (
 
 @click.group(invoke_without_command=True)
 @click.option("-p", "--prompt", default=None, help="One-shot prompt (print mode)")
-@click.option("-c", "--continue", "continue_session", is_flag=True, help="Continue the most recent session")
-@click.option("-r", "--resume", "resume_id", default=None, help="Resume a specific session by ID")
+@click.option(
+    "-c",
+    "--continue",
+    "continue_session",
+    is_flag=True,
+    help="Continue the most recent session",
+)
+@click.option(
+    "-r",
+    "--resume",
+    "resume_id",
+    default=None,
+    help="Resume a specific session by ID",
+)
 @click.pass_context
-def cli(ctx: click.Context, prompt: str | None, continue_session: bool, resume_id: str | None) -> None:
+def cli(
+    ctx: click.Context,
+    prompt: str | None,
+    continue_session: bool,
+    resume_id: str | None,
+) -> None:
     """Worker — extensible Python coding agent."""
     # Check for migrations on startup
     from worker_core.migrations import check_and_migrate
@@ -38,7 +54,13 @@ def cli(ctx: click.Context, prompt: str | None, continue_session: bool, resume_i
         full_prompt = prompt
         if stdin_content:
             full_prompt = f"{stdin_content}\n\n{prompt}"
-        asyncio.run(_print_mode(full_prompt, continue_session=continue_session, resume_id=resume_id or ""))
+        asyncio.run(
+            _print_mode(
+                full_prompt,
+                continue_session=continue_session,
+                resume_id=resume_id or "",
+            )
+        )
         return
     if ctx.invoked_subcommand is None:
         # Default: local mode (TUI + agent in-process)
@@ -53,8 +75,8 @@ def init() -> None:
     generate_global_config()
     cwd = os.getcwd()
     generate_project_config(cwd)
-    click.echo(f"Initialized Worker config:")
-    click.echo(f"  Global: ~/.config/worker/config.toml")
+    click.echo("Initialized Worker config:")
+    click.echo("  Global: ~/.config/worker/config.toml")
     click.echo(f"  Project: {cwd}/.worker/config.toml")
     click.echo(f"  Project: {cwd}/.worker/AGENTS.md")
 
@@ -225,7 +247,7 @@ def login(provider: str) -> None:
     if oauth is None:
         supported = "kimi, anthropic, openai"
         click.echo(f"OAuth not supported for '{provider}'. Supported: {supported}")
-        click.echo(f"Use an API key instead (config or env variable).")
+        click.echo("Use an API key instead (config or env variable).")
         return
     try:
         asyncio.run(oauth.login())
@@ -245,37 +267,25 @@ async def _print_mode(
     """One-shot prompt: run agent, print result to stdout."""
     import uuid as _uuid
 
-    from worker_ai.providers import create_default_registry
-    from worker_core.agent import AgentEventType, AgentSession
+    from worker_core.agent import AgentEventType
+    from worker_core.bootstrap import (
+        bootstrap_runtime,
+        create_agent_session_from_bootstrap,
+    )
     from worker_core.sessions import SessionStore
-    from worker_core.tools.builtins import create_builtin_tools
 
     config = load_config(os.getcwd())
     provider_name, model_id = resolve_model(config)
 
-    registry = create_default_registry()
-
-    # Resolve API key from config or env
-    api_key, auth_type = _resolve_api_key(config, provider_name)
-
-    provider_config = config.providers.get(provider_name)
-    kwargs: dict[str, Any] = {}
-    if provider_config and provider_config.base_url:
-        kwargs["base_url"] = provider_config.base_url
-    if auth_type == "oauth":
-        kwargs["auth_type"] = "oauth"
-
-    provider = registry.create(provider_name, api_key=api_key, **kwargs)
-
     cwd = os.getcwd()
-    tools = create_builtin_tools(cwd)
-
-    # Load extensions
-    from worker_core.extensions import load_extensions
-
-    extensions, hooks = load_extensions()
-    for ext_ in extensions:
-        tools.extend(ext_.get_tools())
+    runtime = await bootstrap_runtime(
+        config,
+        provider_name,
+        model_id,
+        project_dir=cwd,
+        resolve_api_key=_resolve_api_key,
+        include_extensions=True,
+    )
 
     # Session store
     store = SessionStore(config.sessions.db_path)
@@ -298,21 +308,12 @@ async def _print_mode(
     if not session_id:
         session_id = str(_uuid.uuid4())
         await store.create_session(session_id, model_id)
-
-    session = AgentSession(
-        provider=provider,
-        model=model_id,
-        tools=tools,
-        system_prompt=config.agent.system_prompt,
+    session = create_agent_session_from_bootstrap(
+        config,
+        runtime,
         project_dir=cwd,
-        temperature=config.agent.temperature,
-        max_turns=config.agent.max_turns,
-        thinking_level=config.agent.thinking,  # type: ignore[arg-type]
         store=store,
         session_id=session_id,
-        auto_compact=config.sessions.auto_compact,
-        compact_threshold=config.sessions.compact_threshold,
-        hooks=hooks,
     )
 
     if prior_messages:
@@ -335,7 +336,7 @@ async def _print_mode(
             print()  # Final newline
 
     await store.close()
-    await provider.close()
+    await runtime.provider.close()
 
 
 # ── API key resolution ────────────────────────────────────────────
@@ -356,7 +357,7 @@ _ENV_KEY_MAP = {
 }
 
 
-def _resolve_api_key(config, provider_name: str) -> tuple[str | None, str]:
+async def _resolve_api_key(config, provider_name: str) -> tuple[str | None, str]:
     """Resolve API key: config → env → OAuth token → None.
 
     Returns (key, auth_type) where auth_type is "api" or "oauth".
@@ -371,13 +372,18 @@ def _resolve_api_key(config, provider_name: str) -> tuple[str | None, str]:
         val = os.environ.get(env_var)
         if val:
             return val, "api"
-    # From OAuth token store (auth.json)
+    # From OAuth token store (auth.json), refreshing expired OAuth tokens when possible.
     try:
-        from worker_ai.oauth import TokenStore
+        from worker_ai.oauth import TokenStore, get_oauth_provider
 
-        store = TokenStore()
-        token = store.load(provider_name)
-        if token and not token.is_expired:
+        oauth = get_oauth_provider(provider_name)
+        if oauth is not None:
+            token = await oauth.get_token()
+        else:
+            token = TokenStore().load(provider_name)
+            if token and token.is_expired:
+                token = None
+        if token:
             return token.access_token, "oauth"
     except Exception:
         pass

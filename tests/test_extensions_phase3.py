@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import pytest
-
-from worker_ai.models import Done, Message, Role, TextDelta, ToolCallDelta, Usage
+from conftest import MockProvider
+from worker_ai.models import Done, Message, Role, TextDelta, ToolCallDelta, ToolDef, Usage
+from worker_core import extensions as extensions_mod
 from worker_core.agent import AgentEventType, AgentSession
 from worker_core.extensions import (
     CommandHandler,
@@ -12,13 +13,10 @@ from worker_core.extensions import (
     HookDispatcher,
     hook,
     load_extensions,
+    load_extensions_async,
     reload_extensions_async,
 )
 from worker_core.tools import Tool
-from worker_ai.models import ToolDef, ToolParam
-
-from conftest import MockProvider
-
 
 # ── Test Extensions ───────────────────────────────────────────────
 
@@ -221,7 +219,8 @@ async def test_on_error_hook_fires():
     class ErrorProvider(MockProvider):
         async def stream_chat(self, *args, **kwargs):
             raise RuntimeError("test error")
-            yield  # noqa: unreachable — needed for async generator
+            if False:  # pragma: no cover
+                yield
 
     provider = ErrorProvider()
     session = AgentSession(
@@ -302,16 +301,64 @@ async def test_before_tool_call_modifies_args(tmp_workdir):
 
 
 @pytest.mark.asyncio
-async def test_reload_extensions_async():
-    ext = SampleExtension()
-    ext.loaded = True
+async def test_load_extensions_async_calls_on_load(monkeypatch):
+    class LifecycleExtension(Extension):
+        name = "lifecycle"
 
-    new_instances, new_dispatcher = await reload_extensions_async([ext])
+        def __init__(self):
+            self.loaded = False
 
-    # Old extension should be unloaded
-    assert ext.unloaded is True
-    # New list comes from discover (likely empty in test env)
-    assert isinstance(new_instances, list)
+        async def on_load(self) -> None:
+            self.loaded = True
+
+    monkeypatch.setattr(
+        extensions_mod,
+        "discover_extensions",
+        lambda group="worker.extensions": {"lifecycle": LifecycleExtension},
+    )
+
+    instances, dispatcher = await load_extensions_async()
+
+    assert len(instances) == 1
+    assert instances[0].loaded is True
+    assert isinstance(dispatcher, HookDispatcher)
+
+
+@pytest.mark.asyncio
+async def test_reload_extensions_async_unloads_old_instances_and_activates_new(monkeypatch):
+    events: list[str] = []
+
+    class OldExtension(Extension):
+        def __init__(self):
+            self.unloaded = False
+
+        async def on_unload(self) -> None:
+            self.unloaded = True
+            events.append("old-unload")
+
+    class NewExtension(Extension):
+        name = "replacement"
+
+        def __init__(self):
+            self.loaded = False
+
+        async def on_load(self) -> None:
+            self.loaded = True
+            events.append("new-load")
+
+    old = OldExtension()
+    monkeypatch.setattr(
+        extensions_mod,
+        "discover_extensions",
+        lambda group="worker.extensions": {"replacement": NewExtension},
+    )
+
+    new_instances, new_dispatcher = await reload_extensions_async([old])
+
+    assert old.unloaded is True
+    assert events == ["old-unload", "new-load"]
+    assert len(new_instances) == 1
+    assert new_instances[0].loaded is True
     assert isinstance(new_dispatcher, HookDispatcher)
 
 

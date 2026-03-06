@@ -14,6 +14,61 @@ from worker_core.tools import Tool
 _MAX_READ_SIZE = 256 * 1024  # 256 KB
 
 
+async def _read_text(path: Path, **kwargs: Any) -> str:
+    """Non-blocking file read."""
+    return await asyncio.to_thread(path.read_text, **kwargs)
+
+
+async def _write_text(path: Path, content: str, **kwargs: Any) -> None:
+    """Non-blocking file write."""
+    await asyncio.to_thread(path.write_text, content, **kwargs)
+
+
+def _read_text_limited_sync(path: Path, max_chars: int, **kwargs: Any) -> tuple[str, bool]:
+    """Read up to max_chars from a text file without loading the whole file."""
+    with path.open("r", **kwargs) as f:
+        content = f.read(max_chars + 1)
+    truncated = len(content) > max_chars
+    return content[:max_chars], truncated
+
+
+def _read_numbered_range_sync(
+    path: Path,
+    start_line: int,
+    end_line: int,
+    max_chars: int,
+    **kwargs: Any,
+) -> tuple[str, bool]:
+    """Read a line range with numbering, bounded by max_chars."""
+    chunks: list[str] = []
+    total_chars = 0
+    truncated = False
+
+    with path.open("r", **kwargs) as f:
+        for lineno, line in enumerate(f, start=1):
+            if start_line and lineno < start_line:
+                continue
+            if end_line and lineno > end_line:
+                break
+
+            rendered = f"{lineno}|{line.rstrip(chr(13) + chr(10))}"
+            if chunks:
+                rendered = "\n" + rendered
+
+            next_size = total_chars + len(rendered)
+            if next_size > max_chars:
+                remaining = max_chars - total_chars
+                if remaining > 0:
+                    chunks.append(rendered[:remaining])
+                truncated = True
+                break
+
+            chunks.append(rendered)
+            total_chars = next_size
+
+    return "".join(chunks), truncated
+
+
 class ReadTool(Tool):
     """Read file contents, optionally with line ranges."""
 
@@ -38,24 +93,36 @@ class ReadTool(Tool):
             return f"Error: Not a file: {full_path}"
 
         try:
-            content = full_path.read_text(encoding="utf-8", errors="replace")
+            if start_line or end_line:
+                output, truncated = await asyncio.to_thread(
+                    _read_numbered_range_sync,
+                    full_path,
+                    start_line,
+                    end_line,
+                    _MAX_READ_SIZE,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                if truncated:
+                    output += "\n... (truncated)"
+                return output
+
+            content, truncated = await asyncio.to_thread(
+                _read_text_limited_sync,
+                full_path,
+                _MAX_READ_SIZE,
+                encoding="utf-8",
+                errors="replace",
+            )
         except OSError as e:
             return f"Error reading file: {e}"
 
-        if len(content) > _MAX_READ_SIZE:
-            content = content[:_MAX_READ_SIZE] + "\n... (truncated)"
-
         lines = content.splitlines()
-        if start_line or end_line:
-            start = max(0, start_line - 1) if start_line else 0
-            end = end_line if end_line else len(lines)
-            lines = lines[start:end]
-            offset = start
-        else:
-            offset = 0
-
-        numbered = [f"{i + offset + 1}|{line}" for i, line in enumerate(lines)]
-        return "\n".join(numbered)
+        numbered = [f"{i + 1}|{line}" for i, line in enumerate(lines)]
+        result = "\n".join(numbered)
+        if truncated:
+            result += "\n... (truncated)"
+        return result
 
     def definition(self) -> ToolDef:
         return ToolDef(
@@ -95,7 +162,7 @@ class WriteTool(Tool):
         full_path = Path(self.working_dir) / path if not os.path.isabs(path) else Path(path)
         try:
             full_path.parent.mkdir(parents=True, exist_ok=True)
-            full_path.write_text(content, encoding="utf-8")
+            await _write_text(full_path, content, encoding="utf-8")
         except OSError as e:
             return f"Error writing file: {e}"
 
@@ -135,7 +202,7 @@ class EditTool(Tool):
             return f"Error: File not found: {full_path}"
 
         try:
-            content = full_path.read_text(encoding="utf-8")
+            content = await _read_text(full_path, encoding="utf-8")
         except OSError as e:
             return f"Error reading file: {e}"
 
@@ -147,7 +214,7 @@ class EditTool(Tool):
 
         new_content = content.replace(search, replace, 1)
         try:
-            full_path.write_text(new_content, encoding="utf-8")
+            await _write_text(full_path, new_content, encoding="utf-8")
         except OSError as e:
             return f"Error writing file: {e}"
 
@@ -194,7 +261,7 @@ class BashTool(Tool):
                 cwd=self.working_dir,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()  # type: ignore[union-attr]
             return f"Error: Command timed out after {timeout}s"
         except OSError as e:

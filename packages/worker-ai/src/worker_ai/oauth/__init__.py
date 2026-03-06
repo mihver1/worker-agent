@@ -20,6 +20,7 @@ import time
 import urllib.parse
 import webbrowser
 from abc import ABC, abstractmethod
+from contextlib import suppress
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -71,10 +72,8 @@ class TokenStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data: dict[str, Any] = {}
         if self.path.exists():
-            try:
+            with suppress(json.JSONDecodeError):
                 data = json.loads(self.path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                pass
         data[token.provider] = asdict(token)
         self.path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
@@ -126,7 +125,12 @@ class OAuthProvider(ABC):
         token = self.store.load(self.name)
         if token is None:
             return None
-        if token.is_expired and token.refresh_token:
+        if token.is_expired:
+            if not token.refresh_token:
+                logger.warning(
+                    "Expired token without refresh token for %s", self.name
+                )
+                return None
             try:
                 token = await self.refresh(token)
                 self.store.save(token)
@@ -173,12 +177,9 @@ class _DeviceFlowOAuth(OAuthProvider):
             print(f"\n  {self.name.capitalize()} OAuth — Device Authorization")
             print(f"   Open:  {verification_uri}")
             print(f"   Code:  {user_code}")
-            print(f"   Waiting for authorization...\n")
-
-            try:
+            print("   Waiting for authorization...\n")
+            with suppress(Exception):
                 webbrowser.open(verification_uri)
-            except Exception:
-                pass
 
             deadline = time.time() + expires_in
             while time.time() < deadline:
@@ -277,13 +278,10 @@ class _CodePasteOAuth(OAuthProvider):
         auth_url = f"{self.AUTH_URL}?{params}"
 
         print(f"\n  {self.name.capitalize()} OAuth — Browser Authorization")
-        print(f"   Opening browser...")
+        print("   Opening browser...")
         print(f"   If it doesn't open, visit:\n   {auth_url}\n")
-
-        try:
+        with suppress(Exception):
             webbrowser.open(auth_url)
-        except Exception:
-            pass
 
         # User pastes the code from the browser (blocking I/O in executor)
         code_input: str = await asyncio.get_event_loop().run_in_executor(
@@ -389,8 +387,7 @@ class _LocalCallbackOAuth(OAuthProvider):
         auth_url = f"{self.AUTH_URL}?{urllib.parse.urlencode(params)}"
 
         code_future: asyncio.Future[str] = asyncio.get_event_loop().create_future()
-
-        _SUCCESS_HTML = (
+        success_html = (
             "<html><body><h1>Authorized!</h1>"
             "<p>You can close this tab and return to the terminal.</p>"
             "<script>setTimeout(()=>window.close(),2000)</script>"
@@ -422,9 +419,7 @@ class _LocalCallbackOAuth(OAuthProvider):
             code = request.query.get("code", "")
             if code and not code_future.done():
                 code_future.set_result(code)
-                return web.Response(
-                    text=_SUCCESS_HTML, content_type="text/html"
-                )
+                return web.Response(text=success_html, content_type="text/html")
 
             if not code_future.done():
                 code_future.set_exception(
@@ -440,8 +435,8 @@ class _LocalCallbackOAuth(OAuthProvider):
         await site.start()
 
         print(f"\n  {self.name.capitalize()} OAuth — Browser Authorization")
-        print(f"   Opening browser...")
-        print(f"   Waiting for authorization...\n")
+        print("   Opening browser...")
+        print("   Waiting for authorization...\n")
 
         try:
             webbrowser.open(auth_url)

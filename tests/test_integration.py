@@ -4,18 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from pathlib import Path
 
 import pytest
-
+from conftest import MockProvider
 from worker_ai.models import Done, TextDelta, Usage
 from worker_ai.oauth import OAuthToken, TokenStore
 from worker_core.config import WorkerConfig
 from worker_core.extensions import discover_extensions
 from worker_server.server import ServerState, _create_rest_app, handle_client
-
-from conftest import MockProvider
-
 
 # ── OAuth Token Store ─────────────────────────────────────────────
 
@@ -66,6 +62,43 @@ class TestTokenStore:
     def test_no_expiry_not_expired(self):
         token = OAuthToken(access_token="x", expires_at=0.0)
         assert token.is_expired is False
+
+
+class TestOAuthProviderRefresh:
+    @pytest.mark.asyncio
+    async def test_get_token_refreshes_and_persists(self, tmp_path, monkeypatch):
+        import worker_ai.oauth as oauth_mod
+
+        store = TokenStore(path=tmp_path / "auth.json")
+        store.save(
+            OAuthToken(
+                access_token="expired_token",
+                refresh_token="refresh_token",
+                provider="anthropic",
+                expires_at=1.0,
+            )
+        )
+
+        async def fake_refresh(self, token):
+            assert token.access_token == "expired_token"
+            return OAuthToken(
+                access_token="refreshed_token",
+                refresh_token="new_refresh_token",
+                provider="anthropic",
+                expires_at=9999999999.0,
+            )
+
+        monkeypatch.setattr(oauth_mod.AnthropicOAuth, "refresh", fake_refresh)
+
+        provider = oauth_mod.AnthropicOAuth(token_store=store)
+        token = await provider.get_token()
+
+        assert token is not None
+        assert token.access_token == "refreshed_token"
+        reloaded = store.load("anthropic")
+        assert reloaded is not None
+        assert reloaded.access_token == "refreshed_token"
+        assert reloaded.refresh_token == "new_refresh_token"
 
 
 # ── REST API ──────────────────────────────────────────────────────
@@ -123,6 +156,32 @@ class TestRESTAPI:
                 headers={"Authorization": "Bearer test_token"},
             )
             assert resp.status == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_session_closes_provider(self, state):
+        from aiohttp.test_utils import TestClient, TestServer
+        from worker_core.agent import AgentSession
+
+        class _ClosableMockProvider(MockProvider):
+            def __init__(self):
+                super().__init__()
+                self.closed = False
+
+            async def close(self) -> None:
+                self.closed = True
+
+        provider = _ClosableMockProvider()
+        state.sessions["sess-1"] = AgentSession(provider=provider, model="test", tools=[])
+
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.delete(
+                "/api/sessions/sess-1",
+                headers={"Authorization": "Bearer test_token"},
+            )
+            assert resp.status == 200
+        assert provider.closed is True
+        assert "sess-1" not in state.sessions
 
 
 # ── WebSocket Protocol ────────────────────────────────────────────
@@ -230,6 +289,37 @@ class TestWebSocketProtocol:
         messages = [json.loads(m) for m in ws.sent]
         assert messages[0]["type"] == "error"
         assert "Unknown type" in messages[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_max_sessions_enforced_for_new_session(self):
+        from worker_core.agent import AgentSession
+
+        config = WorkerConfig()
+        config.server.max_sessions = 1
+        state = ServerState(config=config)
+        state.sessions["existing"] = AgentSession(
+            provider=MockProvider(),
+            model="test",
+            tools=[],
+        )
+
+        ws = FakeWebSocket()
+        ws.inject(
+            json.dumps(
+                {
+                    "type": "message",
+                    "session_id": "another",
+                    "content": "hi",
+                }
+            )
+        )
+        ws.close_input()
+
+        await handle_client(ws, state)  # type: ignore[arg-type]
+
+        messages = [json.loads(m) for m in ws.sent]
+        assert messages[0]["type"] == "error"
+        assert "Maximum sessions reached" in messages[0]["error"]
 
 
 # ── Extension Discovery ──────────────────────────────────────────

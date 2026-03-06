@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
 import uuid
+from contextlib import suppress
 from typing import Any
 
+import worker_core.cmux as cmux
 from rich.markdown import Markdown
 from rich.text import Text
 from textual import work
@@ -16,17 +17,19 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Collapsible, Footer, Header, Input, Static
-
 from worker_ai.models import Role
 from worker_core.agent import AgentEventType, AgentSession
+from worker_core.bootstrap import (
+    bootstrap_runtime,
+    create_agent_session_from_bootstrap,
+    provider_requires_api_key,
+)
 from worker_core.cmux import is_cmux
-import worker_core.cmux as cmux
 from worker_core.config import load_config, resolve_model
 from worker_core.prompts import load_prompts, render_prompt
 from worker_core.sessions import SessionStore
-from worker_core.skills import inject_skill, list_skills, load_skills
+from worker_core.skills import inject_skill, load_skills
 from worker_core.tools.builtins import create_builtin_tools
-
 
 # ── Widgets ───────────────────────────────────────────────────────
 
@@ -192,6 +195,7 @@ class WorkerApp(App):
         self._extensions: list[Any] = []
         self._current_widget: MessageWidget | None = None
         self._ws: Any = None  # websocket connection for remote mode
+        self._remote_session_id = str(uuid.uuid4())
         self._prompts: dict[str, str] = {}  # loaded prompt templates
         self._skills: dict[str, Any] = {}  # loaded skills (Skill objects)
         self._active_theme: str = "dark"
@@ -229,30 +233,22 @@ class WorkerApp(App):
             self.bind(key, action, description=action)
 
     async def _init_local_session(self) -> None:
-        from worker_ai.providers import create_default_registry
         from worker_core.cli import _resolve_api_key
 
         config = load_config(os.getcwd())
         provider_name, model_id = resolve_model(config)
-        registry = create_default_registry()
-        api_key, auth_type = _resolve_api_key(config, provider_name)
-
-        prov_cfg = config.providers.get(provider_name)
-        kwargs: dict[str, Any] = {}
-        if prov_cfg and prov_cfg.base_url:
-            kwargs["base_url"] = prov_cfg.base_url
-        if auth_type == "oauth":
-            kwargs["auth_type"] = "oauth"
-
-        provider = registry.create(provider_name, api_key=api_key, **kwargs)
-        tools = create_builtin_tools(os.getcwd())
-
-        # Load extensions
-        from worker_core.extensions import load_extensions
-
-        self._extensions, hooks = load_extensions()
-        for ext in self._extensions:
-            tools.extend(ext.get_tools())
+        project_dir = os.getcwd()
+        runtime = await bootstrap_runtime(
+            config,
+            provider_name,
+            model_id,
+            project_dir=project_dir,
+            resolve_api_key=_resolve_api_key,
+            include_extensions=True,
+        )
+        self._extensions = runtime.extensions
+        self._input_price = runtime.input_price_per_m
+        self._output_price = runtime.output_price_per_m
 
         # Session store
         self._store = SessionStore(config.sessions.db_path)
@@ -276,20 +272,12 @@ class WorkerApp(App):
         if not session_id:
             session_id = str(uuid.uuid4())
             await self._store.create_session(session_id, model_id)
-
-        self._session = AgentSession(
-            provider=provider,
-            model=model_id,
-            tools=tools,
-            system_prompt=config.agent.system_prompt,
-            temperature=config.agent.temperature,
-            max_turns=config.agent.max_turns,
-            thinking_level=config.agent.thinking,  # type: ignore[arg-type]
+        self._session = create_agent_session_from_bootstrap(
+            config,
+            runtime,
+            project_dir=project_dir,
             store=self._store,
             session_id=session_id,
-            auto_compact=config.sessions.auto_compact,
-            compact_threshold=config.sessions.compact_threshold,
-            hooks=hooks,
         )
 
         # Restore prior messages and display them
@@ -307,17 +295,6 @@ class WorkerApp(App):
         self.query_one("#status-footer", StatusFooter).set_model(
             f"{provider_name}/{model_id}"
         )
-
-        # Try to get pricing from catalog (fire-and-forget)
-        try:
-            from worker_ai.models_catalog import ModelsCatalog
-
-            cat_model = await ModelsCatalog.get_model(provider_name, model_id)
-            if cat_model:
-                self._input_price = cat_model.input_price_per_m
-                self._output_price = cat_model.output_price_per_m
-        except Exception:
-            pass
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -401,7 +378,10 @@ class WorkerApp(App):
             self._list_models()
         elif cmd == "/connect":
             if not arg:
-                self._add_message("Usage: /connect <provider>  (anthropic, openai, kimi)", role="tool")
+                self._add_message(
+                    "Usage: /connect <provider>  (anthropic, openai, kimi)",
+                    role="tool",
+                )
             else:
                 self._run_connect(arg)
         elif cmd in ("/resume", "/sessions"):
@@ -489,10 +469,18 @@ class WorkerApp(App):
 
             elif event.type == AgentEventType.TOOL_CALL:
                 had_tool_calls = True
-                tool_label = f"⚙ {event.tool_name}({', '.join(f'{k}={v!r}' for k, v in event.tool_args.items())})"
+                tool_args = ", ".join(
+                    f"{k}={v!r}" for k, v in event.tool_args.items()
+                )
+                tool_label = f"⚙ {event.tool_name}({tool_args})"
                 self._add_tool_message(tool_label)
                 # cmux: update status to tool call
-                await cmux.set_status("state", f"tool: {event.tool_name}", icon="gear", color="#f9e2af")
+                await cmux.set_status(
+                    "state",
+                    f"tool: {event.tool_name}",
+                    icon="gear",
+                    color="#f9e2af",
+                )
                 await cmux.log(f"tool: {event.tool_name}", source="worker")
 
             elif event.type == AgentEventType.TOOL_RESULT:
@@ -537,12 +525,14 @@ class WorkerApp(App):
 
         if not self._ws:
             try:
-                self._ws = await websockets.connect(self.remote_url)
+                self._ws = await websockets.connect(
+                    self.remote_url,
+                    additional_headers=self._remote_connect_headers(),
+                )
             except Exception as e:
                 self._add_message(f"Connection failed: {e}", role="error")
                 return
-
-        await self._ws.send(json.dumps({"type": "message", "content": text}))
+        await self._ws.send(json.dumps(self._remote_message_payload(text)))
 
         widget = self._add_message("", role="assistant")
 
@@ -586,8 +576,15 @@ class WorkerApp(App):
 
         config = load_config(os.getcwd())
 
-        # Key providers we care about
-        key_providers = ["anthropic", "openai", "google", "kimi", "groq", "openrouter", "deepseek", "mistral", "xai"]
+        # Providers supported directly plus configured aliases.
+        key_providers = [
+            "anthropic", "openai", "google", "kimi", "ollama",
+            "groq", "openrouter", "deepseek", "mistral", "xai",
+            "together", "cerebras",
+        ]
+        for provider_name in config.providers:
+            if provider_name not in key_providers:
+                key_providers.append(provider_name)
 
         catalog = await ModelsCatalog.load()
         lines: list[str] = []
@@ -595,9 +592,9 @@ class WorkerApp(App):
             prov = catalog.get(pid)
             if not prov or not prov.models:
                 continue
-            # Check if we have credentials
-            api_key, _ = _resolve_api_key(config, pid)
-            marker = "\u2713" if api_key else " "
+            requires_api_key = provider_requires_api_key(config, pid)
+            api_key, _ = await _resolve_api_key(config, pid)
+            marker = "✓" if (api_key or not requires_api_key) else " "
             lines.append(f"\n  [{marker}] {prov.name}:")
             for m in prov.models[:8]:  # Show top 8 models per provider
                 ctx = f"{m.context_window // 1000}k" if m.context_window else "?"
@@ -623,16 +620,10 @@ class WorkerApp(App):
             return
 
         from worker_ai.models_catalog import ModelsCatalog
-        from worker_ai.providers import create_default_registry
         from worker_core.cli import _resolve_api_key
 
         provider_name, model_id = model_str.split("/", 1)
         config = load_config(os.getcwd())
-        registry = create_default_registry()
-
-        if provider_name not in registry.available:
-            self._add_message(f"Unknown provider: {provider_name}", role="error")
-            return
 
         # Validate model exists in catalog
         catalog_model = await ModelsCatalog.get_model(provider_name, model_id)
@@ -643,48 +634,46 @@ class WorkerApp(App):
             )
             return
 
-        api_key, auth_type = _resolve_api_key(config, provider_name)
-        if not api_key:
+        api_key, _ = await _resolve_api_key(config, provider_name)
+        if provider_requires_api_key(config, provider_name) and not api_key:
             self._add_message(
                 f"No credentials for {provider_name}. Run /connect {provider_name}",
                 role="error",
             )
             return
-
-        prov_cfg = config.providers.get(provider_name)
-        kwargs: dict[str, Any] = {}
-        if prov_cfg and prov_cfg.base_url:
-            kwargs["base_url"] = prov_cfg.base_url
-        if auth_type == "oauth":
-            kwargs["auth_type"] = "oauth"
-
         try:
-            provider = registry.create(provider_name, api_key=api_key, **kwargs)
+            runtime = await bootstrap_runtime(
+                config,
+                provider_name,
+                model_id,
+                project_dir=os.getcwd(),
+                resolve_api_key=_resolve_api_key,
+                include_extensions=True,
+            )
         except Exception as e:
             self._add_message(f"Failed to create provider: {e}", role="error")
             return
+        self._extensions = runtime.extensions
+        self._input_price = runtime.input_price_per_m
+        self._output_price = runtime.output_price_per_m
 
         # Close old provider
         if self._session:
             await self._session.provider.close()
-
-        tools = create_builtin_tools(os.getcwd())
         session_id = str(uuid.uuid4())
         if self._store:
             await self._store.create_session(session_id, model_id)
-        self._session = AgentSession(
-            provider=provider,
-            model=model_id,
-            tools=tools,
-            system_prompt=config.agent.system_prompt,
-            temperature=config.agent.temperature,
-            max_turns=config.agent.max_turns,
+        self._session = create_agent_session_from_bootstrap(
+            config,
+            runtime,
+            project_dir=os.getcwd(),
             store=self._store,
             session_id=session_id,
-            auto_compact=config.sessions.auto_compact,
-            compact_threshold=config.sessions.compact_threshold,
         )
         self.sub_title = f"{provider_name}/{model_id}"
+        self.query_one("#status-footer", StatusFooter).set_model(
+            f"{provider_name}/{model_id}"
+        )
         self._add_message(f"Switched to {provider_name}/{model_id}", role="tool")
 
     # ── Provider login ────────────────────────────────────────────
@@ -702,10 +691,16 @@ class WorkerApp(App):
             )
             return
 
-        self._add_message(f"Starting {provider_name} login... Check your browser/terminal.", role="tool")
+        self._add_message(
+            f"Starting {provider_name} login... Check your browser/terminal.",
+            role="tool",
+        )
         try:
             await oauth.login()
-            self._add_message(f"{provider_name.capitalize()} authorized! Use /model to switch.", role="tool")
+            self._add_message(
+                f"{provider_name.capitalize()} authorized! Use /model to switch.",
+                role="tool",
+            )
         except Exception as e:
             self._add_message(f"Login failed: {e}", role="error")
 
@@ -961,7 +956,7 @@ class WorkerApp(App):
 
     def _cmd_theme(self, name: str) -> None:
         """Switch or list themes."""
-        from worker_tui.themes import list_themes, load_themes
+        from worker_tui.themes import load_themes
 
         themes = load_themes(os.getcwd())
 
@@ -1055,8 +1050,6 @@ class WorkerApp(App):
         project_dir = os.getcwd()
         self._prompts = load_prompts(project_dir)
         self._skills = load_skills(project_dir)
-
-        ext_names = [e.name for e in self._extensions if e.name]
         self._add_message(
             f"Reloaded: {len(self._extensions)} extension(s), "
             f"{len(self._prompts)} prompt(s), "
@@ -1151,6 +1144,18 @@ class WorkerApp(App):
         scroll = self.query_one("#chat-scroll", VerticalScroll)
         scroll.scroll_end(animate=False)
 
+    def _remote_connect_headers(self) -> dict[str, str]:
+        if not self.auth_token:
+            return {}
+        return {"Authorization": f"Bearer {self.auth_token}"}
+
+    def _remote_message_payload(self, text: str) -> dict[str, Any]:
+        return {
+            "type": "message",
+            "content": text,
+            "session_id": self._remote_session_id,
+        }
+
     def action_toggle_tools(self) -> None:
         """Ctrl+O: toggle all tool output collapsibles."""
         for c in self._tool_collapsibles:
@@ -1165,21 +1170,19 @@ class WorkerApp(App):
         """Close all open async resources."""
         await self._close_store()
         if self._session and self._session.provider:
-            try:
+            with suppress(Exception):
                 await self._session.provider.close()
-            except Exception:
-                pass
         if self._ws:
-            try:
+            with suppress(Exception):
                 await self._ws.close()
-            except Exception:
-                pass
             self._ws = None
 
     async def action_clear(self) -> None:
         container = self.query_one("#chat-container", Vertical)
         container.remove_children()
         self._tool_collapsibles.clear()
+        if self.remote_url:
+            self._remote_session_id = str(uuid.uuid4())
         if self._session:
             new_id = str(uuid.uuid4())
             if self._store:

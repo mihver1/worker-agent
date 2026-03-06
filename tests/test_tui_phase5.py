@@ -387,3 +387,32 @@ class TestCollapsibleTracking:
 
         collapsibles.clear()
         assert len(collapsibles) == 0
+
+
+# ── Remote payload/auth helper tests ──────────────────────────────
+
+
+class TestRemoteTransportHelpers:
+    def test_remote_headers_with_token(self):
+        from worker_tui.app import WorkerApp
+
+        app = WorkerApp(remote_url="ws://localhost:7432", auth_token="tok_123")
+        headers = app._remote_connect_headers()
+        assert headers == {"Authorization": "Bearer tok_123"}
+
+    def test_remote_headers_without_token(self):
+        from worker_tui.app import WorkerApp
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        headers = app._remote_connect_headers()
+        assert headers == {}
+
+    def test_remote_payload_contains_session_id(self):
+        from worker_tui.app import WorkerApp
+
+        app = WorkerApp(remote_url="ws://localhost:7432", auth_token="tok_123")
+        payload = app._remote_message_payload("hello")
+        assert payload["type"] == "message"
+        assert payload["content"] == "hello"
+        assert isinstance(payload["session_id"], str)
+        assert payload["session_id"]

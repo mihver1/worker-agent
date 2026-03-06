@@ -6,7 +6,6 @@ import os
 from pathlib import Path
 
 import pytest
-
 from worker_core.tools.builtins import (
     BashTool,
     EditTool,
@@ -14,7 +13,6 @@ from worker_core.tools.builtins import (
     WriteTool,
     create_builtin_tools,
 )
-
 
 # ── ReadTool ──────────────────────────────────────────────────────
 
@@ -38,6 +36,22 @@ class TestReadTool:
         assert "2|Line 2" in result
         assert "1|Hello" not in result
         assert "3|Line 3" not in result
+
+    @pytest.mark.asyncio
+    async def test_read_late_line_range_from_large_file(self):
+        big_file = Path(self.workdir) / "big.txt"
+        big_file.write_text(
+            "".join(f"line-{i:05d}-{'x' * 32}\n" for i in range(1, 10001)),
+            encoding="utf-8",
+        )
+        assert big_file.stat().st_size > 256 * 1024
+
+        result = await self.tool.execute(path="big.txt", start_line=7000, end_line=7001)
+
+        assert "7000|line-07000-" in result
+        assert "7001|line-07001-" in result
+        assert "6999|" not in result
+        assert "... (truncated)" not in result
 
     @pytest.mark.asyncio
     async def test_read_nonexistent_file(self):

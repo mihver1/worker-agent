@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import json
-import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import aiosqlite
-
 from worker_ai.models import Message, Role, ToolCall, ToolResult
-
 
 _SCHEMA = """\
 CREATE TABLE IF NOT EXISTS sessions (
@@ -58,6 +56,7 @@ class SessionStore:
         Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
+        await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(_SCHEMA)
 
     async def close(self) -> None:
@@ -75,14 +74,20 @@ class SessionStore:
     async def create_session(self, session_id: str, model: str, title: str = "") -> None:
         now = _now()
         await self.db.execute(
-            "INSERT INTO sessions (id, title, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            (
+                "INSERT INTO sessions (id, title, model, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?)"
+            ),
             (session_id, title, model, now, now),
         )
         await self.db.commit()
 
     async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
         cursor = await self.db.execute(
-            "SELECT id, title, model, created_at, updated_at FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+            (
+                "SELECT id, title, model, created_at, updated_at "
+                "FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT ?"
+            ),
             (limit,),
         )
         rows = await cursor.fetchall()
@@ -102,7 +107,12 @@ class SessionStore:
         parent_id: int | None = None,
     ) -> int:
         tool_calls_json = (
-            json.dumps([{"id": tc.id, "name": tc.name, "arguments": tc.arguments} for tc in message.tool_calls])
+            json.dumps(
+                [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in message.tool_calls
+                ]
+            )
             if message.tool_calls
             else None
         )
@@ -119,8 +129,11 @@ class SessionStore:
         )
 
         cursor = await self.db.execute(
-            """INSERT INTO messages (session_id, parent_id, role, content, tool_calls, tool_result, reasoning, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "INSERT INTO messages (session_id, parent_id, role, content, "
+                "tool_calls, tool_result, reasoning, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
             (
                 session_id,
                 parent_id,
@@ -142,7 +155,10 @@ class SessionStore:
     async def get_messages(self, session_id: str) -> list[Message]:
         """Load linear message history for a session (follows parent chain from latest)."""
         cursor = await self.db.execute(
-            "SELECT role, content, tool_calls, tool_result, reasoning FROM messages WHERE session_id = ? ORDER BY id ASC",
+            (
+                "SELECT role, content, tool_calls, tool_result, reasoning "
+                "FROM messages WHERE session_id = ? ORDER BY id ASC"
+            ),
             (session_id,),
         )
         rows = await cursor.fetchall()
@@ -152,7 +168,10 @@ class SessionStore:
             tcs = None
             if row_dict["tool_calls"]:
                 raw = json.loads(row_dict["tool_calls"])
-                tcs = [ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]) for tc in raw]
+                tcs = [
+                    ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
+                    for tc in raw
+                ]
 
             tr = None
             if row_dict["tool_result"]:
@@ -239,6 +258,4 @@ class SessionStore:
 
 
 def _now() -> str:
-    from datetime import datetime, timezone
-
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")

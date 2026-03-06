@@ -6,6 +6,7 @@ import importlib
 import importlib.metadata
 import inspect
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any
 
 from worker_core.tools import Tool
@@ -121,10 +122,8 @@ class HookDispatcher:
             if callable(method) and hasattr(method, "_hook_event"):
                 event = method._hook_event
                 self._hooks.setdefault(event, []).append(method)
-        try:
+        with suppress(Exception):
             self._commands.update(ext.get_commands())
-        except Exception:
-            pass
 
     @property
     def commands(self) -> dict[str, CommandHandler]:
@@ -157,11 +156,29 @@ def load_extensions() -> tuple[list[Extension], HookDispatcher]:
     """Discover, instantiate, and return extensions + hook dispatcher."""
     classes = discover_extensions()
     instances: list[Extension] = []
-    for name, cls in classes.items():
+    for cls in classes.values():
         try:
             instances.append(cls())
         except Exception:
             continue
+    return instances, HookDispatcher(instances)
+
+async def load_extensions_async() -> tuple[list[Extension], HookDispatcher]:
+    """Discover, instantiate, activate, and return extensions + hook dispatcher."""
+    classes = discover_extensions()
+    instances: list[Extension] = []
+    for cls in classes.values():
+        try:
+            ext = cls()
+        except Exception:
+            continue
+        try:
+            await ext.on_load()
+        except Exception:
+            with suppress(Exception):
+                await ext.on_unload()
+            continue
+        instances.append(ext)
     return instances, HookDispatcher(instances)
 
 
@@ -170,12 +187,10 @@ async def reload_extensions_async(
 ) -> tuple[list[Extension], HookDispatcher]:
     """Hot-reload: unload current extensions, invalidate caches, re-discover."""
     for ext in current_instances or []:
-        try:
+        with suppress(Exception):
             await ext.on_unload()
-        except Exception:
-            pass
     importlib.invalidate_caches()
-    return load_extensions()
+    return await load_extensions_async()
 
 
 def discover_tui_extensions() -> dict[str, type[TuiExtension]]:
