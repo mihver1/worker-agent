@@ -121,7 +121,7 @@ def ext_install(source: str) -> None:
     click.echo(f"Installing extension from {source}...")
     try:
         result = subprocess.run(
-            ["uv", "pip", "install", source],
+            ["uv", "pip", "install", "--no-sources", source],
             capture_output=True,
             text=True,
         )
@@ -179,7 +179,7 @@ def ext_update(name: str | None) -> None:
     if name:
         click.echo(f"Updating extension '{name}'...")
         result = subprocess.run(
-            ["uv", "pip", "install", "--upgrade", name],
+            ["uv", "pip", "install", "--no-sources", "--upgrade", name],
             capture_output=True, text=True,
         )
         if result.returncode == 0:
@@ -194,7 +194,7 @@ def ext_update(name: str | None) -> None:
         click.echo(f"Updating {len(extensions)} extension(s)...")
         for ext_name in extensions:
             result = subprocess.run(
-                ["uv", "pip", "install", "--upgrade", ext_name],
+                ["uv", "pip", "install", "--no-sources", "--upgrade", ext_name],
                 capture_output=True, text=True,
             )
             status = "\u2713" if result.returncode == 0 else "\u2717"

@@ -392,6 +392,44 @@ class TestCliLogin:
         assert "brew install gh" in result.output
         assert "GH_TOKEN" in result.output
 
+
+class TestCliExtensions:
+    def test_ext_install_uses_no_sources(self, monkeypatch):
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        calls: list[list[str]] = []
+
+        def fake_run(args, capture_output, text):
+            calls.append(args)
+            return Mock(returncode=0)
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["ext", "install", "git+https://example.com/ext.git"])
+
+        assert result.exit_code == 0
+        assert calls == [["uv", "pip", "install", "--no-sources", "git+https://example.com/ext.git"]]
+
+    def test_ext_update_uses_no_sources(self, monkeypatch):
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        calls: list[list[str]] = []
+
+        def fake_run(args, capture_output, text):
+            calls.append(args)
+            return Mock(returncode=0)
+
+        monkeypatch.setattr("subprocess.run", fake_run)
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["ext", "update", "worker-ext-mcp"])
+
+        assert result.exit_code == 0
+        assert calls == [["uv", "pip", "install", "--no-sources", "--upgrade", "worker-ext-mcp"]]
+
 # ── REST API ──────────────────────────────────────────────────────
 
 
