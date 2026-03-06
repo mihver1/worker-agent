@@ -9,7 +9,7 @@ import pytest
 from conftest import MockProvider
 from worker_ai.models import Done, TextDelta, Usage
 from worker_ai.oauth import OAuthToken, TokenStore
-from worker_core.config import WorkerConfig
+from worker_core.config import ProviderConfig, ProviderModelConfig, WorkerConfig
 from worker_core.extensions import discover_extensions
 from worker_server.server import ServerState, _create_rest_app, handle_client
 
@@ -100,6 +100,210 @@ class TestOAuthProviderRefresh:
         assert reloaded.access_token == "refreshed_token"
         assert reloaded.refresh_token == "new_refresh_token"
 
+
+class TestRuntimeBootstrap:
+    @pytest.mark.asyncio
+    async def test_bootstrap_runtime_supports_kimi(self, tmp_path, monkeypatch):
+        from worker_ai.providers.kimi import KimiProvider
+        from worker_core.bootstrap import bootstrap_runtime
+        from worker_core.cli import _resolve_api_key
+
+        monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot_env_token")
+
+        runtime = await bootstrap_runtime(
+            WorkerConfig(),
+            "kimi",
+            "kimi-k2.5",
+            project_dir=str(tmp_path),
+            resolve_api_key=_resolve_api_key,
+            include_extensions=False,
+        )
+
+        assert isinstance(runtime.provider, KimiProvider)
+        assert runtime.provider.api_key == "moonshot_env_token"
+        assert runtime.provider._base_url == "https://api.kimi.com/coding/v1"
+        assert runtime.context_window == 262_144
+
+        await runtime.provider.close()
+    @pytest.mark.asyncio
+    async def test_bootstrap_runtime_supports_github_copilot_alias(self, tmp_path, monkeypatch):
+        from worker_ai.providers.github_copilot import GitHubCopilotProvider
+        from worker_core.bootstrap import bootstrap_runtime
+        from worker_core.cli import _resolve_api_key
+
+        monkeypatch.setenv("GH_TOKEN", "gho_env_token")
+
+        runtime = await bootstrap_runtime(
+            WorkerConfig(),
+            "github-copilot",
+            "gpt-4.1",
+            project_dir=str(tmp_path),
+            resolve_api_key=_resolve_api_key,
+            include_extensions=False,
+        )
+
+        assert isinstance(runtime.provider, GitHubCopilotProvider)
+        assert runtime.provider.api_key == "gho_env_token"
+        assert runtime.provider._base_url == "https://api.githubcopilot.com"
+        assert runtime.context_window == 1_047_576
+
+        await runtime.provider.close()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_runtime_supports_ollama_cloud_alias(self, tmp_path, monkeypatch):
+        from worker_ai.providers.ollama import OllamaProvider
+        from worker_core.bootstrap import bootstrap_runtime
+        from worker_core.cli import _resolve_api_key
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "ollama_cloud_token")
+
+        runtime = await bootstrap_runtime(
+            WorkerConfig(
+                providers={
+                    "ollama_cloud": ProviderConfig(
+                        models={
+                            "gpt-oss:20b": ProviderModelConfig(
+                                context_window=200000,
+                            )
+                        }
+                    )
+                }
+            ),
+            "ollama-cloud",
+            "gpt-oss:20b",
+            project_dir=str(tmp_path),
+            resolve_api_key=_resolve_api_key,
+            include_extensions=False,
+        )
+
+        assert isinstance(runtime.provider, OllamaProvider)
+        assert runtime.provider.api_key == "ollama_cloud_token"
+        assert runtime.provider._base_url == "https://ollama.com/v1"
+        assert runtime.context_window == 200000
+
+        await runtime.provider.close()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_runtime_supports_lm_studio_alias(self, tmp_path):
+        from worker_ai.providers.lmstudio import LMStudioProvider
+        from worker_core.bootstrap import bootstrap_runtime
+        from worker_core.cli import _resolve_api_key
+
+        runtime = await bootstrap_runtime(
+            WorkerConfig(
+                providers={
+                    "lmstudio": ProviderConfig(
+                        models={
+                            "openai/gpt-oss-20b": ProviderModelConfig(
+                                context_window=131072,
+                            )
+                        }
+                    )
+                }
+            ),
+            "lm-studio",
+            "openai/gpt-oss-20b",
+            project_dir=str(tmp_path),
+            resolve_api_key=_resolve_api_key,
+            include_extensions=False,
+        )
+
+        assert isinstance(runtime.provider, LMStudioProvider)
+        assert runtime.provider.api_key is None
+        assert runtime.provider._base_url == "http://127.0.0.1:1234/v1"
+        assert runtime.context_window == 131072
+
+        await runtime.provider.close()
+
+
+class TestCliLogin:
+    def test_worker_login_uses_github_copilot_oauth_broker(self, tmp_path, monkeypatch):
+        import worker_ai.oauth as oauth_mod
+        from click.testing import CliRunner
+        from worker_ai.oauth import TokenStore
+        from worker_core import cli as cli_mod
+
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: WorkerConfig())
+
+        async def fake_run_command(args: list[str]) -> int:
+            assert args == ["gh", "auth", "login", "--web", "--clipboard", "--skip-ssh-key"]
+            return 0
+
+        async def fake_load_token(github_host: str) -> str | None:
+            assert github_host == ""
+            return "gho_cli_login_token"
+
+        monkeypatch.setattr(oauth_mod, "_run_command", fake_run_command)
+        monkeypatch.setattr(
+            oauth_mod,
+            "load_github_copilot_token_from_gh_cli",
+            fake_load_token,
+        )
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        monkeypatch.setattr(cli_mod.asyncio, "run", run_coro)
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["login", "github-copilot"])
+
+        assert result.exit_code == 0
+        saved = TokenStore(path=tmp_path / "auth.json").load("github_copilot")
+        assert saved is not None
+        assert saved.access_token == "gho_cli_login_token"
+
+    def test_worker_login_reports_api_key_hint_for_kimi(self, monkeypatch):
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: WorkerConfig())
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["login", "kimi"])
+
+        assert result.exit_code == 0
+        assert "OAuth not supported for 'kimi'." in result.output
+        assert "Use MOONSHOT_API_KEY or [providers.kimi].api_key." in result.output
+
+    def test_worker_login_without_gh_shows_install_hint(self, tmp_path, monkeypatch):
+        import worker_ai.oauth as oauth_mod
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: WorkerConfig())
+
+        async def fake_create_subprocess_exec(*args, **kwargs):
+            raise OSError("gh not found")
+
+        monkeypatch.setattr(
+            oauth_mod.asyncio,
+            "create_subprocess_exec",
+            fake_create_subprocess_exec,
+        )
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        monkeypatch.setattr(cli_mod.asyncio, "run", run_coro)
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["login", "github-copilot"])
+
+        assert result.exit_code == 0
+        assert "GitHub CLI (`gh`) is required for GitHub Copilot login." in result.output
+        assert "brew install gh" in result.output
+        assert "GH_TOKEN" in result.output
 
 # ── REST API ──────────────────────────────────────────────────────
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -47,12 +48,19 @@ class CatalogProvider:
     id: str
     name: str
     env: list[str]
+    api_base_url: str
     models: list[CatalogModel]
 
 
 def _parse_provider(pid: str, raw: dict[str, Any]) -> CatalogProvider:
     """Parse a single provider entry from the raw API response."""
     models: list[CatalogModel] = []
+    api_raw = raw.get("api")
+    api_base_url = ""
+    if isinstance(api_raw, str):
+        api_base_url = api_raw
+    elif isinstance(api_raw, dict):
+        api_base_url = str(api_raw.get("url", ""))
     for mid, mraw in raw.get("models", {}).items():
         if not mraw.get("tool_call", False):
             continue  # Skip non-tool-capable models (embeddings, etc.)
@@ -78,6 +86,7 @@ def _parse_provider(pid: str, raw: dict[str, Any]) -> CatalogProvider:
         id=pid,
         name=raw.get("name", pid),
         env=raw.get("env", []),
+        api_base_url=api_base_url,
         models=models,
     )
 
@@ -150,10 +159,8 @@ class ModelsCatalog:
         """Force re-fetch from network."""
         cls._data = None
         # Invalidate cache
-        try:
+        with suppress(OSError):
             _CACHE_PATH.unlink(missing_ok=True)
-        except OSError:
-            pass
         return await cls.load()
 
     @classmethod

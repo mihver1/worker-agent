@@ -267,7 +267,7 @@ def config_print() -> None:
 
     cwd = os.getcwd()
     merged = load_config(cwd)
-    data = merged.model_dump()
+    data = merged.model_dump(exclude_none=True)
     click.echo(tomli_w.dumps(data))
 
 
@@ -282,14 +282,29 @@ def rpc() -> None:
 @cli.command()
 @click.argument("provider")
 def login(provider: str) -> None:
-    """Authenticate with a provider via OAuth (kimi, anthropic, openai)."""
-    from worker_ai.oauth import get_oauth_provider
+    """Authenticate with a provider via OAuth."""
+    from worker_ai.oauth import get_oauth_provider, list_oauth_provider_names
+    from worker_ai.provider_specs import get_provider_spec
 
-    oauth = get_oauth_provider(provider)
+    from worker_core.provider_resolver import get_provider_env_vars
+    config = load_config(os.getcwd())
+    oauth = get_oauth_provider(provider, config=config)
     if oauth is None:
-        supported = "kimi, anthropic, openai"
-        click.echo(f"OAuth not supported for '{provider}'. Supported: {supported}")
-        click.echo("Use an API key instead (config or env variable).")
+        spec = get_provider_spec(provider)
+        provider_id = spec.id if spec is not None else provider
+        env_vars = tuple(get_provider_env_vars(config, provider))
+        supported = ", ".join(list_oauth_provider_names())
+        if env_vars:
+            click.echo(
+                f"OAuth not supported for '{provider}'. "
+                f"Use {env_vars[0]} or [providers.{provider_id}].api_key."
+            )
+        else:
+            click.echo(
+                f"OAuth not supported for '{provider}'. "
+                f"Configure [providers.{provider_id}] instead."
+            )
+        click.echo(f"Supported OAuth providers: {supported}")
         return
     try:
         asyncio.run(oauth.login())
@@ -381,22 +396,6 @@ async def _print_mode(
     await runtime.provider.close()
 
 
-# ── API key resolution ────────────────────────────────────────────
-
-_ENV_KEY_MAP = {
-    "anthropic": "ANTHROPIC_API_KEY",
-    "openai": "OPENAI_API_KEY",
-    "google": "GEMINI_API_KEY",
-    "kimi": "MOONSHOT_API_KEY",
-    "groq": "GROQ_API_KEY",
-    "mistral": "MISTRAL_API_KEY",
-    "xai": "XAI_API_KEY",
-    "openrouter": "OPENROUTER_API_KEY",
-    "together": "TOGETHER_API_KEY",
-    "cerebras": "CEREBRAS_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "huggingface": "HF_API_KEY",
-}
 
 
 async def _resolve_api_key(config, provider_name: str) -> tuple[str | None, str]:
@@ -404,31 +403,37 @@ async def _resolve_api_key(config, provider_name: str) -> tuple[str | None, str]
 
     Returns (key, auth_type) where auth_type is "api" or "oauth".
     """
+    from worker_ai.oauth import (
+        get_oauth_provider,
+        is_github_copilot_provider,
+        resolve_github_copilot_token,
+    )
+
+    from worker_core.provider_resolver import get_provider_config, get_provider_env_vars
     # From config
-    prov_cfg = config.providers.get(provider_name)
+    prov_cfg = get_provider_config(config, provider_name)
     if prov_cfg and prov_cfg.api_key:
         return prov_cfg.api_key, "api"
     # From env
-    env_var = _ENV_KEY_MAP.get(provider_name)
-    if env_var:
+    for env_var in get_provider_env_vars(config, provider_name):
         val = os.environ.get(env_var)
         if val:
             return val, "api"
-    # From OAuth token store (auth.json), refreshing expired OAuth tokens when possible.
+    # From provider-specific OAuth flows, refreshing expired tokens when possible.
     try:
-        from worker_ai.oauth import TokenStore, get_oauth_provider
-
-        oauth = get_oauth_provider(provider_name)
+        oauth = get_oauth_provider(provider_name, config=config)
         if oauth is not None:
             token = await oauth.get_token()
         else:
-            token = TokenStore().load(provider_name)
-            if token and token.is_expired:
-                token = None
+            token = None
         if token:
             return token.access_token, "oauth"
     except Exception:
         pass
+    if is_github_copilot_provider(provider_name):
+        token = await resolve_github_copilot_token(config, provider_name)
+        if token:
+            return token, "api"
     return None, "api"
 
 

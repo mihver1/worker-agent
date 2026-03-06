@@ -1,9 +1,9 @@
 """OAuth authentication for LLM providers.
 
-Supports three OAuth flows (matching OpenCode architecture):
-- Device flow (RFC 8628): Kimi
+Supports browser/OAuth flows for providers that expose them in Worker:
 - Browser PKCE with code paste: Anthropic
 - Browser PKCE with local callback: OpenAI
+- GitHub CLI broker flow: GitHub Copilot
 
 Token persistence in ~/.config/worker/auth.json with auto-refresh.
 """
@@ -15,6 +15,7 @@ import base64
 import hashlib
 import json
 import logging
+import os
 import secrets
 import time
 import urllib.parse
@@ -27,7 +28,10 @@ from typing import Any
 
 import httpx
 
+from worker_ai.provider_specs import get_provider_spec
+
 logger = logging.getLogger("worker.oauth")
+_GITHUB_COPILOT_PROVIDER_IDS = frozenset({"github_copilot", "github_copilot_enterprise"})
 
 # ── Token storage ─────────────────────────────────────────────────
 
@@ -115,6 +119,155 @@ class TokenStore:
         except json.JSONDecodeError:
             pass
 
+def _resolve_provider_id(name: str) -> str:
+    spec = get_provider_spec(name)
+    if spec is not None:
+        return spec.id
+    return name
+
+
+def _get_provider_options(config: Any | None, provider_name: str) -> dict[str, Any]:
+    if config is None:
+        return {}
+    providers = getattr(config, "providers", None)
+    if not isinstance(providers, dict):
+        return {}
+
+    provider_config = providers.get(provider_name)
+    if provider_config is None:
+        resolved_name = _resolve_provider_id(provider_name)
+        if resolved_name != provider_name:
+            provider_config = providers.get(resolved_name)
+    if provider_config is None:
+        return {}
+
+    options = getattr(provider_config, "options", None)
+    return dict(options) if isinstance(options, dict) else {}
+
+
+def normalize_github_host(raw_host: str) -> str:
+    host = raw_host.strip()
+    if not host:
+        return ""
+    host = host.removeprefix("https://").removeprefix("http://")
+    return host.split("/", 1)[0].lower()
+
+
+def is_github_copilot_provider(provider_name: str) -> bool:
+    return _resolve_provider_id(provider_name) in _GITHUB_COPILOT_PROVIDER_IDS
+
+
+def get_github_copilot_host(config: Any | None, provider_name: str) -> str:
+    options = _get_provider_options(config, provider_name)
+    host = str(options.get("github_host") or options.get("hostname") or "")
+    if not host:
+        host = os.environ.get("GH_HOST", "")
+    return normalize_github_host(host)
+
+
+def _looks_like_github_token(key: str, value: str) -> bool:
+    candidate = value.strip()
+    if not candidate:
+        return False
+    lowered_key = key.lower()
+    return (
+        "token" in lowered_key
+        or "oauth" in lowered_key
+        or candidate.startswith(("gho_", "ghp_", "ghu_", "ghs_", "ghr_", "github_pat_"))
+    )
+
+
+def _extract_github_copilot_token(payload: Any, *, github_host: str = "") -> str | None:
+    if isinstance(payload, dict):
+        if github_host:
+            for key, value in payload.items():
+                if normalize_github_host(str(key)) == github_host:
+                    token = _extract_github_copilot_token(value, github_host=github_host)
+                    if token:
+                        return token
+        for key, value in payload.items():
+            if isinstance(value, str) and _looks_like_github_token(str(key), value):
+                return value.strip()
+        for value in payload.values():
+            token = _extract_github_copilot_token(value, github_host=github_host)
+            if token:
+                return token
+        return None
+    if isinstance(payload, list):
+        for value in payload:
+            token = _extract_github_copilot_token(value, github_host=github_host)
+            if token:
+                return token
+        return None
+    if isinstance(payload, str) and _looks_like_github_token("", payload):
+        return payload.strip()
+    return None
+
+
+def _github_copilot_token_paths() -> tuple[Path, ...]:
+    home = Path.home()
+    return (
+        home / ".copilot" / "config.json",
+        home / ".config" / "github-copilot" / "hosts.json",
+        home / ".config" / "github-copilot" / "apps.json",
+    )
+
+
+def load_github_copilot_token_from_files(github_host: str) -> str | None:
+    for path in _github_copilot_token_paths():
+        try:
+            payload = json.loads(path.read_text())
+        except (FileNotFoundError, IsADirectoryError, OSError, json.JSONDecodeError):
+            continue
+        token = _extract_github_copilot_token(payload, github_host=github_host)
+        if token:
+            return token
+    return None
+
+
+async def load_github_copilot_token_from_gh_cli(github_host: str) -> str | None:
+    args = ["gh", "auth", "token"]
+    if github_host:
+        args.extend(["--hostname", github_host])
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+    except OSError:
+        return None
+
+    stdout, _ = await process.communicate()
+    if process.returncode != 0:
+        return None
+    token = stdout.decode().strip()
+    return token or None
+
+
+async def resolve_github_copilot_token(config: Any | None, provider_name: str) -> str | None:
+    if not is_github_copilot_provider(provider_name):
+        return None
+    github_host = get_github_copilot_host(config, provider_name)
+    token = load_github_copilot_token_from_files(github_host)
+    if token:
+        return token
+    return await load_github_copilot_token_from_gh_cli(github_host)
+
+
+async def _run_command(args: list[str]) -> int:
+    try:
+        process = await asyncio.create_subprocess_exec(*args)
+    except OSError as exc:
+        if args and args[0] == "gh":
+            raise RuntimeError(
+                "GitHub CLI (`gh`) is required for GitHub Copilot login. "
+                "Install it first (for example on macOS with Homebrew: `brew install gh`) "
+                "or use `GH_TOKEN` / `GITHUB_TOKEN`."
+            ) from exc
+        raise RuntimeError(f"Required command not found: {args[0]!r}") from exc
+    return await process.wait()
+
 
 # ── PKCE helpers ──────────────────────────────────────────────────
 
@@ -184,13 +337,53 @@ class _DeviceFlowOAuth(OAuthProvider):
     CLIENT_ID: str = "worker-agent"
     SCOPE: str = ""
 
+    def _device_flow_headers(self) -> dict[str, str]:
+        return {"Content-Type": "application/x-www-form-urlencoded"}
+
+    def _device_authorization_payload(self) -> dict[str, str]:
+        payload: dict[str, str] = {"client_id": self.CLIENT_ID}
+        if self.SCOPE:
+            payload["scope"] = self.SCOPE
+        return payload
+
+    def _device_token_payload(self, device_code: str) -> dict[str, str]:
+        return {
+            "client_id": self.CLIENT_ID,
+            "device_code": device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        }
+
+    def _refresh_payload(self, refresh_token: str) -> dict[str, str]:
+        return {
+            "client_id": self.CLIENT_ID,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        }
+
+    def _verification_url(
+        self,
+        verification_uri: str,
+        user_code: str,
+        verification_uri_complete: str = "",
+    ) -> str:
+        if verification_uri_complete:
+            return verification_uri_complete
+        if not verification_uri:
+            return ""
+        parsed = urllib.parse.urlsplit(verification_uri)
+        query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        query.setdefault("user_code", [user_code])
+        return urllib.parse.urlunsplit(
+            parsed._replace(query=urllib.parse.urlencode(query, doseq=True))
+        )
+
     async def login(self) -> OAuthToken:
         async with httpx.AsyncClient() as client:
-            payload: dict[str, str] = {"client_id": self.CLIENT_ID}
-            if self.SCOPE:
-                payload["scope"] = self.SCOPE
-
-            resp = await client.post(self.DEVICE_AUTH_URL, json=payload)
+            resp = await client.post(
+                self.DEVICE_AUTH_URL,
+                headers=self._device_flow_headers(),
+                content=urllib.parse.urlencode(self._device_authorization_payload()),
+            )
             resp.raise_for_status()
             data = resp.json()
 
@@ -199,26 +392,30 @@ class _DeviceFlowOAuth(OAuthProvider):
             verification_uri = (
                 data.get("verification_uri") or data.get("verification_url", "")
             )
+            verification_url = self._verification_url(
+                str(verification_uri or ""),
+                str(user_code),
+                str(data.get("verification_uri_complete") or ""),
+            )
             interval = data.get("interval", 5)
             expires_in = data.get("expires_in", 900)
 
             print(f"\n  {self.name.capitalize()} OAuth — Device Authorization")
-            print(f"   Open:  {verification_uri}")
+            print(f"   Open:  {verification_url or verification_uri}")
             print(f"   Code:  {user_code}")
             print("   Waiting for authorization...\n")
             with suppress(Exception):
-                webbrowser.open(verification_uri)
+                webbrowser.open(verification_url or verification_uri)
 
             deadline = time.time() + expires_in
             while time.time() < deadline:
                 await asyncio.sleep(interval)
                 token_resp = await client.post(
                     self.TOKEN_URL,
-                    json={
-                        "client_id": self.CLIENT_ID,
-                        "device_code": device_code,
-                        "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-                    },
+                    headers=self._device_flow_headers(),
+                    content=urllib.parse.urlencode(
+                        self._device_token_payload(device_code)
+                    ),
                 )
                 if token_resp.status_code == 200:
                     token_data = token_resp.json()
@@ -252,11 +449,8 @@ class _DeviceFlowOAuth(OAuthProvider):
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 self.TOKEN_URL,
-                json={
-                    "client_id": self.CLIENT_ID,
-                    "grant_type": "refresh_token",
-                    "refresh_token": token.refresh_token,
-                },
+                headers=self._device_flow_headers(),
+                content=urllib.parse.urlencode(self._refresh_payload(token.refresh_token)),
             )
             resp.raise_for_status()
             data = resp.json()
@@ -555,7 +749,7 @@ class KimiOAuth(_DeviceFlowOAuth):
     name = "kimi"
     DEVICE_AUTH_URL = "https://auth.kimi.com/api/oauth/device_authorization"
     TOKEN_URL = "https://auth.kimi.com/api/oauth/token"
-    SCOPE = "coding"
+    CLIENT_ID = "17e5f671-d194-4dfb-9706-5516cb48c098"
 
 
 class AnthropicOAuth(_CodePasteOAuth):
@@ -596,17 +790,106 @@ class OpenAIOAuth(_LocalCallbackOAuth):
         "originator": "worker",
     }
 
+class _GitHubCliOAuth(OAuthProvider):
+    """GitHub CLI-backed auth for GitHub Copilot providers."""
+
+    display_name = "GitHub Copilot"
+
+    def __init__(
+        self,
+        token_store: TokenStore | None = None,
+        *,
+        github_host: str = "",
+    ):
+        super().__init__(token_store=token_store)
+        self.github_host = normalize_github_host(github_host)
+
+    def _gh_login_args(self) -> list[str]:
+        args = ["gh", "auth", "login", "--web", "--clipboard", "--skip-ssh-key"]
+        if self.github_host:
+            args.extend(["--hostname", self.github_host])
+        return args
+
+    async def login(self) -> OAuthToken:
+        print(f"\n  {self.display_name} OAuth — GitHub CLI broker")
+        print("   Starting GitHub CLI login...\n")
+
+        return_code = await _run_command(self._gh_login_args())
+        if return_code != 0:
+            raise RuntimeError("GitHub CLI login failed.")
+
+        token_value = await load_github_copilot_token_from_gh_cli(self.github_host)
+        if not token_value:
+            token_value = load_github_copilot_token_from_files(self.github_host)
+        if not token_value:
+            raise RuntimeError("GitHub CLI login completed but no GitHub token was found.")
+
+        token = OAuthToken(
+            access_token=token_value,
+            token_type="Bearer",
+            provider=self.name,
+        )
+        self.store.save(token)
+        print(f"  {self.display_name} authorized!")
+        return token
+
+    async def refresh(self, token: OAuthToken) -> OAuthToken:
+        token_value = load_github_copilot_token_from_files(self.github_host)
+        if not token_value:
+            token_value = await load_github_copilot_token_from_gh_cli(self.github_host)
+        if not token_value:
+            raise RuntimeError(
+                f"Unable to refresh {self.display_name} token. Re-run `worker login {self.name}`."
+            )
+
+        return OAuthToken(
+            access_token=token_value,
+            token_type=token.token_type,
+            provider=self.name,
+            scope=token.scope,
+        )
+
+
+class GitHubCopilotOAuth(_GitHubCliOAuth):
+    name = "github_copilot"
+    display_name = "GitHub Copilot"
+
+
+class GitHubCopilotEnterpriseOAuth(_GitHubCliOAuth):
+    name = "github_copilot_enterprise"
+    display_name = "GitHub Copilot Enterprise"
+
 
 # ── Registry ──────────────────────────────────────────────────────
 
 OAUTH_PROVIDERS: dict[str, type[OAuthProvider]] = {
-    "kimi": KimiOAuth,
     "anthropic": AnthropicOAuth,
     "openai": OpenAIOAuth,
+    "github_copilot": GitHubCopilotOAuth,
+    "github_copilot_enterprise": GitHubCopilotEnterpriseOAuth,
 }
 
 
-def get_oauth_provider(name: str) -> OAuthProvider | None:
+def get_oauth_provider(
+    name: str,
+    *,
+    config: Any | None = None,
+    token_store: TokenStore | None = None,
+) -> OAuthProvider | None:
     """Get an OAuth provider by name, or None if not supported."""
-    cls = OAUTH_PROVIDERS.get(name)
-    return cls() if cls else None
+    resolved_name = _resolve_provider_id(name)
+    cls = OAUTH_PROVIDERS.get(resolved_name)
+    if cls is None:
+        return None
+
+    kwargs: dict[str, Any] = {}
+    if token_store is not None:
+        kwargs["token_store"] = token_store
+    if issubclass(cls, _GitHubCliOAuth):
+        kwargs["github_host"] = get_github_copilot_host(config, resolved_name)
+    return cls(**kwargs)
+
+
+def list_oauth_provider_names() -> list[str]:
+    """Return the providers that currently support OAuth."""
+    return sorted(OAUTH_PROVIDERS)

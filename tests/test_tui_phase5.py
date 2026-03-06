@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -422,6 +423,80 @@ class TestSlashCommandSuggestions:
         app = WorkerApp(remote_url="ws://localhost:7432")
 
         assert app._matching_command_suggestions("/model anthropic/claude") == []
+
+    def test_matching_command_suggestions_include_providers_command(self):
+        from worker_tui.app import WorkerApp
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+
+        matches = app._matching_command_suggestions("/prov")
+
+        assert [match.value for match in matches] == ["/providers"]
+
+
+class TestProviderSetupFormatting:
+    @pytest.mark.asyncio
+    async def test_collect_provider_setup_entries_marks_connected_and_setup_states(
+        self,
+        monkeypatch,
+    ):
+        from worker_core.config import WorkerConfig
+        from worker_tui.app import collect_provider_setup_entries
+
+        async def fake_resolve_api_key(config, provider_name: str):
+            if provider_name == "openai":
+                return "sk-test", "api"
+            return None, "api"
+
+        entries = await collect_provider_setup_entries(WorkerConfig(), fake_resolve_api_key)
+        by_id = {entry.id: entry for entry in entries}
+
+        assert by_id["openai"].status == "configured"
+        assert by_id["openai"].hint == "use /models"
+        assert by_id["anthropic"].hint == "run /connect anthropic or set ANTHROPIC_API_KEY"
+        assert by_id["kimi"].name == "Kimi For Coding"
+        assert by_id["kimi"].hint == "set MOONSHOT_API_KEY or [providers.kimi].api_key"
+        assert by_id["ollama"].status == "keyless"
+        assert "start the service" in by_id["ollama"].hint
+        assert by_id["lmstudio"].status == "keyless"
+
+    def test_format_provider_setup_entries_renders_supported_provider_list(self):
+        from worker_tui.app import ProviderSetupEntry, format_provider_setup_entries
+
+        rendered = format_provider_setup_entries(
+            [
+                ProviderSetupEntry(
+                    id="openai",
+                    name="OpenAI",
+                    status="configured",
+                    hint="use /models",
+                ),
+                ProviderSetupEntry(
+                    id="ollama",
+                    name="Ollama",
+                    status="keyless",
+                    hint="start the service or set [providers.ollama].base_url",
+                ),
+            ]
+        )
+
+        assert "Supported providers:" in rendered
+        assert "openai (OpenAI) — configured; use /models" in rendered
+        assert "ollama (Ollama) — keyless; start the service" in rendered
+        assert "Use /models to browse models" in rendered
+
+
+class TestProviderCommandDispatch:
+    @pytest.mark.asyncio
+    async def test_handle_command_dispatches_providers_command(self):
+        from worker_tui.app import WorkerApp
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._list_providers = AsyncMock()  # type: ignore[method-assign]
+
+        await app._handle_command("/providers")
+
+        app._list_providers.assert_awaited_once()
 
 
 class TestTuiAutocompleteIntegration:

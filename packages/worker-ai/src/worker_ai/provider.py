@@ -6,6 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
 
+import httpx
+
 from worker_ai.models import Message, ModelInfo, StreamEvent, ToolDef
 
 
@@ -14,9 +16,19 @@ class Provider(ABC):
 
     name: str  # e.g. "anthropic", "openai", "kimi"
 
-    def __init__(self, api_key: str | None = None, base_url: str | None = None, **kwargs: Any):
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        headers: dict[str, str] | None = None,
+        timeout: int | bool | None = None,
+        **kwargs: Any,
+    ):
         self.api_key = api_key
         self.base_url = base_url
+        self.headers = dict(headers or {})
+        self.timeout = timeout
+        self.options = dict(kwargs)
 
     @abstractmethod
     async def stream_chat(
@@ -40,9 +52,13 @@ class Provider(ABC):
     def list_models(self) -> list[ModelInfo]:
         """Return the list of known models for this provider."""
         ...
+    async def list_models_direct(self) -> list[ModelInfo]:
+        """Return models discovered directly from the provider when supported."""
+        return self.list_models()
 
     async def close(self) -> None:
         """Release any resources (HTTP clients, etc.)."""
+        return None
 
 
 class ProviderRegistry:
@@ -70,3 +86,25 @@ class ProviderRegistry:
     @property
     def available(self) -> list[str]:
         return sorted(self._factories)
+
+
+def build_httpx_timeout(
+    timeout_ms: int | bool | None,
+    *,
+    default: httpx.Timeout,
+) -> httpx.Timeout | None:
+    """Resolve an optional timeout override into an httpx timeout object."""
+    if timeout_ms is False:
+        return None
+    if timeout_ms is None or isinstance(timeout_ms, bool):
+        return default
+    return httpx.Timeout(timeout_ms / 1000)
+
+
+def merge_headers(*header_sets: dict[str, str] | None) -> dict[str, str]:
+    """Merge multiple header dictionaries with last-wins semantics."""
+    merged: dict[str, str] = {}
+    for header_set in header_sets:
+        if header_set:
+            merged.update(header_set)
+    return merged

@@ -9,6 +9,7 @@ from typing import Any
 
 from worker_ai.providers import create_default_registry
 
+from worker_core import provider_resolver as _provider_resolver
 from worker_core.agent import AgentSession
 from worker_core.config import WorkerConfig
 from worker_core.extensions import Extension, HookDispatcher, load_extensions_async
@@ -20,47 +21,8 @@ ResolveApiKey = Callable[
     [WorkerConfig, str],
     ResolveApiKeyResult | Awaitable[ResolveApiKeyResult],
 ]
-_OPENAI_COMPAT_BASE_URLS = {
-    "groq": "https://api.groq.com/openai/v1",
-    "mistral": "https://api.mistral.ai/v1",
-    "xai": "https://api.x.ai/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "together": "https://api.together.xyz/v1",
-    "cerebras": "https://api.cerebras.ai/v1",
-    "deepseek": "https://api.deepseek.com/v1",
-}
-_KEYLESS_PROVIDER_TYPES = {"ollama"}
-
-
-def resolve_provider_runtime_config(
-    config: WorkerConfig, provider_name: str,
-) -> tuple[str, dict[str, Any]]:
-    """Resolve the effective runtime provider type and constructor kwargs."""
-    provider_config = config.providers.get(provider_name)
-    provider_type = "openai_compat" if provider_name in _OPENAI_COMPAT_BASE_URLS else provider_name
-    base_url = _OPENAI_COMPAT_BASE_URLS.get(provider_name, "")
-    kwargs: dict[str, Any] = {}
-
-    if provider_config:
-        if provider_config.type:
-            provider_type = provider_config.type
-        if provider_config.base_url:
-            base_url = provider_config.base_url
-        for field_name in ("api_type", "region", "profile", "api_version"):
-            value = getattr(provider_config, field_name, "")
-            if value:
-                kwargs[field_name] = value
-
-    if base_url:
-        kwargs["base_url"] = base_url
-
-    return provider_type, kwargs
-
-
-def provider_requires_api_key(config: WorkerConfig, provider_name: str) -> bool:
-    """Return whether the effective provider type requires explicit credentials."""
-    provider_type, _ = resolve_provider_runtime_config(config, provider_name)
-    return provider_type not in _KEYLESS_PROVIDER_TYPES
+provider_requires_api_key = _provider_resolver.provider_requires_api_key
+resolve_provider_runtime_config = _provider_resolver.resolve_provider_runtime_config
 
 
 @dataclass
@@ -79,13 +41,15 @@ class RuntimeBootstrap:
 
 
 async def fetch_model_runtime_info(
-    provider_name: str, model_id: str,
+    config: WorkerConfig,
+    provider_name: str,
+    model_id: str,
 ) -> tuple[int, float, float]:
     """Return (context_window, input_price_per_m, output_price_per_m)."""
     try:
-        from worker_ai.models_catalog import ModelsCatalog
-
-        model = await ModelsCatalog.get_model(provider_name, model_id)
+        model = await _provider_resolver.get_effective_model_info(
+            config, provider_name, model_id
+        )
         if model:
             return (
                 model.context_window or 0,
@@ -126,15 +90,17 @@ async def bootstrap_runtime(
         for ext in extensions:
             tools.extend(ext.get_tools())
 
-    context_window, input_price_per_m, output_price_per_m = await fetch_model_runtime_info(
-        provider_name, model_id
+    context_window, input_price_per_m, output_price_per_m = (
+        await fetch_model_runtime_info(config, provider_name, model_id)
     )
 
     # Bootstrap small model if configured
     small_provider = None
     small_model_id = ""
     if config.agent.small_model and "/" in config.agent.small_model:
-        sm_provider_name, small_model_id = config.agent.small_model.split("/", 1)
+        sm_provider_name, small_model_id = config.agent.small_model.split(
+            "/", 1
+        )
         sm_resolved = resolve_api_key(config, sm_provider_name)
         if isawaitable(sm_resolved):
             sm_key, sm_auth = await sm_resolved

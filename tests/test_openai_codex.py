@@ -5,10 +5,9 @@ from __future__ import annotations
 import base64
 import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from worker_ai.models import (
     Done,
     Message,
@@ -20,14 +19,15 @@ from worker_ai.models import (
     ToolDef,
     ToolParam,
     ToolResult,
-    Usage,
 )
 from worker_ai.oauth import extract_openai_account_id, parse_jwt_claims
+from worker_ai.providers import create_default_registry
 from worker_ai.providers.openai_compat import (
+    OpenAICompatibleProvider,
+    OpenAIProvider,
     _build_responses_input,
     _build_responses_tools,
 )
-
 
 # ── JWT helpers ──────────────────────────────────────────────────
 
@@ -190,7 +190,13 @@ class TestBuildResponsesTools:
                 description="Write",
                 parameters=[
                     ToolParam(name="path", type="string", description="Path"),
-                    ToolParam(name="mode", type="string", description="Mode", required=False, enum=["overwrite", "append"]),
+                    ToolParam(
+                        name="mode",
+                        type="string",
+                        description="Mode",
+                        required=False,
+                        enum=["overwrite", "append"],
+                    ),
                 ],
             ),
         ]
@@ -207,21 +213,88 @@ class TestBuildResponsesTools:
 
 class TestOpenAICompatProviderOAuth:
     def test_oauth_sets_codex_base_url(self):
-        from worker_ai.providers.openai_compat import OpenAICompatProvider
-
         token = _make_jwt({"chatgpt_account_id": "acct-test"})
-        provider = OpenAICompatProvider(api_key=token, auth_type="oauth")
+        provider = OpenAIProvider(api_key=token, auth_type="oauth")
         assert provider._auth_type == "oauth"
         assert "chatgpt.com" in provider._base_url
         assert provider._account_id == "acct-test"
 
     def test_api_key_mode_default(self):
-        from worker_ai.providers.openai_compat import OpenAICompatProvider
-
-        provider = OpenAICompatProvider(api_key="sk-test")
+        provider = OpenAIProvider(api_key="sk-test")
         assert provider._auth_type == "api"
         assert "api.openai.com" in provider._base_url
         assert provider._account_id == ""
+
+
+class TestOpenAIProviderSplit:
+    @pytest.mark.asyncio
+    async def test_registry_separates_openai_and_openai_compat(self):
+        registry = create_default_registry()
+
+        openai_provider = registry.create("openai", api_key="sk-openai")
+        compat_provider = registry.create(
+            "openai_compat",
+            api_key="sk-compatible",
+            base_url="https://proxy.example/v1",
+        )
+
+        assert isinstance(openai_provider, OpenAIProvider)
+        assert isinstance(compat_provider, OpenAICompatibleProvider)
+        assert type(openai_provider) is OpenAIProvider
+        assert type(compat_provider) is OpenAICompatibleProvider
+        assert openai_provider.list_models()
+        assert compat_provider.list_models() == []
+
+        await openai_provider.close()
+        await compat_provider.close()
+
+    @pytest.mark.asyncio
+    async def test_api_responses_mode_uses_responses_endpoint(self):
+        provider = OpenAIProvider(api_key="sk-test", api_type="responses")
+
+        events = [
+            {"type": "response.output_text.delta", "delta": "Hello"},
+            {
+                "type": "response.completed",
+                "response": {
+                    "status": "completed",
+                    "usage": {"input_tokens": 4, "output_tokens": 2},
+                },
+            },
+        ]
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+
+        async def async_lines():
+            for line in _sse_lines(events):
+                yield line
+
+        mock_response.aiter_lines = async_lines
+
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        with patch.object(provider._client, "stream", return_value=mock_cm) as mock_stream:
+            collected = []
+            async for ev in provider.stream_chat(
+                "gpt-4.1",
+                [Message(role=Role.USER, content="Hi")],
+            ):
+                collected.append(ev)
+
+        assert len(collected) == 2
+        assert isinstance(collected[0], TextDelta)
+        assert isinstance(collected[1], Done)
+
+        assert mock_stream.call_args.args == ("POST", "/responses")
+        body = mock_stream.call_args.kwargs["json"]
+        assert body["model"] == "gpt-4.1"
+        assert body["input"] == [{"type": "message", "role": "user", "content": "Hi"}]
+        assert body["reasoning"] == {"effort": "none", "summary": "auto"}
+
+        await provider.close()
 
 
 # ── _stream_codex SSE parsing ─────────────────────────────────────
@@ -239,7 +312,6 @@ def _sse_lines(events: list[dict[str, Any]]) -> list[str]:
 class TestStreamCodex:
     @pytest.mark.asyncio
     async def test_text_and_done(self):
-        from worker_ai.providers.openai_compat import OpenAICompatProvider
 
         events = [
             {"type": "response.output_text.delta", "delta": "Hello "},
@@ -252,10 +324,9 @@ class TestStreamCodex:
                 },
             },
         ]
-        sse_data = "\n".join(_sse_lines(events))
 
         token = _make_jwt({"chatgpt_account_id": "acct-1"})
-        provider = OpenAICompatProvider(api_key=token, auth_type="oauth")
+        provider = OpenAIProvider(api_key=token, auth_type="oauth")
 
         mock_response = AsyncMock()
         mock_response.status_code = 200
@@ -291,7 +362,6 @@ class TestStreamCodex:
 
     @pytest.mark.asyncio
     async def test_tool_call_flow(self):
-        from worker_ai.providers.openai_compat import OpenAICompatProvider
 
         events = [
             {
@@ -324,7 +394,7 @@ class TestStreamCodex:
         ]
 
         token = _make_jwt({"chatgpt_account_id": "acct-1"})
-        provider = OpenAICompatProvider(api_key=token, auth_type="oauth")
+        provider = OpenAIProvider(api_key=token, auth_type="oauth")
 
         mock_response = AsyncMock()
         mock_response.status_code = 200
@@ -356,19 +426,21 @@ class TestStreamCodex:
 
     @pytest.mark.asyncio
     async def test_reasoning_delta(self):
-        from worker_ai.providers.openai_compat import OpenAICompatProvider
 
         events = [
             {"type": "response.reasoning_summary_text.delta", "delta": "Thinking..."},
             {"type": "response.output_text.delta", "delta": "Answer"},
             {
                 "type": "response.completed",
-                "response": {"status": "completed", "usage": {"input_tokens": 5, "output_tokens": 3}},
+                "response": {
+                    "status": "completed",
+                    "usage": {"input_tokens": 5, "output_tokens": 3},
+                },
             },
         ]
 
         token = _make_jwt({"chatgpt_account_id": "acct-1"})
-        provider = OpenAICompatProvider(api_key=token, auth_type="oauth")
+        provider = OpenAIProvider(api_key=token, auth_type="oauth")
 
         mock_response = AsyncMock()
         mock_response.status_code = 200

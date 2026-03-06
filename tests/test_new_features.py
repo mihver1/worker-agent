@@ -246,6 +246,176 @@ class TestOAuthFallback:
         assert saved.access_token == "refreshed_token"
         assert saved.refresh_token == "new_refresh_token"
 
+    @pytest.mark.asyncio
+    async def test_non_oauth_provider_does_not_use_stale_token_store_entry(
+        self, tmp_path, monkeypatch,
+    ):
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import WorkerConfig
+
+        store = TokenStore(path=tmp_path / "auth.json")
+        store.save(
+            OAuthToken(
+                access_token="stale_kimi_oauth_token",
+                provider="kimi",
+                expires_at=9999999999.0,
+            )
+        )
+
+        import worker_ai.oauth as oauth_mod
+
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
+
+        key, auth_type = await _resolve_api_key(WorkerConfig(), "kimi")
+
+        assert key is None
+        assert auth_type == "api"
+
+    @pytest.mark.asyncio
+    async def test_custom_provider_env_list_is_used(self, monkeypatch):
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import ProviderConfig, WorkerConfig
+
+        monkeypatch.setenv("CUSTOM_OPENAI_API_KEY", "env_token_123")
+
+        config = WorkerConfig(
+            providers={
+                "localproxy": ProviderConfig(
+                    type="openai_compat",
+                    env=["CUSTOM_OPENAI_API_KEY"],
+                )
+            }
+        )
+        key, auth_type = await _resolve_api_key(config, "localproxy")
+        assert key == "env_token_123"
+        assert auth_type == "api"
+
+    @pytest.mark.asyncio
+    async def test_ollama_cloud_reads_api_key_from_builtin_env(self, monkeypatch):
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import WorkerConfig
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "ollama_env_token")
+
+        key, auth_type = await _resolve_api_key(WorkerConfig(), "ollama-cloud")
+        assert key == "ollama_env_token"
+        assert auth_type == "api"
+
+    @pytest.mark.asyncio
+    async def test_github_copilot_reads_token_from_config_file(self, tmp_path, monkeypatch):
+        import worker_ai.oauth as oauth_mod
+        import worker_core.cli as cli_mod
+        from worker_core.config import ProviderConfig, WorkerConfig
+
+        token_path = tmp_path / ".copilot" / "config.json"
+        token_path.parent.mkdir(parents=True)
+        token_path.write_text(
+            '{"hosts":{"github.com":{"oauth_token":"gho_github"},"octo.ghe.com":{"oauth_token":"gho_enterprise"}}}'
+        )
+
+        monkeypatch.delenv("COPILOT_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(oauth_mod, "_github_copilot_token_paths", lambda: (token_path,))
+
+        async def _unexpected_gh_cli(host: str) -> str | None:
+            raise AssertionError(f"gh auth fallback should not be used for {host}")
+        monkeypatch.setattr(
+            oauth_mod,
+            "load_github_copilot_token_from_gh_cli",
+            _unexpected_gh_cli,
+        )
+
+        config = WorkerConfig(
+            providers={
+                "github_copilot_enterprise": ProviderConfig(
+                    options={"github_host": "octo.ghe.com"},
+                )
+            }
+        )
+
+        key, auth_type = await cli_mod._resolve_api_key(config, "github_copilot_enterprise")
+
+        assert key == "gho_enterprise"
+        assert auth_type == "api"
+
+    @pytest.mark.asyncio
+    async def test_github_copilot_gh_cli_fallback_uses_resolved_host(self, monkeypatch):
+        import worker_ai.oauth as oauth_mod
+        import worker_core.cli as cli_mod
+        from worker_core.config import ProviderConfig, WorkerConfig
+
+        monkeypatch.delenv("COPILOT_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(
+            oauth_mod,
+            "load_github_copilot_token_from_files",
+            lambda host: None,
+        )
+
+        seen_hosts: list[str] = []
+
+        async def _fake_gh_cli(host: str) -> str | None:
+            seen_hosts.append(host)
+            return "gho_from_gh_cli"
+        monkeypatch.setattr(
+            oauth_mod,
+            "load_github_copilot_token_from_gh_cli",
+            _fake_gh_cli,
+        )
+
+        config = WorkerConfig(
+            providers={
+                "github_copilot_enterprise": ProviderConfig(
+                    options={"github_host": "octo.ghe.com"},
+                )
+            }
+        )
+
+        key, auth_type = await cli_mod._resolve_api_key(
+            config,
+            "github-copilot-enterprise",
+        )
+
+        assert key == "gho_from_gh_cli"
+        assert auth_type == "api"
+        assert seen_hosts == ["octo.ghe.com"]
+
+    @pytest.mark.asyncio
+    async def test_github_copilot_worker_oauth_token_takes_priority_over_gh_fallback(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        import worker_ai.oauth as oauth_mod
+        from worker_core.cli import _resolve_api_key
+        from worker_core.config import WorkerConfig
+
+        store = TokenStore(path=tmp_path / "auth.json")
+        store.save(
+            OAuthToken(
+                access_token="worker_oauth_token",
+                provider="github_copilot",
+            )
+        )
+
+        monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
+        monkeypatch.delenv("COPILOT_GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setattr(
+            oauth_mod,
+            "load_github_copilot_token_from_files",
+            lambda host: "gho_from_file",
+        )
+
+        key, auth_type = await _resolve_api_key(WorkerConfig(), "github_copilot")
+
+        assert key == "worker_oauth_token"
+        assert auth_type == "oauth"
+
 
 # ── ModelsCatalog ─────────────────────────────────────────────────
 

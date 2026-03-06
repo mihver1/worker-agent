@@ -1,11 +1,11 @@
-"""Kimi (Moonshot AI) provider — OpenAI-compatible with Kimi-specific models."""
+"""Kimi For Coding provider — Anthropic-compatible Moonshot endpoint."""
 
 from __future__ import annotations
 
 from typing import Any
 
 from worker_ai.models import ModelInfo
-from worker_ai.providers.openai_compat import OpenAICompatProvider
+from worker_ai.providers.anthropic import AnthropicProvider
 
 _DEFAULT_BASE_URL = "https://api.kimi.com/coding/v1"
 
@@ -37,8 +37,8 @@ _MODELS: list[ModelInfo] = [
 ]
 
 
-class KimiProvider(OpenAICompatProvider):
-    """Kimi (Moonshot AI) — extends OpenAI-compatible provider."""
+class KimiProvider(AnthropicProvider):
+    """Kimi For Coding — Moonshot endpoint exposed via the Anthropic message shape."""
 
     name = "kimi"
 
@@ -46,6 +46,8 @@ class KimiProvider(OpenAICompatProvider):
         super().__init__(
             api_key=api_key,
             base_url=base_url or _DEFAULT_BASE_URL,
-            models=_MODELS,
             **kwargs,
         )
+
+    def list_models(self) -> list[ModelInfo]:
+        return list(_MODELS)

@@ -27,15 +27,40 @@ class AgentConfig(BaseModel):
     system_prompt: str = ""
     thinking: str = "off"  # off | minimal | low | medium | high | xhigh
 
+class ProviderModelConfig(BaseModel):
+    name: str | None = None
+    context_window: int | None = None
+    max_output_tokens: int | None = None
+    supports_tools: bool | None = None
+    supports_vision: bool | None = None
+    supports_reasoning: bool | None = None
+    input_price_per_m: float | None = None
+    output_price_per_m: float | None = None
+    disabled: bool = False
+    headers: dict[str, str] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+    variants: dict[str, dict[str, Any]] = Field(default_factory=dict)
+
 
 class ProviderConfig(BaseModel):
     type: str = ""
+    name: str = ""
     api_key: str = ""
     base_url: str = ""
     api_type: str = ""
     region: str = ""
     profile: str = ""
     api_version: str = ""
+    project: str = ""
+    location: str = ""
+    env: list[str] = Field(default_factory=list)
+    headers: dict[str, str] = Field(default_factory=dict)
+    options: dict[str, Any] = Field(default_factory=dict)
+    timeout: int | bool | None = None  # milliseconds; false disables the timeout
+    whitelist: list[str] = Field(default_factory=list)
+    blacklist: list[str] = Field(default_factory=list)
+    models: dict[str, ProviderModelConfig] = Field(default_factory=dict)
+    requires_api_key: bool | None = None
 
 
 class PermissionsConfig(BaseModel):
@@ -154,8 +179,13 @@ _GLOBAL_TEMPLATE = """\
 # Примеры:
 #   "anthropic/claude-sonnet-4-20250514"
 #   "openai/gpt-4.1"
+#   "azure_openai/gpt-4.1"
+#   "bedrock/anthropic.claude-3-7-sonnet-20250219-v1:0"
 #   "kimi/kimi-k2.5"
 #   "google/gemini-2.5-pro"
+#   "google_vertex/gemini-2.5-pro"
+#   "vertex_anthropic/claude-sonnet-4@20250514"
+#   "github_copilot/gpt-4.1"
 #   "ollama/qwen3:32b"
 model = "anthropic/claude-sonnet-4-20250514"
 
@@ -183,20 +213,28 @@ model = "anthropic/claude-sonnet-4-20250514"
 
 # ── Провайдеры
 # Каждый провайдер — отдельная секция [providers.<name>]
-# type: anthropic | openai | openai_compat | kimi | google
-#       | bedrock | azure_openai | ollama | huggingface
+# type: anthropic | openai | openai_compat | kimi | google | google_vertex
+#       | vertex_anthropic
+#       | bedrock | azure_openai | github_copilot | ollama | lmstudio | huggingface
 #
-# Аутентификация: api_key ИЛИ oauth (через `worker login <provider>`)
+# Аутентификация: обычно api_key;
+# OAuth доступен только у части провайдеров (`worker login <provider>`)
 # Переменные окружения тоже работают:
-#   ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY,
+#   ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, MOONSHOT_API_KEY,
+#   AZURE_OPENAI_API_KEY, GH_TOKEN, GITHUB_TOKEN,
 #   GROQ_API_KEY, MISTRAL_API_KEY, XAI_API_KEY,
 #   TOGETHER_API_KEY, CEREBRAS_API_KEY, DEEPSEEK_API_KEY,
-#   OPENROUTER_API_KEY, HF_API_KEY
+#   OPENROUTER_API_KEY, OLLAMA_API_KEY, HF_API_KEY
 
 # [providers.anthropic]
 # type = "anthropic"
 # api_key = "sk-ant-..."         # или ANTHROPIC_API_KEY env
 # # base_url = "https://api.anthropic.com"  # override если нужен proxy
+# # [providers.anthropic.options]
+# # beta_headers = ["files-api-2025-04-14"]
+# # interleaved_thinking = true
+# # fine_grained_tool_streaming = true
+# # OAuth login для anthropic автоматически использует Claude Code-style headers/tool naming
 
 # [providers.openai]
 # type = "openai"
@@ -206,12 +244,29 @@ model = "anthropic/claude-sonnet-4-20250514"
 
 # [providers.kimi]
 # type = "kimi"
-# api_key = "sk-..."             # или через `worker login kimi` (OAuth)
+# api_key = "sk-..."             # или MOONSHOT_API_KEY env
 # # base_url = "https://api.kimi.com/coding/v1"
+# # Kimi For Coding использует Anthropic-compatible messages endpoint
 
 # [providers.google]
 # type = "google"
 # api_key = "..."                # или GEMINI_API_KEY env
+
+# [providers.google_vertex]
+# type = "google_vertex"
+# # project = "my-gcp-project"   # или GOOGLE_VERTEX_PROJECT / GOOGLE_CLOUD_PROJECT
+# # location = "us-central1"     # default: global; также GOOGLE_VERTEX_LOCATION
+# # [providers.google_vertex.options]
+# # credentials_path = "/path/to/service-account.json"  # иначе используется ADC
+# # scopes = ["https://www.googleapis.com/auth/cloud-platform"]
+
+# [providers.vertex_anthropic]
+# type = "vertex_anthropic"
+# # project = "my-gcp-project"
+# # location = "us-east5"
+# # [providers.vertex_anthropic.options]
+# # credentials_path = "/path/to/service-account.json"
+# # beta_headers = ["files-api-2025-04-14"]
 
 # [providers.groq]
 # type = "openai_compat"
@@ -232,6 +287,10 @@ model = "anthropic/claude-sonnet-4-20250514"
 # type = "openai_compat"
 # api_key = "sk-or-..."
 # base_url = "https://openrouter.ai/api/v1"
+# # timeout = 300000               # миллисекунды; false = без таймаута
+# # [providers.openrouter.headers]
+# # "HTTP-Referer" = "https://example.com"
+# # "X-Title" = "worker"
 
 # [providers.together]
 # type = "openai_compat"
@@ -254,18 +313,68 @@ model = "anthropic/claude-sonnet-4-20250514"
 
 # [providers.ollama]
 # type = "ollama"
-# # base_url = "http://localhost:11434"  # дефолт
+# # base_url = "http://localhost:11434/v1"  # дефолт OpenAI-compatible endpoint
+# # requires_api_key = false
+# # `/models` запрашивает список моделей напрямую у Ollama API.
+# # Модели можно указывать напрямую как ollama/<model-id>; чтобы они появились в /models,
+# # опишите их в секции ниже.
+# # [providers.ollama.models."qwen3:32b"]
+# # name = "Qwen3 32B"
+# # context_window = 131072
+
+# [providers.ollama_cloud]
+# type = "ollama"
+# # api_key = "ollama_..."         # или OLLAMA_API_KEY env
+# # base_url = "https://ollama.com/v1"
+# # `/models` запрашивает список моделей напрямую у Ollama Cloud API.
+# # Hosted Ollama использует тот же OpenAI-compatible runtime, что и локальный Ollama.
+# # [providers.ollama_cloud.models."gpt-oss:20b"]
+# # name = "gpt-oss 20B via Ollama Cloud"
+# # context_window = 200000
+
+# [providers.lmstudio]
+# type = "lmstudio"
+# # base_url = "http://127.0.0.1:1234/v1"
+# # requires_api_key = false        # если в LM Studio включена auth, можно задать api_key
+# # `/models` запрашивает список моделей напрямую у LM Studio API.
+# # Модели можно указывать напрямую как lmstudio/<model-id>; чтобы они появились в /models,
+# # опишите их в секции ниже.
+# # [providers.lmstudio.models."openai/gpt-oss-20b"]
+# # name = "LM Studio gpt-oss-20b"
+# # context_window = 131072
 
 # [providers.bedrock]
 # type = "bedrock"
 # # region = "us-east-1"
 # # profile = "default"           # AWS profile из ~/.aws/credentials
+# # base_url = "https://bedrock-runtime.us-east-1.amazonaws.com"  # optional custom endpoint
+# # Credentials can come from the AWS credential chain (env/shared config/SSO/etc.)
+# # [providers.bedrock.options]
+# # access_key_id = "AKIA..."
+# # secret_access_key = "..."
+# # session_token = "..."          # optional STS session token
 
-# [providers.azure]
+# [providers.azure_openai]
 # type = "azure_openai"
 # api_key = "..."
 # base_url = "https://<resource>.openai.azure.com"
 # # api_version = "2024-10-21"
+# # api_type = "chat"            # "chat" for deployment path, "responses" for /openai/v1/responses
+
+# [providers.github_copilot]
+# type = "github_copilot"
+# # api_key = "github_pat_..."    # или `worker login github_copilot`
+# #                              # или COPILOT_GITHUB_TOKEN / GH_TOKEN / GITHUB_TOKEN
+# # interactive login требует `gh` (`brew install gh` на macOS/Homebrew)
+# # base_url = "https://api.githubcopilot.com"
+
+# [providers.github_copilot_enterprise]
+# type = "github_copilot"
+# # api_key = "github_pat_..."    # или `worker login github_copilot_enterprise`
+# # interactive login требует `gh` (`brew install gh` на macOS/Homebrew)
+# # base_url = "https://api.githubcopilot.com"
+# # [providers.github_copilot_enterprise.options]
+# # github_host = "SUBDOMAIN.ghe.com"  # или GH_HOST для enterprise auth lookup via gh
 
 # ── Права доступа ─────────────────────────────────────────────
 [permissions]

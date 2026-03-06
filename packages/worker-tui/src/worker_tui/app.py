@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import uuid
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
@@ -38,9 +39,168 @@ from worker_core.bootstrap import (
 from worker_core.cmux import is_cmux
 from worker_core.config import load_config, resolve_model
 from worker_core.prompts import load_prompts, render_prompt
+from worker_core.provider_resolver import (
+    get_effective_model_info,
+    get_effective_provider_catalog,
+    get_provider_config,
+    get_provider_env_vars,
+)
 from worker_core.sessions import SessionStore
 from worker_core.skills import inject_skill, load_skills
 from worker_core.tools.builtins import create_builtin_tools
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderSetupEntry:
+    """A provider entry shown by the /providers command."""
+
+    id: str
+    name: str
+    status: str
+    hint: str
+
+
+def _provider_ids_for_listing(config: Any) -> list[str]:
+    from worker_ai.provider_specs import iter_provider_specs
+
+    provider_ids = [spec.id for spec in iter_provider_specs()]
+    for provider_id in config.providers:
+        if provider_id not in provider_ids:
+            provider_ids.append(provider_id)
+    return provider_ids
+
+
+def _looks_local_base_url(base_url: str) -> bool:
+    return base_url.startswith("http://localhost") or base_url.startswith("http://127.0.0.1")
+
+
+def _provider_setup_hint(
+    provider_id: str,
+    *,
+    env_vars: tuple[str, ...],
+    oauth_supported: bool,
+    requires_api_key: bool,
+    base_url: str,
+) -> str:
+    config_path = f"[providers.{provider_id}]"
+    if oauth_supported and env_vars:
+        return f"run /connect {provider_id} or set {env_vars[0]}"
+    if oauth_supported:
+        return f"run /connect {provider_id}"
+    if not requires_api_key:
+        if provider_id == "bedrock":
+            return f"configure AWS credentials or {config_path}"
+        if provider_id in {"google_vertex", "vertex_anthropic"}:
+            return f"set {config_path}.project / .location or use ADC"
+        if _looks_local_base_url(base_url) or provider_id in {"ollama", "lmstudio", "llama.cpp"}:
+            return f"start the service or set {config_path}.base_url"
+        return f"configure {config_path}"
+    if env_vars:
+        return f"set {env_vars[0]} or {config_path}.api_key"
+    return f"configure {config_path}"
+
+
+def _provider_setup_hint_for_config(config: Any, provider_id: str) -> str:
+    from worker_ai.oauth import list_oauth_provider_names
+    from worker_ai.provider_specs import get_provider_spec
+
+    spec = get_provider_spec(provider_id)
+    canonical_id = spec.id if spec is not None else provider_id
+    provider_config = get_provider_config(config, provider_id)
+    runtime_base_url = (
+        provider_config.base_url
+        if provider_config and provider_config.base_url
+        else (spec.default_base_url if spec is not None else "")
+    )
+    oauth_supported = canonical_id in set(list_oauth_provider_names())
+    return _provider_setup_hint(
+        canonical_id,
+        env_vars=tuple(get_provider_env_vars(config, provider_id)),
+        oauth_supported=oauth_supported,
+        requires_api_key=provider_requires_api_key(config, provider_id),
+        base_url=runtime_base_url,
+    )
+
+
+async def collect_provider_setup_entries(
+    config: Any,
+    resolve_api_key: Callable[[Any, str], Awaitable[tuple[str | None, str]]],
+) -> list[ProviderSetupEntry]:
+    from worker_ai.oauth import list_oauth_provider_names
+    from worker_ai.provider_specs import get_provider_spec
+
+    oauth_providers = set(list_oauth_provider_names())
+    entries: list[ProviderSetupEntry] = []
+    for provider_id in _provider_ids_for_listing(config):
+        provider_config = get_provider_config(config, provider_id)
+        spec = get_provider_spec(provider_id)
+        canonical_id = spec.id if spec is not None else provider_id
+        display_name = (
+            provider_config.name
+            if provider_config and provider_config.name
+            else (spec.display_name if spec is not None else provider_id)
+        )
+        env_vars = tuple(get_provider_env_vars(config, provider_id))
+        requires_key = provider_requires_api_key(config, provider_id)
+        runtime_base_url = (
+            provider_config.base_url
+            if provider_config and provider_config.base_url
+            else (spec.default_base_url if spec is not None else "")
+        )
+        api_key, auth_type = await resolve_api_key(config, provider_id)
+
+        if api_key:
+            status = "connected (oauth)" if auth_type == "oauth" else "configured"
+            hint = "use /models"
+        elif provider_config is not None and requires_key:
+            status = "partially configured"
+            hint = _provider_setup_hint(
+                canonical_id,
+                env_vars=env_vars,
+                oauth_supported=canonical_id in oauth_providers,
+                requires_api_key=requires_key,
+                base_url=runtime_base_url,
+            )
+        elif not requires_key:
+            status = "keyless"
+            hint = _provider_setup_hint(
+                canonical_id,
+                env_vars=env_vars,
+                oauth_supported=canonical_id in oauth_providers,
+                requires_api_key=requires_key,
+                base_url=runtime_base_url,
+            )
+        else:
+            status = "needs setup"
+            hint = _provider_setup_hint(
+                canonical_id,
+                env_vars=env_vars,
+                oauth_supported=canonical_id in oauth_providers,
+                requires_api_key=requires_key,
+                base_url=runtime_base_url,
+            )
+
+        entries.append(
+            ProviderSetupEntry(
+                id=canonical_id,
+                name=display_name,
+                status=status,
+                hint=hint,
+            )
+        )
+    return entries
+
+
+def format_provider_setup_entries(entries: list[ProviderSetupEntry]) -> str:
+    if not entries:
+        return "No supported providers found."
+
+    lines = ["Supported providers:"]
+    for entry in entries:
+        lines.append(f"  {entry.id} ({entry.name}) — {entry.status}; {entry.hint}")
+    lines.append("")
+    lines.append("Use /models to browse models after a provider is configured.")
+    return "\n".join(lines)
 
 # ── Widgets ───────────────────────────────────────────────────────
 
@@ -57,6 +217,7 @@ BUILTIN_COMMAND_SUGGESTIONS: tuple[SlashCommandSuggestion, ...] = (
     SlashCommandSuggestion("/help", "show available commands"),
     SlashCommandSuggestion("/model", "show current model or switch model"),
     SlashCommandSuggestion("/models", "list available models"),
+    SlashCommandSuggestion("/providers", "list supported providers and setup hints"),
     SlashCommandSuggestion("/connect", "log in to a provider"),
     SlashCommandSuggestion("/resume", "resume a saved session"),
     SlashCommandSuggestion("/sessions", "list recent sessions"),
@@ -677,6 +838,7 @@ class WorkerApp(App):
                 "  /model              — show current model\n"
                 "  /model <p/model>    — switch model\n"
                 "  /models             — list all available models\n"
+                "  /providers          — list supported providers and setup hints\n"
                 "  /connect <provider> — login to a provider\n"
                 "  /resume             — list and resume a session\n"
                 "  /sessions           — list recent sessions\n"
@@ -708,10 +870,12 @@ class WorkerApp(App):
                 self._add_message(f"Current model: {model}", role="tool")
         elif cmd == "/models":
             self._list_models()
+        elif cmd == "/providers":
+            await self._list_providers()
         elif cmd == "/connect":
             if not arg:
                 self._add_message(
-                    "Usage: /connect <provider>  (anthropic, openai, kimi)",
+                    "Usage: /connect <provider>  (see /providers for setup options)",
                     role="tool",
                 )
             else:
@@ -904,27 +1068,12 @@ class WorkerApp(App):
     @work(exclusive=True, thread=False)
     async def _list_models(self) -> None:
         """Show available models for connected providers only."""
-        from worker_ai.models_catalog import ModelsCatalog
         from worker_core.cli import _resolve_api_key
 
         config = load_config(os.getcwd())
-
-        # Collect all candidate provider names: explicit config + well-known ones.
-        candidate_providers = list(config.providers)
-        for pid in [
-            "anthropic", "openai", "google", "kimi", "ollama",
-            "groq", "openrouter", "deepseek", "mistral", "xai",
-            "together", "cerebras",
-        ]:
-            if pid not in candidate_providers:
-                candidate_providers.append(pid)
-
-        catalog = await ModelsCatalog.load()
+        catalog = await get_effective_provider_catalog(config)
         lines: list[str] = []
-        for pid in candidate_providers:
-            prov = catalog.get(pid)
-            if not prov or not prov.models:
-                continue
+        for pid, prov in catalog.items():
             requires_key = provider_requires_api_key(config, pid)
             api_key, _ = await _resolve_api_key(config, pid)
             connected = bool(api_key or not requires_key)
@@ -942,9 +1091,18 @@ class WorkerApp(App):
             )
         else:
             self._add_message(
-                "No connected providers. Use /connect <provider> to log in.",
+                "No connected providers. Use /providers to see supported providers "
+                "and setup hints.",
                 role="error",
             )
+
+    async def _list_providers(self) -> None:
+        """Show all supported providers with setup guidance."""
+        from worker_core.cli import _resolve_api_key
+
+        config = load_config(os.getcwd())
+        entries = await collect_provider_setup_entries(config, _resolve_api_key)
+        self._add_message(format_provider_setup_entries(entries), role="tool")
 
     async def _switch_model(self, model_str: str) -> None:
         """Switch to a different model (provider/model-id format)."""
@@ -955,14 +1113,13 @@ class WorkerApp(App):
             )
             return
 
-        from worker_ai.models_catalog import ModelsCatalog
         from worker_core.cli import _resolve_api_key
 
         provider_name, model_id = model_str.split("/", 1)
         config = load_config(os.getcwd())
 
         # Validate model exists in catalog
-        catalog_model = await ModelsCatalog.get_model(provider_name, model_id)
+        catalog_model = await get_effective_model_info(config, provider_name, model_id)
         if not catalog_model:
             self._add_message(
                 f"Model '{model_id}' not found for {provider_name}. Use /models to see available.",
@@ -972,8 +1129,9 @@ class WorkerApp(App):
 
         api_key, _ = await _resolve_api_key(config, provider_name)
         if provider_requires_api_key(config, provider_name) and not api_key:
+            hint = _provider_setup_hint_for_config(config, provider_name)
             self._add_message(
-                f"No credentials for {provider_name}. Run /connect {provider_name}",
+                f"No credentials for {provider_name}. {hint}",
                 role="error",
             )
             return
@@ -1027,12 +1185,16 @@ class WorkerApp(App):
     @work(exclusive=True, thread=False)
     async def _run_connect(self, provider_name: str) -> None:
         """Run OAuth login for a provider."""
-        from worker_ai.oauth import get_oauth_provider
+        from worker_ai.oauth import get_oauth_provider, list_oauth_provider_names
+        config = load_config(os.getcwd())
 
-        oauth = get_oauth_provider(provider_name)
+        oauth = get_oauth_provider(provider_name, config=config)
         if oauth is None:
+            supported = ", ".join(list_oauth_provider_names())
             self._add_message(
-                f"OAuth not supported for '{provider_name}'. Supported: kimi, anthropic, openai",
+                f"OAuth not supported for '{provider_name}'. "
+                f"{_provider_setup_hint_for_config(config, provider_name)}. "
+                f"Supported: {supported}",
                 role="error",
             )
             return
