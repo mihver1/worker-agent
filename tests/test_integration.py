@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from conftest import MockProvider
@@ -214,6 +215,88 @@ class TestRuntimeBootstrap:
         assert runtime.context_window == 131072
 
         await runtime.provider.close()
+
+
+class TestAzureFoundryIntegration:
+    @pytest.mark.asyncio
+    async def test_agent_session_uses_non_stream_fallback_for_empty_foundry_stream(self):
+        from worker_ai.providers.azure_openai import AzureOpenAIProvider
+        from worker_core.agent import AgentEventType, AgentSession
+
+        provider = AzureOpenAIProvider(
+            api_key="azure-key",
+            base_url="https://demo.services.ai.azure.com",
+        )
+
+        stream_events = [
+            {
+                "choices": [],
+                "prompt_filter_results": [
+                    {
+                        "prompt_index": 0,
+                        "content_filter_results": {
+                            "hate": {"filtered": False, "severity": "safe"}
+                        },
+                    }
+                ],
+            }
+        ]
+
+        mock_stream_response = AsyncMock()
+        mock_stream_response.status_code = 200
+
+        async def async_lines():
+            for event in stream_events:
+                yield f"data: {json.dumps(event)}"
+            yield "data: [DONE]"
+
+        mock_stream_response.aiter_lines = async_lines
+        mock_cm = AsyncMock()
+        mock_cm.__aenter__ = AsyncMock(return_value=mock_stream_response)
+        mock_cm.__aexit__ = AsyncMock(return_value=False)
+
+        mock_post_response = AsyncMock()
+        mock_post_response.status_code = 200
+        mock_post_response.json = Mock(
+            return_value={
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "reasoning_content": "Reasoning",
+                            "content": "Answer",
+                            "tool_calls": None,
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+            }
+        )
+
+        with (
+            patch.object(provider._client, "stream", return_value=mock_cm),
+            patch.object(provider._client, "post", return_value=mock_post_response),
+        ):
+            session = AgentSession(provider=provider, model="Kimi-K2.5", tools=[])
+            events = []
+            async for event in session.run("Hi"):
+                events.append(event)
+
+        assert [event.type for event in events] == [
+            AgentEventType.REASONING_DELTA,
+            AgentEventType.TEXT_DELTA,
+            AgentEventType.DONE,
+        ]
+        assert events[0].content == "Reasoning"
+        assert events[1].content == "Answer"
+        assert events[2].usage is not None
+        assert events[2].usage.input_tokens == 5
+        assert events[2].usage.output_tokens == 2
+        assert session.messages[-1].reasoning == "Reasoning"
+        assert session.messages[-1].content == "Answer"
+
+        await provider.close()
 
 
 class TestCliLogin:

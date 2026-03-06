@@ -109,6 +109,121 @@ def _bool_or_default(value: Any, default: bool) -> bool:
     return default
 
 
+def _extract_text_content(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                parts.append(item)
+                continue
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+                continue
+            if isinstance(text, dict):
+                nested = text.get("value") or text.get("content")
+                if isinstance(nested, str):
+                    parts.append(nested)
+                    continue
+            nested = item.get("content")
+            if isinstance(nested, str):
+                parts.append(nested)
+        return "".join(parts)
+    return ""
+
+
+def _chat_usage_from_payload(payload: Any) -> Usage:
+    usage = Usage()
+    if not isinstance(payload, dict):
+        return usage
+    raw_usage = payload.get("usage", {})
+    if not isinstance(raw_usage, dict):
+        return usage
+    usage.input_tokens = _int_or_default(raw_usage.get("prompt_tokens"), 0)
+    usage.output_tokens = _int_or_default(raw_usage.get("completion_tokens"), 0)
+    reasoning_tokens = raw_usage.get("reasoning_tokens")
+    if reasoning_tokens is None:
+        completion_details = raw_usage.get("completion_tokens_details", {})
+        if isinstance(completion_details, dict):
+            reasoning_tokens = completion_details.get("reasoning_tokens")
+    usage.reasoning_tokens = _int_or_default(reasoning_tokens, 0)
+    return usage
+
+
+def _parse_chat_completions_tool_args(raw_arguments: Any) -> dict[str, Any]:
+    if isinstance(raw_arguments, dict):
+        return raw_arguments
+    if isinstance(raw_arguments, str):
+        try:
+            return json.loads(raw_arguments) if raw_arguments else {}
+        except json.JSONDecodeError:
+            return {"_raw": raw_arguments}
+    return {}
+
+
+def _parse_openai_model_list(payload: Any, provider_name: str) -> list[ModelInfo]:
+    if not isinstance(payload, dict):
+        return []
+    raw_models = payload.get("data", [])
+    if not isinstance(raw_models, list):
+        return []
+
+    models: list[ModelInfo] = []
+    for raw_model in raw_models:
+        if not isinstance(raw_model, dict):
+            continue
+        model_id = str(raw_model.get("id", "")).strip()
+        if not model_id:
+            continue
+        capabilities = raw_model.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            capabilities = {}
+        models.append(
+            ModelInfo(
+                id=model_id,
+                provider=provider_name,
+                name=str(raw_model.get("name") or raw_model.get("display_name") or model_id),
+                context_window=_int_or_default(
+                    raw_model.get("context_window")
+                    or raw_model.get("max_context_length")
+                    or raw_model.get("max_context_tokens")
+                    or raw_model.get("max_model_len"),
+                    128_000,
+                ),
+                max_output_tokens=_int_or_default(
+                    raw_model.get("max_output_tokens")
+                    or raw_model.get("max_completion_tokens"),
+                    8_192,
+                ),
+                supports_tools=_bool_or_default(
+                    raw_model.get("supports_tools")
+                    or capabilities.get("tool_calls")
+                    or capabilities.get("tools")
+                    or capabilities.get("function_calling"),
+                    True,
+                ),
+                supports_vision=_bool_or_default(
+                    raw_model.get("supports_vision")
+                    or raw_model.get("vision")
+                    or capabilities.get("vision")
+                    or capabilities.get("image_input"),
+                    False,
+                ),
+                supports_reasoning=_bool_or_default(
+                    raw_model.get("supports_reasoning")
+                    or raw_model.get("reasoning")
+                    or capabilities.get("reasoning"),
+                    False,
+                ),
+            )
+        )
+    return models
+
+
 # ── Helpers — Chat Completions ────────────────────────────────────
 
 
@@ -384,6 +499,65 @@ class OpenAICompatibleProvider(Provider):
         )
         return "/chat/completions", body, headers
 
+    @staticmethod
+    def _tool_call_delta_from_chat_completion(raw_tool_call: Any) -> ToolCallDelta | None:
+        if not isinstance(raw_tool_call, dict):
+            return None
+        function = raw_tool_call.get("function", {})
+        if not isinstance(function, dict):
+            function = {}
+        return ToolCallDelta(
+            id=str(raw_tool_call.get("id", "")),
+            name=str(function.get("name", "")),
+            arguments=_parse_chat_completions_tool_args(function.get("arguments")),
+        )
+
+    async def _fallback_chat_completions(
+        self,
+        path: str,
+        body: dict[str, Any],
+        headers: dict[str, str],
+    ) -> AsyncIterator[StreamEvent]:
+        fallback_body = dict(body)
+        fallback_body["stream"] = False
+        fallback_body.pop("stream_options", None)
+
+        response = await self._client.post(path, json=fallback_body, headers=headers)
+        if response.status_code != 200:
+            error_body = await response.aread()
+            msg = f"OpenAI API error {response.status_code}: {error_body.decode()}"
+            raise RuntimeError(msg)
+
+        payload = response.json()
+        usage = _chat_usage_from_payload(payload)
+        choices = payload.get("choices", []) if isinstance(payload, dict) else []
+        if not isinstance(choices, list) or not choices:
+            yield Done(stop_reason="stop", usage=usage)
+            return
+
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = choice.get("message", {})
+        if not isinstance(message, dict):
+            message = {}
+
+        reasoning = _extract_text_content(
+            message.get("reasoning_content") or message.get("reasoning")
+        )
+        if reasoning:
+            yield ReasoningDelta(content=reasoning)
+
+        content = _extract_text_content(message.get("content"))
+        if content:
+            yield TextDelta(content=content)
+
+        for raw_tool_call in message.get("tool_calls") or []:
+            tc_delta = self._tool_call_delta_from_chat_completion(raw_tool_call)
+            if tc_delta is not None:
+                yield tc_delta
+
+        stop_reason = str(choice.get("finish_reason") or choice.get("stop_reason") or "stop")
+        yield Done(stop_reason=stop_reason, usage=usage)
+
     async def _stream_chat_completions(
         self,
         model: str,
@@ -413,6 +587,8 @@ class OpenAICompatibleProvider(Provider):
 
             pending_tools: dict[int, dict[str, Any]] = {}
             usage = Usage()
+            emitted_output = False
+            emitted_done = False
 
             async for raw_line in response.aiter_lines():
                 if not raw_line.startswith("data: "):
@@ -430,7 +606,7 @@ class OpenAICompatibleProvider(Provider):
                     u = chunk["usage"]
                     usage.input_tokens = u.get("prompt_tokens", 0)
                     usage.output_tokens = u.get("completion_tokens", 0)
-                    usage.reasoning_tokens = (
+                    usage.reasoning_tokens = u.get("reasoning_tokens") or (
                         u.get("completion_tokens_details", {}).get("reasoning_tokens", 0)
                     )
 
@@ -438,18 +614,20 @@ class OpenAICompatibleProvider(Provider):
                 if not choices:
                     continue
                 choice = choices[0]
-                delta = choice.get("delta", {})
+                delta = choice.get("delta") or {}
                 finish_reason = choice.get("finish_reason")
 
                 content = delta.get("content")
                 if content:
+                    emitted_output = True
                     yield TextDelta(content=content)
 
                 reasoning = delta.get("reasoning_content") or delta.get("reasoning")
                 if reasoning:
+                    emitted_output = True
                     yield ReasoningDelta(content=reasoning)
 
-                for tc_delta in delta.get("tool_calls", []):
+                for tc_delta in delta.get("tool_calls") or []:
                     idx = tc_delta.get("index", 0)
                     if idx not in pending_tools:
                         pending_tools[idx] = {
@@ -471,17 +649,31 @@ class OpenAICompatibleProvider(Provider):
                 if finish_reason:
                     for idx in sorted(pending_tools):
                         tc_info = pending_tools[idx]
-                        try:
-                            args = json.loads(tc_info["args_json"]) if tc_info["args_json"] else {}
-                        except json.JSONDecodeError:
-                            args = {"_raw": tc_info["args_json"]}
                         yield ToolCallDelta(
                             id=tc_info["id"],
                             name=tc_info["name"],
-                            arguments=args,
+                            arguments=_parse_chat_completions_tool_args(tc_info["args_json"]),
                         )
+                        emitted_output = True
                     pending_tools.clear()
+                    emitted_done = True
                     yield Done(stop_reason=finish_reason, usage=usage)
+
+            if emitted_done:
+                return
+            if emitted_output:
+                for idx in sorted(pending_tools):
+                    tc_info = pending_tools[idx]
+                    yield ToolCallDelta(
+                        id=tc_info["id"],
+                        name=tc_info["name"],
+                        arguments=_parse_chat_completions_tool_args(tc_info["args_json"]),
+                    )
+                yield Done(stop_reason="stop", usage=usage)
+                return
+
+            async for event in self._fallback_chat_completions(path, body, headers):
+                yield event
 
     async def stream_chat(
         self,
@@ -518,46 +710,7 @@ class OpenAICompatibleProvider(Provider):
             payload = response.json()
         except Exception:
             return self.list_models()
-
-        raw_models = payload.get("data", [])
-        if not isinstance(raw_models, list):
-            return self.list_models()
-
-        models: list[ModelInfo] = []
-        for raw_model in raw_models:
-            if not isinstance(raw_model, dict):
-                continue
-            model_id = str(raw_model.get("id", "")).strip()
-            if not model_id:
-                continue
-            models.append(
-                ModelInfo(
-                    id=model_id,
-                    provider=self.name,
-                    name=str(raw_model.get("name") or raw_model.get("display_name") or model_id),
-                    context_window=_int_or_default(
-                        raw_model.get("context_window")
-                        or raw_model.get("max_context_length")
-                        or raw_model.get("max_context_tokens")
-                        or raw_model.get("max_model_len"),
-                        128_000,
-                    ),
-                    max_output_tokens=_int_or_default(
-                        raw_model.get("max_output_tokens")
-                        or raw_model.get("max_completion_tokens"),
-                        8_192,
-                    ),
-                    supports_tools=_bool_or_default(raw_model.get("supports_tools"), True),
-                    supports_vision=_bool_or_default(
-                        raw_model.get("supports_vision") or raw_model.get("vision"),
-                        False,
-                    ),
-                    supports_reasoning=_bool_or_default(
-                        raw_model.get("supports_reasoning") or raw_model.get("reasoning"),
-                        False,
-                    ),
-                )
-            )
+        models = _parse_openai_model_list(payload, self.name)
 
         return models or self.list_models()
 

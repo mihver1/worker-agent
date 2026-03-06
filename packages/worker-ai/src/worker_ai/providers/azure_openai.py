@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 from worker_ai.models import Message, ModelInfo, ToolDef
 from worker_ai.provider import merge_headers
@@ -12,6 +13,7 @@ from worker_ai.providers.openai_compat import (
     _build_chat_completions_body,
     _build_responses_body,
     _clone_models,
+    _parse_openai_model_list,
 )
 
 _DEFAULT_AZURE_API_VERSION = "2024-10-21"
@@ -20,11 +22,21 @@ _DEFAULT_AZURE_API_VERSION = "2024-10-21"
 def _looks_like_v1_base_url(base_url: str | None) -> bool:
     return (base_url or "").rstrip("/").endswith("/openai/v1")
 
+def _looks_like_models_base_url(base_url: str | None) -> bool:
+    return (base_url or "").rstrip("/").endswith("/models")
+
+
+def _is_azure_ai_foundry_base_url(base_url: str | None) -> bool:
+    hostname = urlparse(base_url or "").hostname or ""
+    return hostname.endswith(".services.ai.azure.com")
+
 
 def _normalize_azure_base_url(base_url: str | None, *, use_v1: bool) -> str:
     raw_base_url = (base_url or "").rstrip("/")
     if not raw_base_url:
         return ""
+    if raw_base_url.endswith("/models"):
+        raw_base_url = raw_base_url[: -len("/models")]
     if use_v1:
         if raw_base_url.endswith("/openai/v1"):
             return raw_base_url
@@ -52,7 +64,12 @@ class AzureOpenAIProvider(OpenAIProvider):
         **kwargs: Any,
     ):
         api_type = str(kwargs.get("api_type", "chat") or "chat")
-        self._use_v1_api = api_type == "responses" or _looks_like_v1_base_url(base_url)
+        self._use_v1_api = (
+            api_type == "responses"
+            or _looks_like_v1_base_url(base_url)
+            or _looks_like_models_base_url(base_url)
+            or _is_azure_ai_foundry_base_url(base_url)
+        )
         self._api_version = str(
             kwargs.get("api_version", _DEFAULT_AZURE_API_VERSION)
             or _DEFAULT_AZURE_API_VERSION
@@ -74,6 +91,19 @@ class AzureOpenAIProvider(OpenAIProvider):
             {"api-key": self.api_key} if self.api_key else None,
             self.headers,
         )
+
+    async def list_models_direct(self) -> list[ModelInfo]:
+        path = "/models" if self._use_v1_api else f"/openai/models?api-version={self._api_version}"
+        try:
+            response = await self._client.get(path, headers=self._azure_headers(), timeout=5.0)
+            if response.status_code != 200:
+                return self.list_models()
+            payload = response.json()
+        except Exception:
+            return self.list_models()
+
+        models = _parse_openai_model_list(payload, self.name)
+        return models or self.list_models()
 
     def _build_chat_completions_request(
         self,

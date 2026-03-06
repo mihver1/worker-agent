@@ -323,6 +323,46 @@ class TestEffectiveProviderCatalog:
         assert providers["lmstudio"].models[0].provider == "lmstudio"
 
     @pytest.mark.asyncio
+    async def test_direct_discovery_fetches_models_for_custom_azure_provider(
+        self,
+        monkeypatch,
+    ):
+        from worker_ai.models import ModelInfo
+        from worker_ai.models_catalog import ModelsCatalog
+        from worker_ai.providers.azure_openai import AzureOpenAIProvider
+
+        async def _fake_fetch(cls):
+            return _SAMPLE_PROVIDER_CATALOG
+
+        async def _fake_azure_discovery(self):
+            return [
+                ModelInfo(
+                    id="Kimi-K2.5",
+                    provider=self.name,
+                    name="Kimi K2.5",
+                    context_window=128000,
+                )
+            ]
+
+        monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
+        monkeypatch.setattr(AzureOpenAIProvider, "list_models_direct", _fake_azure_discovery)
+
+        config = WorkerConfig(
+            providers={
+                "azure": ProviderConfig(
+                    type="azure_openai",
+                    api_key="azure-key",
+                    base_url="https://demo.services.ai.azure.com",
+                )
+            }
+        )
+
+        providers = await get_effective_provider_catalog(config)
+
+        assert providers["azure"].models[0].id == "Kimi-K2.5"
+        assert providers["azure"].models[0].provider == "azure"
+
+    @pytest.mark.asyncio
     async def test_catalog_aliases_map_models_to_canonical_provider_names(self, monkeypatch):
         from worker_ai.models_catalog import ModelsCatalog
 

@@ -186,6 +186,11 @@ def _resolve_api_key_for_discovery(config: WorkerConfig, provider_name: str) -> 
             return value
     return None
 
+def _supports_direct_model_discovery(provider_type: str, spec: ProviderSpec | None) -> bool:
+    if spec is not None and spec.direct_model_discovery:
+        return True
+    return provider_type == "azure_openai"
+
 
 def _apply_model_override(
     base: ModelInfo,
@@ -286,7 +291,7 @@ async def get_effective_provider_catalog(
         provider_type, kwargs = resolve_provider_runtime_config(config, provider_id)
 
         direct_models: dict[str, ModelInfo] = {}
-        if spec is not None and spec.direct_model_discovery:
+        if _supports_direct_model_discovery(provider_type, spec):
             api_key = _resolve_api_key_for_discovery(config, provider_id)
             if api_key is not None or not provider_requires_api_key(config, provider_id):
                 direct_models = await _builtin_models_from_provider(
