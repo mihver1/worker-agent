@@ -43,6 +43,7 @@ class SessionInfo:
     model: str
     created_at: str
     updated_at: str
+    project_dir: str = ""
 
 
 class SessionStore:
@@ -58,6 +59,12 @@ class SessionStore:
         self._db.row_factory = aiosqlite.Row
         await self._db.execute("PRAGMA foreign_keys = ON")
         await self._db.executescript(_SCHEMA)
+        # Migration: add project_dir column if missing
+        try:
+            await self._db.execute("ALTER TABLE sessions ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''")
+            await self._db.commit()
+        except Exception:  # column already exists
+            pass
 
     async def close(self) -> None:
         if self._db:
@@ -71,21 +78,23 @@ class SessionStore:
 
     # ── Sessions ──────────────────────────────────────────────────
 
-    async def create_session(self, session_id: str, model: str, title: str = "") -> None:
+    async def create_session(
+        self, session_id: str, model: str, title: str = "", project_dir: str = "",
+    ) -> None:
         now = _now()
         await self.db.execute(
             (
-                "INSERT INTO sessions (id, title, model, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?)"
+                "INSERT INTO sessions (id, title, model, project_dir, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)"
             ),
-            (session_id, title, model, now, now),
+            (session_id, title, model, project_dir, now, now),
         )
         await self.db.commit()
 
     async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
         cursor = await self.db.execute(
             (
-                "SELECT id, title, model, created_at, updated_at "
+                "SELECT id, title, model, created_at, updated_at, project_dir "
                 "FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT ?"
             ),
             (limit,),
@@ -205,7 +214,7 @@ class SessionStore:
 
     async def get_session(self, session_id: str) -> SessionInfo | None:
         cursor = await self.db.execute(
-            "SELECT id, title, model, created_at, updated_at FROM sessions WHERE id = ?",
+            "SELECT id, title, model, created_at, updated_at, project_dir FROM sessions WHERE id = ?",
             (session_id,),
         )
         row = await cursor.fetchone()
@@ -236,7 +245,9 @@ class SessionStore:
             raise ValueError(f"Session '{source_id}' not found")
 
         await self.create_session(
-            new_id, source.model, title=title or f"Fork of {source.title}",
+            new_id, source.model,
+            title=title or f"Fork of {source.title}",
+            project_dir=source.project_dir,
         )
 
         messages = await self.get_messages(source_id)

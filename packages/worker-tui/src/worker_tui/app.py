@@ -117,6 +117,12 @@ class StatusFooter(Static):
             parts.append(f"${self._total_cost:.4f}")
         if self._context_pct > 0:
             parts.append(f"ctx {self._context_pct:.0%}")
+        # Show current working directory (~ for home)
+        cwd = os.getcwd()
+        home = os.path.expanduser("~")
+        if cwd.startswith(home):
+            cwd = "~" + cwd[len(home):]
+        parts.append(cwd)
         if self._in_cmux:
             parts.append("cmux")
         return Text(" \u2502 ".join(parts))
@@ -283,6 +289,7 @@ class WorkerApp(App):
         self._input_price: float = 0.0  # per 1M tokens
         self._output_price: float = 0.0
         self._auto_approve_all: bool = False
+        self._provider_model: str = ""  # "provider/model" for DB storage
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -319,6 +326,33 @@ class WorkerApp(App):
         config = load_config(os.getcwd())
         provider_name, model_id = resolve_model(config)
         project_dir = os.getcwd()
+
+        # Session store
+        self._store = SessionStore(config.sessions.db_path)
+        await self._store.open()
+
+        # Resolve session (resume or new)
+        session_id = ""
+        prior_messages = None
+        resumed_info: Any = None
+
+        if self._resume_id:
+            info = await self._store.get_session(self._resume_id)
+            if info:
+                session_id = info.id
+                prior_messages = await self._store.get_messages(session_id)
+                resumed_info = info
+        elif self._continue_session:
+            last = await self._store.get_last_session()
+            if last:
+                session_id = last.id
+                prior_messages = await self._store.get_messages(session_id)
+                resumed_info = last
+
+        # Use session's model if available (provider/model format)
+        if resumed_info and resumed_info.model and "/" in resumed_info.model:
+            provider_name, model_id = resumed_info.model.split("/", 1)
+
         runtime = await bootstrap_runtime(
             config,
             provider_name,
@@ -331,28 +365,11 @@ class WorkerApp(App):
         self._input_price = runtime.input_price_per_m
         self._output_price = runtime.output_price_per_m
 
-        # Session store
-        self._store = SessionStore(config.sessions.db_path)
-        await self._store.open()
-
-        # Resolve session (resume or new)
-        session_id = ""
-        prior_messages = None
-
-        if self._resume_id:
-            info = await self._store.get_session(self._resume_id)
-            if info:
-                session_id = info.id
-                prior_messages = await self._store.get_messages(session_id)
-        elif self._continue_session:
-            last = await self._store.get_last_session()
-            if last:
-                session_id = last.id
-                prior_messages = await self._store.get_messages(session_id)
-
         if not session_id:
             session_id = str(uuid.uuid4())
-            await self._store.create_session(session_id, model_id)
+            await self._store.create_session(
+                session_id, f"{provider_name}/{model_id}", project_dir=project_dir,
+            )
         self._session = create_agent_session_from_bootstrap(
             config,
             runtime,
@@ -373,10 +390,9 @@ class WorkerApp(App):
                 elif msg.role == Role.SYSTEM and msg.content:
                     self._add_message("\U0001f4cb [Restored session]", role="tool")
 
-        self.sub_title = f"{provider_name}/{model_id}"
-        self.query_one("#status-footer", StatusFooter).set_model(
-            f"{provider_name}/{model_id}"
-        )
+        self._provider_model = f"{provider_name}/{model_id}"
+        self.sub_title = self._provider_model
+        self.query_one("#status-footer", StatusFooter).set_model(self._provider_model)
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         text = event.value.strip()
@@ -405,6 +421,12 @@ class WorkerApp(App):
             return
 
         self._add_message(text, role="user")
+
+        # Auto-title session from first user message (async, non-blocking)
+        if self._store and self._session and not text.startswith("/"):
+            info = await self._store.get_session(self._session.session_id)
+            if info and not info.title:
+                self._generate_title(text)
 
         if self.remote_url:
             self._run_remote(text)
@@ -743,24 +765,34 @@ class WorkerApp(App):
         self._input_price = runtime.input_price_per_m
         self._output_price = runtime.output_price_per_m
 
+        # Carry over conversation history
+        prior_messages = self._session.messages[1:] if self._session else []
+
         # Close old provider
         if self._session:
             await self._session.provider.close()
         session_id = str(uuid.uuid4())
         if self._store:
-            await self._store.create_session(session_id, model_id)
+            await self._store.create_session(
+                session_id, f"{provider_name}/{model_id}", project_dir=os.getcwd(),
+            )
         self._session = create_agent_session_from_bootstrap(
             config,
             runtime,
             project_dir=os.getcwd(),
             store=self._store,
             session_id=session_id,
+            permission_callback=self._ask_permission,
         )
-        self.sub_title = f"{provider_name}/{model_id}"
-        self.query_one("#status-footer", StatusFooter).set_model(
-            f"{provider_name}/{model_id}"
-        )
-        self._add_message(f"Switched to {provider_name}/{model_id}", role="tool")
+
+        # Restore prior messages into new session
+        if prior_messages:
+            self._session.messages.extend(prior_messages)
+
+        self._provider_model = f"{provider_name}/{model_id}"
+        self.sub_title = self._provider_model
+        self.query_one("#status-footer", StatusFooter).set_model(self._provider_model)
+        self._add_message(f"Switched to {self._provider_model}", role="tool")
 
     # ── Provider login ────────────────────────────────────────────
 
@@ -824,10 +856,15 @@ class WorkerApp(App):
             self._add_message("No saved sessions.", role="tool")
             return
 
+        home = os.path.expanduser("~")
         lines = ["Recent sessions:"]
         for i, s in enumerate(sessions, 1):
             title = s.title or "(untitled)"
-            lines.append(f"  {i}. [{s.updated_at}] {title} ({s.model})")
+            proj = s.project_dir
+            if proj and proj.startswith(home):
+                proj = "~" + proj[len(home):]
+            proj_label = f" @ {proj}" if proj else ""
+            lines.append(f"  {i}. [{s.updated_at}] {title} ({s.model}){proj_label}")
         lines.append("\nType /resume <number> to load a session.")
         self._add_message("\n".join(lines), role="tool")
 
@@ -839,9 +876,18 @@ class WorkerApp(App):
         messages = await self._store.get_messages(session_id)
         info = await self._store.get_session(session_id)
 
+        # Switch to the session's original model if different
+        if info and info.model and "/" in info.model:
+            if info.model != self._provider_model:
+                await self._switch_model(info.model)
+
+        if not self._session:
+            return
+
         # Clear current chat
         container = self.query_one("#chat-container", Vertical)
         container.remove_children()
+        self._tool_collapsibles.clear()
 
         # Update session
         self._session.session_id = session_id
@@ -1207,6 +1253,17 @@ class WorkerApp(App):
         result = await cmux.browser_open(arg)
         self._add_message(f"Browser opened: {result or arg or '(empty)'}", role="tool")
 
+    # ── Auto-title ───────────────────────────────────────
+
+    @work(thread=False)
+    async def _generate_title(self, text: str) -> None:
+        """Generate session title in background via small model."""
+        if not self._session or not self._store:
+            return
+        title = await self._session.generate_title(text)
+        if title:
+            await self._store.rename_session(self._session.session_id, title)
+
     # ── Permission callback ────────────────────────────────────
 
     async def _ask_permission(self, tool_name: str, args: dict[str, Any]) -> bool:
@@ -1291,7 +1348,9 @@ class WorkerApp(App):
         if self._session:
             new_id = str(uuid.uuid4())
             if self._store:
-                await self._store.create_session(new_id, self._session.model)
+                await self._store.create_session(
+                    new_id, self._provider_model, project_dir=os.getcwd(),
+                )
             self._session.session_id = new_id
             self._session.messages = self._session.messages[:1]
 

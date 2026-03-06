@@ -21,6 +21,7 @@ AUTH_FILE = CONFIG_DIR / "auth.json"
 
 class AgentConfig(BaseModel):
     model: str = "anthropic/claude-sonnet-4-20250514"
+    small_model: str = ""  # utility model for compaction, auto-title, etc.
     temperature: float = 0.0
     max_turns: int = 50
     system_prompt: str = ""
@@ -167,6 +168,11 @@ model = "anthropic/claude-sonnet-4-20250514"
 # System prompt (дополнение к встроенному)
 # Можно также использовать .worker/AGENTS.md в проекте
 # system_prompt = "You are a senior Python developer."
+
+# Малая модель для утилитарных задач (компакция, авто-заголовки)
+# Формат: provider/model-id  (пустая строка = основная модель)
+# Примеры: "anthropic/claude-haiku-3" | "openai/gpt-4.1-mini"
+# small_model = ""
 
 # Extended thinking / reasoning
 # off — отключено

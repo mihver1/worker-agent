@@ -98,6 +98,8 @@ class AgentSession:
         auto_compact: bool = False,
         compact_threshold: float = 0.8,
         context_window: int = 0,
+        small_provider: Any | None = None,
+        small_model: str = "",
     ):
         self.provider = provider
         self.model = model
@@ -112,6 +114,8 @@ class AgentSession:
                 permissions_config, callback=permission_callback
             )
         self.hooks = hooks or HookDispatcher()
+        self.small_provider = small_provider
+        self.small_model = small_model
 
         # Build system prompt: default + config + context files
         self.system_prompt = self._build_system_prompt(system_prompt, project_dir)
@@ -221,9 +225,13 @@ class AgentSession:
             Message(role=Role.USER, content=conversation_text),
         ]
 
+        # Use small model for compaction if available
+        _provider = self.small_provider or self.provider
+        _model = self.small_model or self.model
+
         summary_text = ""
-        async for event in self.provider.stream_chat(
-            self.model, summary_messages, temperature=0.0,
+        async for event in _provider.stream_chat(
+            _model, summary_messages, temperature=0.0,
         ):
             if isinstance(event, TextDelta):
                 summary_text += event.content
@@ -246,6 +254,32 @@ class AgentSession:
 
         await self.hooks.fire("on_compaction", session=self, summary=summary_text)
         return summary_text
+
+    async def generate_title(self, user_message: str) -> str:
+        """Generate a short session title from the first user message."""
+        _provider = self.small_provider or self.provider
+        _model = self.small_model or self.model
+
+        messages = [
+            Message(
+                role=Role.SYSTEM,
+                content=(
+                    "Generate a very short title (3-6 words, max 50 chars) for a chat session "
+                    "based on the user's first message. Reply with ONLY the title, no quotes, "
+                    "no punctuation at the end. Use the same language as the user's message."
+                ),
+            ),
+            Message(role=Role.USER, content=user_message[:500]),
+        ]
+        title = ""
+        try:
+            async for event in _provider.stream_chat(_model, messages, temperature=0.0):
+                if isinstance(event, TextDelta):
+                    title += event.content
+        except Exception:
+            # Fallback to truncation
+            title = user_message.replace("\n", " ").strip()[:50]
+        return title.strip()[:50]
 
     # ── System prompt construction ────────────────────────────────
 

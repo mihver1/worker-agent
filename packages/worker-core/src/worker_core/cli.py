@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import click
@@ -227,6 +228,47 @@ def ext_search(query: str) -> None:
             click.echo(f"    install: worker ext install {m.get('repo', m['name'])}")
     except Exception as e:
         click.echo(f"Search failed: {e}", err=True)
+
+
+@cli.group(invoke_without_command=True)
+@click.option("--global", "show_global", is_flag=True, help="Show global config path only")
+@click.option("--project", "show_project", is_flag=True, help="Show project config path only")
+@click.pass_context
+def config(ctx: click.Context, show_global: bool, show_project: bool) -> None:
+    """Show config file paths and merged configuration."""
+    from worker_core.config import GLOBAL_CONFIG
+
+    cwd = os.getcwd()
+    project_config = Path(cwd) / ".worker" / "config.toml"
+
+    if show_global:
+        click.echo(str(GLOBAL_CONFIG))
+        return
+    if show_project:
+        click.echo(str(project_config))
+        return
+    if ctx.invoked_subcommand is not None:
+        return
+
+    # Default: list all config files with existence status
+    _print_config_path("Global", GLOBAL_CONFIG)
+    _print_config_path("Project", project_config)
+
+
+def _print_config_path(label: str, path: Path) -> None:
+    exists = "✓" if path.exists() else "✗"
+    click.echo(f"  {exists} {label}: {path}")
+
+
+@config.command("print")
+def config_print() -> None:
+    """Print the merged (effective) configuration as TOML."""
+    import tomli_w
+
+    cwd = os.getcwd()
+    merged = load_config(cwd)
+    data = merged.model_dump()
+    click.echo(tomli_w.dumps(data))
 
 
 @cli.command()

@@ -74,6 +74,8 @@ class RuntimeBootstrap:
     context_window: int
     input_price_per_m: float
     output_price_per_m: float
+    small_provider: Any | None = None
+    small_model_id: str = ""
 
 
 async def fetch_model_runtime_info(
@@ -128,6 +130,21 @@ async def bootstrap_runtime(
         provider_name, model_id
     )
 
+    # Bootstrap small model if configured
+    small_provider = None
+    small_model_id = ""
+    if config.agent.small_model and "/" in config.agent.small_model:
+        sm_provider_name, small_model_id = config.agent.small_model.split("/", 1)
+        sm_resolved = resolve_api_key(config, sm_provider_name)
+        if isawaitable(sm_resolved):
+            sm_key, sm_auth = await sm_resolved
+        else:
+            sm_key, sm_auth = sm_resolved
+        sm_type, sm_kwargs = resolve_provider_runtime_config(config, sm_provider_name)
+        if sm_auth == "oauth":
+            sm_kwargs["auth_type"] = "oauth"
+        small_provider = registry.create(sm_type, api_key=sm_key, **sm_kwargs)
+
     return RuntimeBootstrap(
         provider_name=provider_name,
         model_id=model_id,
@@ -138,6 +155,8 @@ async def bootstrap_runtime(
         context_window=context_window,
         input_price_per_m=input_price_per_m,
         output_price_per_m=output_price_per_m,
+        small_provider=small_provider,
+        small_model_id=small_model_id,
     )
 
 
@@ -168,4 +187,6 @@ def create_agent_session_from_bootstrap(
         permissions_config=config.permissions,
         permission_callback=permission_callback,
         hooks=bootstrap.hooks,
+        small_provider=bootstrap.small_provider,
+        small_model=bootstrap.small_model_id,
     )
