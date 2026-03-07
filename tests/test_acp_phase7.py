@@ -347,7 +347,8 @@ async def test_run_acp_scopes_workspace_and_updates_config(monkeypatch, tmp_path
     titles: dict[str, str] = {}
     state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
 
-    async def fake_run_agent(agent: Any) -> None:
+    async def fake_run_agent(agent: Any, **kwargs: Any) -> None:
+        assert kwargs == {"use_unstable_protocol": True}
         conn = _FakeConn()
         captured["conn"] = conn
         agent.on_connect(conn)
@@ -470,7 +471,8 @@ async def test_run_acp_prompt_streams_updates_and_permission_requests(
         state_obj.sessions[session_id] = session
         return session
 
-    async def fake_run_agent(agent: Any) -> None:
+    async def fake_run_agent(agent: Any, **kwargs: Any) -> None:
+        assert kwargs == {"use_unstable_protocol": True}
         conn = _FakeConn(permission_option_id="approve_for_session")
         captured["conn"] = conn
         agent.on_connect(conn)

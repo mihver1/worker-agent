@@ -39,6 +39,35 @@ async def _read_json_messages_until(
     raise AssertionError(f"Timed out waiting for response id={response_id}; received={messages!r}")
 
 
+async def _start_acp_subprocess(
+    *,
+    cwd: str,
+    env: dict[str, str],
+) -> asyncio.subprocess.Process:
+    return await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "worker_core.cli",
+        "acp",
+        cwd=cwd,
+        env=env,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+
+async def _terminate_process(proc: asyncio.subprocess.Process) -> None:
+    if proc.stdin is not None:
+        proc.stdin.close()
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=5)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+
+
 def _config_option_current_value(config_options: list[dict[str, Any]], option_id: str) -> Any:
     for option in config_options:
         if option.get("id") == option_id:
@@ -53,18 +82,7 @@ async def test_worker_acp_setters_emit_valid_session_update_notifications(tmp_pa
     env = os.environ.copy()
     env["HOME"] = str(home_dir)
     env["PYTHONUNBUFFERED"] = "1"
-
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "worker_core.cli",
-        "acp",
-        cwd=str(tmp_path),
-        env=env,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    proc = await _start_acp_subprocess(cwd=str(tmp_path), env=env)
     try:
         await _send_json(
             proc,
@@ -163,11 +181,115 @@ async def test_worker_acp_setters_emit_valid_session_update_notifications(tmp_pa
             for message in thinking_messages
         )
     finally:
-        if proc.stdin is not None:
-            proc.stdin.close()
-        proc.terminate()
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=5)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
+        await _terminate_process(proc)
+
+
+@pytest.mark.asyncio
+async def test_worker_acp_lists_and_resumes_persisted_sessions_after_restart(tmp_path):
+    home_dir = tmp_path / "home"
+    project_dir = tmp_path / "project"
+    home_dir.mkdir()
+    project_dir.mkdir()
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PYTHONUNBUFFERED"] = "1"
+
+    first_proc = await _start_acp_subprocess(cwd=str(project_dir), env=env)
+    try:
+        await _send_json(
+            first_proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {"fs": {"readTextFile": True}},
+                    "clientInfo": {"name": "pytest", "version": "0"},
+                },
+            },
+        )
+        init_messages = await _read_json_messages_until(first_proc, response_id=0)
+        assert init_messages[-1]["result"]["protocolVersion"] == 1
+
+        await _send_json(
+            first_proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "session/new",
+                "params": {
+                    "cwd": str(project_dir),
+                    "mcpServers": [],
+                },
+            },
+        )
+        new_messages = await _read_json_messages_until(first_proc, response_id=1)
+        session_id = new_messages[-1]["result"]["sessionId"]
+    finally:
+        await _terminate_process(first_proc)
+
+    second_proc = await _start_acp_subprocess(cwd=str(project_dir), env=env)
+    try:
+        await _send_json(
+            second_proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {"fs": {"readTextFile": True}},
+                    "clientInfo": {"name": "pytest", "version": "0"},
+                },
+            },
+        )
+        init_messages = await _read_json_messages_until(second_proc, response_id=2)
+        session_capabilities = init_messages[-1]["result"]["agentCapabilities"][
+            "sessionCapabilities"
+        ]
+        assert session_capabilities["list"] == {}
+        assert session_capabilities["resume"] == {}
+
+        await _send_json(
+            second_proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/list",
+                "params": {
+                    "cwd": str(project_dir),
+                },
+            },
+        )
+        list_messages = await _read_json_messages_until(second_proc, response_id=3)
+        list_response = list_messages[-1]
+        assert "error" not in list_response
+        assert len(list_response["result"]["sessions"]) == 1
+        listed_session = list_response["result"]["sessions"][0]
+        assert listed_session["cwd"] == str(project_dir)
+        assert listed_session["sessionId"] == session_id
+        assert "updatedAt" in listed_session
+
+        await _send_json(
+            second_proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "session/resume",
+                "params": {
+                    "cwd": str(project_dir),
+                    "sessionId": session_id,
+                    "mcpServers": [],
+                },
+            },
+        )
+        resume_messages = await _read_json_messages_until(second_proc, response_id=4)
+        resume_response = resume_messages[-1]
+        assert "error" not in resume_response
+        assert _config_option_current_value(
+            resume_response["result"]["configOptions"],
+            "thinking",
+        ) == "off"
+    finally:
+        await _terminate_process(second_proc)

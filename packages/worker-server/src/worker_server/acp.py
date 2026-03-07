@@ -801,6 +801,6 @@ async def run_acp() -> None:
             del method, params
 
     try:
-        await run_agent(WorkerAcpAgent())
+        await run_agent(WorkerAcpAgent(), use_unstable_protocol=True)
     finally:
         await _close_state(state)
