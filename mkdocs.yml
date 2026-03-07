@@ -54,6 +54,7 @@ nav:
   - Guides:
       - Configuration: configuration.md
       - Run modes: run-modes.md
+      - ACP integration: acp.md
       - Providers: providers.md
       - Extensions: extensions.md
   - Reference:

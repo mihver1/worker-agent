@@ -1,6 +1,6 @@
 # Run modes
 
-Worker supports four main ways to run the agent, depending on how much UI, isolation, and network separation you need.
+Worker supports four main ways to run the agent, depending on how much UI, isolation, and network separation you need. For embedding and editor integrations, it also exposes RPC and ACP over stdio.
 
 ## Print mode
 
@@ -87,3 +87,14 @@ If you need to embed Worker in another process, you can run a JSON-RPC server ov
 ```bash
 worker rpc
 ```
+
+## ACP mode
+
+If you need an ACP-compatible client to drive Worker over stdin and stdout, run:
+
+```bash
+worker acp
+```
+
+This mode is intended for editors, IDEs, and other frontends that speak the Agent Client Protocol.
+See [ACP integration](acp.md) for the supported session lifecycle, permission modes, and per-session configuration options.

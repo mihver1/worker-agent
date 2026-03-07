@@ -63,6 +63,11 @@ Subcommands:
 
 Starts a JSON-RPC server on stdin and stdout for embedding scenarios.
 
+### `worker acp`
+
+Starts an ACP agent on stdin and stdout for ACP-compatible clients.
+See [ACP integration](acp.md) for session behavior, supported controls, and permission flow details.
+
 ### `worker login PROVIDER`
 
 Attempts OAuth login for a supported provider.

@@ -30,6 +30,7 @@ worker connect ws://host:7432
 - [Quick start](quickstart.md) walks through first-run setup and the most important commands.
 - [Configuration](configuration.md) covers global and project overrides, provider setup, permissions, and UI settings.
 - [Run modes](run-modes.md) explains local, print, server, and remote usage.
+- [ACP integration](acp.md) shows how to expose Worker as an ACP agent for editor and client integrations.
 - [Providers](providers.md) summarizes how to configure hosted, cloud, and local models.
 - [Extensions](extensions.md) shows how to install, update, and manage extension registries.
 - [CLI reference](cli.md) gives you a concise command-by-command reference.

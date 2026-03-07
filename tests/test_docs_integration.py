@@ -35,5 +35,6 @@ def test_mkdocs_build_strict(tmp_path) -> None:
         f"stderr:\n{result.stderr}"
     )
     assert (site_dir / "index.html").exists()
+    assert (site_dir / "acp" / "index.html").exists()
     assert (site_dir / "configuration" / "index.html").exists()
     assert (site_dir / "cli" / "index.html").exists()

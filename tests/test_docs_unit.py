@@ -45,6 +45,7 @@ def test_mkdocs_nav_references_existing_pages() -> None:
         "quickstart.md",
         "configuration.md",
         "run-modes.md",
+        "acp.md",
         "providers.md",
         "extensions.md",
         "cli.md",
