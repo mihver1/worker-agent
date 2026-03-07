@@ -274,11 +274,14 @@ def _session_thinking_level(
     state: ServerState,
     session_id: str,
     session: AgentSession | None,
+    session_info: SessionInfo | None = None,
 ) -> str:
     if session_id in state.session_thinking_levels:
         return state.session_thinking_levels[session_id]
     if session is not None:
         return session.thinking_level
+    if session_info is not None and session_info.thinking_level:
+        return session_info.thinking_level
     return state.config.agent.thinking
 
 
@@ -300,6 +303,7 @@ async def _persist_session_record(
     *,
     model: str,
     project_dir: str,
+    thinking_level: str,
 ) -> None:
     if state.store is None:
         return
@@ -309,12 +313,15 @@ async def _persist_session_record(
             session_id,
             model,
             project_dir=project_dir,
+            thinking_level=thinking_level,
         )
         return
     if session_info.model != model:
         await state.store.update_session_model(session_id, model)
     if session_info.project_dir != project_dir:
         await state.store.update_session_project(session_id, project_dir)
+    if session_info.thinking_level != thinking_level:
+        await state.store.update_session_thinking(session_id, thinking_level)
 
 
 async def _initialize_session_state(
@@ -329,11 +336,19 @@ async def _initialize_session_state(
     state.session_projects[session_id] = project_dir
     if thinking_level is not None:
         state.session_thinking_levels[session_id] = thinking_level
+    session_info = await state.store.get_session(session_id) if state.store is not None else None
+    effective_thinking = thinking_level or _session_thinking_level(
+        state,
+        session_id,
+        state.sessions.get(session_id),
+        session_info,
+    )
     await _persist_session_record(
         state,
         session_id,
         model=model,
         project_dir=project_dir,
+        thinking_level=effective_thinking,
     )
 
 
@@ -360,7 +375,7 @@ async def _serialize_session(
         "title": session_info.title if session_info is not None else "",
         "model": _session_model_label(state, session_id, session, session_info),
         "project_dir": _session_project_dir(state, session_id, session, session_info),
-        "thinking_level": _session_thinking_level(state, session_id, session),
+        "thinking_level": _session_thinking_level(state, session_id, session, session_info),
         "messages": message_count,
         "created_at": session_info.created_at if session_info is not None else "",
         "updated_at": session_info.updated_at if session_info is not None else "",
@@ -552,7 +567,12 @@ async def _create_server_session(
         session_id=session_id,
         permission_callback=permission_callback,
     )
-    session.thinking_level = _session_thinking_level(state, session_id, session)  # type: ignore[assignment]
+    session.thinking_level = _session_thinking_level(
+        state,
+        session_id,
+        None,
+        stored_info,
+    )  # type: ignore[assignment]
     messages_to_restore = prior_messages if prior_messages is not None else stored_messages
     if messages_to_restore:
         session.messages.extend(messages_to_restore)
@@ -563,7 +583,7 @@ async def _create_server_session(
         session_id,
         model=model_label,
         project_dir=resolved_project_dir,
-        thinking_level=_session_thinking_level(state, session_id, session),
+        thinking_level=_session_thinking_level(state, session_id, session, stored_info),
     )
     return session
 
@@ -689,6 +709,14 @@ async def _set_server_session_thinking(
     session = state.sessions.get(session_id)
     if session is not None:
         session.thinking_level = level  # type: ignore[assignment]
+    stored_info, _ = await _stored_session_context(state, session_id)
+    await _persist_session_record(
+        state,
+        session_id,
+        model=_session_model_label(state, session_id, session, stored_info),
+        project_dir=_session_project_dir(state, session_id, session, stored_info),
+        thinking_level=level,
+    )
     return await _serialize_session(state, session_id)
 
 
@@ -756,6 +784,8 @@ async def _fork_server_session(
     if info is not None:
         state.session_provider_models[new_session_id] = info.model
         state.session_projects[new_session_id] = info.project_dir
+        if info.thinking_level:
+            state.session_thinking_levels[new_session_id] = info.thinking_level
     return {
         "session_id": new_session_id,
         "session": await _serialize_session(state, new_session_id, info),
@@ -796,7 +826,7 @@ async def _reload_server_session_runtime(
     prior_messages = previous.messages[1:] if previous is not None else stored_messages
     model_label = _session_model_label(state, session_id, previous, stored_info)
     project_dir = _session_project_dir(state, session_id, previous, stored_info)
-    thinking_level = _session_thinking_level(state, session_id, previous)
+    thinking_level = _session_thinking_level(state, session_id, previous, stored_info)
     importlib.invalidate_caches()
     if previous is not None:
         with suppress(Exception):

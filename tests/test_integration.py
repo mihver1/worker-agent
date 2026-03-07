@@ -1075,6 +1075,37 @@ class TestRESTAPI:
         assert data["session"]["thinking_level"] == "high"
 
     @pytest.mark.asyncio
+    async def test_session_thinking_endpoint_persists_remote_session_state(self, tmp_path):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            state = ServerState(
+                config=WorkerConfig(),
+                default_project_dir=str(tmp_path),
+                store=store,
+            )
+            app = _create_rest_app(state, "test_token")
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.put(
+                    "/api/sessions/remote-session/thinking",
+                    headers={"Authorization": "Bearer test_token"},
+                    json={"thinking_level": "high"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+            info = await store.get_session("remote-session")
+        finally:
+            await store.close()
+
+        assert data["session"]["thinking_level"] == "high"
+        assert info is not None
+        assert info.thinking_level == "high"
+        assert info.model == state.config.agent.model
+        assert info.project_dir == str(tmp_path)
+
+    @pytest.mark.asyncio
     async def test_credentials_import_saves_overlay_and_oauth_token(
         self,
         state,
@@ -1376,6 +1407,7 @@ class TestWebSocketProtocol:
                 "persisted-remote",
                 "openai/gpt-4.1",
                 project_dir=project_dir,
+                thinking_level="high",
             )
             await store.add_message(
                 "persisted-remote",
@@ -1432,8 +1464,10 @@ class TestWebSocketProtocol:
             await store.close()
 
         assert [message.content for message in session.messages[1:]] == ["hello", "world"]
+        assert session.thinking_level == "high"
         assert state.session_provider_models["persisted-remote"] == "openai/gpt-4.1"
         assert state.session_projects["persisted-remote"] == project_dir
+        assert state.session_thinking_levels["persisted-remote"] == "high"
 
     @pytest.mark.asyncio
     async def test_background_session_run_survives_client_disconnect(self):

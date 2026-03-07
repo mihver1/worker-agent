@@ -15,6 +15,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     id          TEXT PRIMARY KEY,
     title       TEXT NOT NULL DEFAULT '',
     model       TEXT NOT NULL DEFAULT '',
+    project_dir TEXT NOT NULL DEFAULT '',
+    thinking_level TEXT NOT NULL DEFAULT '',
     created_at  TEXT NOT NULL,
     updated_at  TEXT NOT NULL
 );
@@ -44,6 +46,7 @@ class SessionInfo:
     created_at: str
     updated_at: str
     project_dir: str = ""
+    thinking_level: str = ""
 
 
 class SessionStore:
@@ -67,6 +70,13 @@ class SessionStore:
             await self._db.commit()
         except Exception:  # column already exists
             pass
+        try:
+            await self._db.execute(
+                "ALTER TABLE sessions ADD COLUMN thinking_level TEXT NOT NULL DEFAULT ''"
+            )
+            await self._db.commit()
+        except Exception:  # column already exists
+            pass
 
     async def close(self) -> None:
         if self._db:
@@ -81,15 +91,21 @@ class SessionStore:
     # ── Sessions ──────────────────────────────────────────────────
 
     async def create_session(
-        self, session_id: str, model: str, title: str = "", project_dir: str = "",
+        self,
+        session_id: str,
+        model: str,
+        title: str = "",
+        project_dir: str = "",
+        thinking_level: str = "",
     ) -> None:
         now = _now()
         await self.db.execute(
             (
-                "INSERT INTO sessions (id, title, model, project_dir, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)"
+                "INSERT INTO sessions "
+                "(id, title, model, project_dir, thinking_level, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)"
             ),
-            (session_id, title, model, project_dir, now, now),
+            (session_id, title, model, project_dir, thinking_level, now, now),
         )
         await self.db.commit()
 
@@ -107,10 +123,18 @@ class SessionStore:
         )
         await self.db.commit()
 
+    async def update_session_thinking(self, session_id: str, thinking_level: str) -> None:
+        await self.db.execute(
+            "UPDATE sessions SET thinking_level = ?, updated_at = ? WHERE id = ?",
+            (thinking_level, _now(), session_id),
+        )
+        await self.db.commit()
+
     async def list_sessions(self, limit: int = 50) -> list[SessionInfo]:
         cursor = await self.db.execute(
             (
-                "SELECT id, title, model, created_at, updated_at, project_dir "
+                "SELECT id, title, model, created_at, updated_at, project_dir, "
+                "thinking_level "
                 "FROM sessions ORDER BY updated_at DESC, rowid DESC LIMIT ?"
             ),
             (limit,),
@@ -239,7 +263,8 @@ class SessionStore:
     async def get_session(self, session_id: str) -> SessionInfo | None:
         cursor = await self.db.execute(
             (
-                "SELECT id, title, model, created_at, updated_at, project_dir "
+                "SELECT id, title, model, created_at, updated_at, project_dir, "
+                "thinking_level "
                 "FROM sessions WHERE id = ?"
             ),
             (session_id,),
@@ -275,6 +300,7 @@ class SessionStore:
             new_id, source.model,
             title=title or f"Fork of {source.title}",
             project_dir=source.project_dir,
+            thinking_level=source.thinking_level,
         )
 
         messages = await self.get_messages(source_id)

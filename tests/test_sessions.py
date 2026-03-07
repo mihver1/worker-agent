@@ -28,6 +28,21 @@ async def test_create_and_list_sessions(store):
 
 
 @pytest.mark.asyncio
+async def test_session_thinking_level_round_trip_and_fork(store):
+    await store.create_session("s1", "test-model", thinking_level="high")
+    await store.update_session_thinking("s1", "low")
+
+    info = await store.get_session("s1")
+    assert info is not None
+    assert info.thinking_level == "low"
+
+    await store.fork_session("s1", "s2")
+    forked = await store.get_session("s2")
+    assert forked is not None
+    assert forked.thinking_level == "low"
+
+
+@pytest.mark.asyncio
 async def test_add_and_get_messages(store):
     await store.create_session("s1", "test-model")
 

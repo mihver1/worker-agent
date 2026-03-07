@@ -475,21 +475,24 @@ async def _print_mode(
 
     session_id = ""
     prior_messages = None
+    resumed_info = None
 
     if resume_id:
         info = await store.get_session(resume_id)
         if info:
             session_id = info.id
             prior_messages = await store.get_messages(session_id)
+            resumed_info = info
     elif continue_session:
         last = await store.get_last_session()
         if last:
             session_id = last.id
             prior_messages = await store.get_messages(session_id)
+            resumed_info = last
 
     if not session_id:
         session_id = str(_uuid.uuid4())
-        await store.create_session(session_id, model_id)
+        await store.create_session(session_id, model_id, thinking_level=config.agent.thinking)
     session = create_agent_session_from_bootstrap(
         config,
         runtime,
@@ -497,6 +500,8 @@ async def _print_mode(
         store=store,
         session_id=session_id,
     )
+    if resumed_info and resumed_info.thinking_level:
+        session.thinking_level = resumed_info.thinking_level  # type: ignore[assignment]
 
     if prior_messages:
         session.messages.extend(prior_messages)

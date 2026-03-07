@@ -1064,6 +1064,65 @@ class TestRemoteModeCommandRouting:
         ]
 
     @pytest.mark.asyncio
+    async def test_resume_command_restores_local_thinking_level(self, tmp_path):
+        from worker_ai.models import Message, Role
+        from worker_core.sessions import SessionStore
+        from worker_tui.app import WorkerApp
+
+        class _Container:
+            def __init__(self):
+                self.cleared = False
+
+            def remove_children(self) -> None:
+                self.cleared = True
+
+        class _Session:
+            def __init__(self):
+                self.session_id = "current-session"
+                self.messages = [Message(role=Role.SYSTEM, content="system")]
+                self.thinking_level = "off"
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            await store.create_session(
+                "local-1",
+                "openai/gpt-4.1",
+                title="Local issue",
+                thinking_level="high",
+            )
+            await store.add_message("local-1", Message(role=Role.USER, content="hello"))
+            await store.add_message("local-1", Message(role=Role.ASSISTANT, content="world"))
+
+            app = WorkerApp()
+            app._store = store
+            app._session = _Session()
+            app._provider_model = "openai/gpt-4.1"
+            app._tool_collapsibles = ["tool"]
+            container = _Container()
+            app.query_one = lambda selector, _cls=None: container  # type: ignore[method-assign]
+            seen_messages: list[tuple[str, str]] = []
+            app._add_message = (  # type: ignore[method-assign]
+                lambda content, role="assistant": seen_messages.append((content, role))
+            )
+
+            await app._resume_session("local-1")
+        finally:
+            await store.close()
+
+        assert container.cleared is True
+        assert app._tool_collapsibles == []
+        assert app._session is not None
+        assert app._session.session_id == "local-1"
+        assert app._session.thinking_level == "high"
+        assert [message.content for message in app._session.messages[1:]] == ["hello", "world"]
+        assert seen_messages == [
+            ("hello", "user"),
+            ("world", "assistant"),
+            ("Resumed session: Local issue", "tool"),
+        ]
+
+    @pytest.mark.asyncio
     async def test_fork_command_passes_remote_message_index(self):
         from worker_tui.app import WorkerApp
 

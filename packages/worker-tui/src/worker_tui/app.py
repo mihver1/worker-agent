@@ -1031,7 +1031,10 @@ class WorkerApp(App):
         if not session_id:
             session_id = str(uuid.uuid4())
             await self._store.create_session(
-                session_id, f"{provider_name}/{model_id}", project_dir=project_dir,
+                session_id,
+                f"{provider_name}/{model_id}",
+                project_dir=project_dir,
+                thinking_level=config.agent.thinking,
             )
         self._session = create_agent_session_from_bootstrap(
             config,
@@ -1041,6 +1044,8 @@ class WorkerApp(App):
             session_id=session_id,
             permission_callback=self._ask_permission,
         )
+        if resumed_info and resumed_info.thinking_level:
+            self._session.thinking_level = resumed_info.thinking_level  # type: ignore[assignment]
 
         # Restore prior messages and display them
         if prior_messages:
@@ -1574,6 +1579,9 @@ class WorkerApp(App):
 
         # Carry over conversation history
         prior_messages = self._session.messages[1:] if self._session else []
+        current_thinking = (
+            self._session.thinking_level if self._session is not None else config.agent.thinking
+        )
 
         # Close old provider
         if self._session:
@@ -1581,7 +1589,10 @@ class WorkerApp(App):
         session_id = str(uuid.uuid4())
         if self._store:
             await self._store.create_session(
-                session_id, f"{provider_name}/{model_id}", project_dir=os.getcwd(),
+                session_id,
+                f"{provider_name}/{model_id}",
+                project_dir=os.getcwd(),
+                thinking_level=current_thinking,
             )
         self._session = create_agent_session_from_bootstrap(
             config,
@@ -1591,6 +1602,7 @@ class WorkerApp(App):
             session_id=session_id,
             permission_callback=self._ask_permission,
         )
+        self._session.thinking_level = current_thinking  # type: ignore[assignment]
 
         # Restore prior messages into new session
         if prior_messages:
@@ -2012,6 +2024,8 @@ class WorkerApp(App):
         # Update session
         self._session.session_id = session_id
         self._session.messages = [self._session.messages[0]]  # Keep system prompt
+        if info and info.thinking_level:
+            self._session.thinking_level = info.thinking_level  # type: ignore[assignment]
         self._session.messages.extend(messages)
 
         # Display restored messages
@@ -2323,6 +2337,8 @@ class WorkerApp(App):
             )
             return
         self._session.thinking_level = level  # type: ignore[assignment]
+        if self._store:
+            await self._store.update_session_thinking(self._session.session_id, level)
         self._add_message(f"Thinking level set to: {level}", role="tool")
 
     # ── Theme commands ────────────────────────────────────────────
@@ -2667,7 +2683,10 @@ class WorkerApp(App):
             new_id = str(uuid.uuid4())
             if self._store:
                 await self._store.create_session(
-                    new_id, self._provider_model, project_dir=os.getcwd(),
+                    new_id,
+                    self._provider_model,
+                    project_dir=os.getcwd(),
+                    thinking_level=self._session.thinking_level,
                 )
             self._session.session_id = new_id
             self._session.messages = self._session.messages[:1]
