@@ -78,11 +78,28 @@ class RemoteControlClient:
     async def get_session(self, session_id: str) -> dict[str, Any]:
         return await self.request("GET", f"/api/sessions/{session_id}")
 
+    async def get_session_messages(self, session_id: str) -> dict[str, Any]:
+        return await self.request("GET", f"/api/sessions/{session_id}/messages")
+
     async def set_session_model(self, session_id: str, model: str) -> dict[str, Any]:
         return await self.request(
             "PUT",
             f"/api/sessions/{session_id}/model",
             json_data={"model": model},
+        )
+
+    async def set_session_project(self, session_id: str, project_dir: str) -> dict[str, Any]:
+        return await self.request(
+            "PUT",
+            f"/api/sessions/{session_id}/project",
+            json_data={"project_dir": project_dir},
+        )
+
+    async def set_session_thinking(self, session_id: str, thinking_level: str) -> dict[str, Any]:
+        return await self.request(
+            "PUT",
+            f"/api/sessions/{session_id}/thinking",
+            json_data={"thinking_level": thinking_level},
         )
 
     async def run_bash(self, session_id: str, command: str) -> dict[str, Any]:

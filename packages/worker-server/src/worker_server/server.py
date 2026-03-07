@@ -7,13 +7,16 @@ import json
 import logging
 import os
 import secrets
+import shlex
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 import websockets
 from websockets.asyncio.server import ServerConnection
+from worker_ai.models import Message
 from worker_ai.oauth import (
     OAuthToken,
     RemoteOAuthChallenge,
@@ -40,6 +43,7 @@ from worker_core.provider_resolver import (
     get_effective_provider_catalog,
 )
 from worker_core.provider_setup import collect_provider_setup_entries
+from worker_core.sessions import SessionInfo, SessionStore
 
 from worker_server.provider_overlay import (
     load_provider_overlay,
@@ -56,31 +60,187 @@ class ServerState:
     config: WorkerConfig
     sessions: dict[str, AgentSession] = field(default_factory=dict)
     session_provider_models: dict[str, str] = field(default_factory=dict)
+    session_projects: dict[str, str] = field(default_factory=dict)
+    session_thinking_levels: dict[str, str] = field(default_factory=dict)
     provider_overlay: dict[str, ProviderConfig] = field(default_factory=dict)
     pending_oauth: dict[str, RemoteOAuthChallenge] = field(default_factory=dict)
     server_extensions: list[Any] = field(default_factory=list)
+    default_project_dir: str = ""
+    store: SessionStore | None = None
 
 
 def _session_model_label(
     state: ServerState,
     session_id: str,
     session: AgentSession | None,
+    session_info: SessionInfo | None = None,
 ) -> str:
     if session_id in state.session_provider_models:
         return state.session_provider_models[session_id]
+    if session_info is not None and session_info.model:
+        return session_info.model
     if session is not None and session.model:
         return session.model
     return state.config.agent.model
 
 
-def _serialize_session(state: ServerState, session_id: str) -> dict[str, Any]:
+def _session_project_dir(
+    state: ServerState,
+    session_id: str,
+    session: AgentSession | None,
+    session_info: SessionInfo | None = None,
+) -> str:
+    if session_id in state.session_projects:
+        return state.session_projects[session_id]
+    if session_info is not None and session_info.project_dir:
+        return session_info.project_dir
+    if session is not None and session.project_dir:
+        return session.project_dir
+    if state.default_project_dir:
+        return state.default_project_dir
+    return os.getcwd()
+
+
+def _session_thinking_level(
+    state: ServerState,
+    session_id: str,
+    session: AgentSession | None,
+) -> str:
+    if session_id in state.session_thinking_levels:
+        return state.session_thinking_levels[session_id]
+    if session is not None:
+        return session.thinking_level
+    return state.config.agent.thinking
+
+
+async def _stored_session_context(
+    state: ServerState,
+    session_id: str,
+) -> tuple[SessionInfo | None, list[Message]]:
+    if state.store is None:
+        return None, []
+    session_info = await state.store.get_session(session_id)
+    if session_info is None:
+        return None, []
+    return session_info, await state.store.get_messages(session_id)
+
+
+async def _persist_session_record(
+    state: ServerState,
+    session_id: str,
+    *,
+    model: str,
+    project_dir: str,
+) -> None:
+    if state.store is None:
+        return
+    session_info = await state.store.get_session(session_id)
+    if session_info is None:
+        await state.store.create_session(
+            session_id,
+            model,
+            project_dir=project_dir,
+        )
+        return
+    if session_info.model != model:
+        await state.store.update_session_model(session_id, model)
+    if session_info.project_dir != project_dir:
+        await state.store.update_session_project(session_id, project_dir)
+
+
+async def _serialize_session(
+    state: ServerState,
+    session_id: str,
+    session_info: SessionInfo | None = None,
+) -> dict[str, Any]:
+    if session_info is None and state.store is not None:
+        session_info = await state.store.get_session(session_id)
     session = state.sessions.get(session_id)
+    message_count = len(session.messages) if session is not None else 0
+    if message_count == 0 and session_info is not None and state.store is not None:
+        message_count = await state.store.count_messages(session_id) + 1
+    exists = (
+        session is not None
+        or session_info is not None
+        or session_id in state.session_provider_models
+        or session_id in state.session_projects
+        or session_id in state.session_thinking_levels
+    )
     return {
         "id": session_id,
-        "model": _session_model_label(state, session_id, session),
-        "messages": len(session.messages) if session is not None else 0,
-        "exists": session is not None,
+        "title": session_info.title if session_info is not None else "",
+        "model": _session_model_label(state, session_id, session, session_info),
+        "project_dir": _session_project_dir(state, session_id, session, session_info),
+        "thinking_level": _session_thinking_level(state, session_id, session),
+        "messages": message_count,
+        "created_at": session_info.created_at if session_info is not None else "",
+        "updated_at": session_info.updated_at if session_info is not None else "",
+        "exists": exists,
     }
+
+
+def _serialize_message(message: Message) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "role": message.role.value,
+        "content": message.content,
+    }
+    if message.reasoning:
+        payload["reasoning"] = message.reasoning
+    if message.tool_calls:
+        payload["tool_calls"] = [
+            {
+                "id": tool_call.id,
+                "name": tool_call.name,
+                "arguments": tool_call.arguments,
+            }
+            for tool_call in message.tool_calls
+        ]
+    if message.tool_result is not None:
+        payload["tool_result"] = {
+            "tool_call_id": message.tool_result.tool_call_id,
+            "content": message.tool_result.content,
+            "is_error": message.tool_result.is_error,
+        }
+    return payload
+
+
+async def _session_history_messages(state: ServerState, session_id: str) -> list[Message]:
+    session = state.sessions.get(session_id)
+    if session is not None:
+        return list(session.messages[1:])
+    if state.store is not None:
+        session_info = await state.store.get_session(session_id)
+        if session_info is not None:
+            return await state.store.get_messages(session_id)
+    if (
+        session_id in state.session_provider_models
+        or session_id in state.session_projects
+        or session_id in state.session_thinking_levels
+    ):
+        return []
+    raise RuntimeError("Session not found")
+
+
+async def _list_serialized_sessions(
+    state: ServerState,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    if state.store is None:
+        return [await _serialize_session(state, sid) for sid in state.sessions]
+    stored_sessions = await state.store.list_sessions(limit=limit)
+    payload = [await _serialize_session(state, info.id, info) for info in stored_sessions]
+    seen = {info.id for info in stored_sessions}
+    extra_ids = (
+        set(state.sessions)
+        | set(state.session_provider_models)
+        | set(state.session_projects)
+        | set(state.session_thinking_levels)
+    )
+    for session_id in sorted(extra_ids):
+        if session_id not in seen:
+            payload.append(await _serialize_session(state, session_id))
+    return payload
 
 
 async def _create_server_session(
@@ -89,20 +249,32 @@ async def _create_server_session(
     *,
     provider_name: str | None = None,
     model_id: str | None = None,
+    project_dir: str | None = None,
     prior_messages: list[Any] | None = None,
 ) -> AgentSession:
     from worker_core.cli import _resolve_api_key
 
+    stored_info, stored_messages = await _stored_session_context(state, session_id)
     resolved_provider, resolved_model = (
         (provider_name, model_id)
         if provider_name is not None and model_id is not None
-        else resolve_model(state.config)
+        else (
+            stored_info.model.split("/", 1)
+            if stored_info is not None and "/" in stored_info.model
+            else resolve_model(state.config)
+        )
+    )
+    resolved_project_dir = project_dir or _session_project_dir(
+        state,
+        session_id,
+        None,
+        stored_info,
     )
     runtime = await bootstrap_runtime(
         state.config,
         resolved_provider,
         resolved_model,
-        project_dir=os.getcwd(),
+        project_dir=resolved_project_dir,
         resolve_api_key=_resolve_api_key,
         include_extensions=True,
         runtime="server",
@@ -110,13 +282,24 @@ async def _create_server_session(
     session = create_agent_session_from_bootstrap(
         state.config,
         runtime,
-        project_dir=os.getcwd(),
+        project_dir=resolved_project_dir,
+        store=state.store,
         session_id=session_id,
     )
-    if prior_messages:
-        session.messages.extend(prior_messages)
+    session.thinking_level = _session_thinking_level(state, session_id, session)  # type: ignore[assignment]
+    messages_to_restore = prior_messages if prior_messages is not None else stored_messages
+    if messages_to_restore:
+        session.messages.extend(messages_to_restore)
     state.sessions[session_id] = session
-    state.session_provider_models[session_id] = f"{resolved_provider}/{resolved_model}"
+    model_label = f"{resolved_provider}/{resolved_model}"
+    state.session_provider_models[session_id] = model_label
+    state.session_projects[session_id] = resolved_project_dir
+    await _persist_session_record(
+        state,
+        session_id,
+        model=model_label,
+        project_dir=resolved_project_dir,
+    )
     return session
 
 
@@ -135,27 +318,136 @@ async def _switch_server_session_model(
         )
 
     previous = state.sessions.pop(session_id, None)
-    prior_messages = previous.messages[1:] if previous is not None else []
+    stored_info, stored_messages = await _stored_session_context(state, session_id)
+    prior_messages = previous.messages[1:] if previous is not None else stored_messages
+    project_dir = _session_project_dir(state, session_id, previous, stored_info)
     if previous is not None:
         with suppress(Exception):
             await previous.provider.close()
+    if previous is None and not prior_messages:
+        state.session_provider_models[session_id] = model_str
+        state.session_projects[session_id] = project_dir
+        await _persist_session_record(
+            state,
+            session_id,
+            model=model_str,
+            project_dir=project_dir,
+        )
+        return await _serialize_session(state, session_id)
 
     await _create_server_session(
         state,
         session_id,
         provider_name=provider_name,
         model_id=model_id,
+        project_dir=project_dir,
         prior_messages=prior_messages,
     )
-    return _serialize_session(state, session_id)
+    return await _serialize_session(state, session_id)
 
 
-async def _run_server_shell(command: str) -> tuple[str, int]:
+async def _resolve_session_project_dir(
+    state: ServerState,
+    session_id: str,
+    project_dir: str,
+) -> str:
+    requested = project_dir.strip()
+    if not requested:
+        raise RuntimeError("Missing project_dir")
+
+    stored_info, _ = await _stored_session_context(state, session_id)
+    current_dir = _session_project_dir(
+        state,
+        session_id,
+        state.sessions.get(session_id),
+        stored_info,
+    )
+    expanded = Path(requested).expanduser()
+    candidate = expanded if expanded.is_absolute() else Path(current_dir) / expanded
+    resolved = candidate.resolve()
+    if not resolved.exists():
+        raise RuntimeError(f"Directory not found: {resolved}")
+    if not resolved.is_dir():
+        raise RuntimeError(f"Not a directory: {resolved}")
+    return str(resolved)
+
+
+async def _set_server_session_project(
+    state: ServerState,
+    session_id: str,
+    project_dir: str,
+) -> dict[str, Any]:
+    resolved_project_dir = await _resolve_session_project_dir(state, session_id, project_dir)
+    previous = state.sessions.pop(session_id, None)
+    stored_info, stored_messages = await _stored_session_context(state, session_id)
+    if previous is None and not stored_messages:
+        model_label = _session_model_label(state, session_id, previous, stored_info)
+        state.session_projects[session_id] = resolved_project_dir
+        state.session_provider_models[session_id] = model_label
+        await _persist_session_record(
+            state,
+            session_id,
+            model=model_label,
+            project_dir=resolved_project_dir,
+        )
+        return await _serialize_session(state, session_id)
+
+    prior_messages = previous.messages[1:] if previous is not None else stored_messages
+    model_label = _session_model_label(state, session_id, previous, stored_info)
+    if "/" in model_label:
+        provider_name, model_id = model_label.split("/", 1)
+    else:
+        provider_name, model_id = resolve_model(state.config)
+    if previous is not None:
+        with suppress(Exception):
+            await previous.provider.close()
+    await _create_server_session(
+        state,
+        session_id,
+        provider_name=provider_name,
+        model_id=model_id,
+        project_dir=resolved_project_dir,
+        prior_messages=prior_messages,
+    )
+    return await _serialize_session(state, session_id)
+
+
+async def _set_server_session_thinking(
+    state: ServerState,
+    session_id: str,
+    thinking_level: str,
+) -> dict[str, Any]:
+    valid = ("off", "minimal", "low", "medium", "high", "xhigh")
+    level = thinking_level.strip().lower()
+    if level not in valid:
+        raise RuntimeError(f"Invalid thinking level: {thinking_level}")
+    state.session_thinking_levels[session_id] = level
+    session = state.sessions.get(session_id)
+    if session is not None:
+        session.thinking_level = level  # type: ignore[assignment]
+    return await _serialize_session(state, session_id)
+
+
+def _extract_persistent_cd_target(command: str) -> str | None:
+    try:
+        parts = shlex.split(command, posix=True)
+    except ValueError:
+        return None
+    if not parts or parts[0] != "cd":
+        return None
+    if len(parts) == 1:
+        return "~"
+    if len(parts) == 2:
+        return parts[1]
+    return None
+
+
+async def _run_server_shell(command: str, *, cwd: str) -> tuple[str, int]:
     proc = await asyncio.create_subprocess_shell(
         command,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
-        cwd=os.getcwd(),
+        cwd=cwd,
     )
     stdout, _ = await proc.communicate()
     output = stdout.decode(errors="replace").rstrip()
@@ -321,11 +613,21 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         return web.json_response({"providers": providers_payload})
 
     async def handle_sessions_list(request: web.Request) -> web.Response:
-        sessions_info = [_serialize_session(state, sid) for sid in state.sessions]
+        sessions_info = await _list_serialized_sessions(state)
         return web.json_response({"sessions": sessions_info})
     async def handle_session_get(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
-        return web.json_response({"session": _serialize_session(state, sid)})
+        return web.json_response({"session": await _serialize_session(state, sid)})
+
+    async def handle_session_messages_get(request: web.Request) -> web.Response:
+        sid = request.match_info["session_id"]
+        try:
+            messages = await _session_history_messages(state, sid)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=404)
+        return web.json_response(
+            {"messages": [_serialize_message(message) for message in messages]}
+        )
 
     async def handle_session_model_put(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
@@ -341,6 +643,35 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response({"session": session})
+    async def handle_session_project_put(request: web.Request) -> web.Response:
+        sid = request.match_info["session_id"]
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+        project_dir = str(payload.get("project_dir", "")).strip()
+        if not project_dir:
+            return web.json_response({"error": "Missing project_dir"}, status=400)
+        try:
+            session = await _set_server_session_project(state, sid, project_dir)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"session": session})
+
+    async def handle_session_thinking_put(request: web.Request) -> web.Response:
+        sid = request.match_info["session_id"]
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "Invalid JSON"}, status=400)
+        thinking_level = str(payload.get("thinking_level", "")).strip()
+        if not thinking_level:
+            return web.json_response({"error": "Missing thinking_level"}, status=400)
+        try:
+            session = await _set_server_session_thinking(state, sid, thinking_level)
+        except Exception as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response({"session": session})
 
     async def handle_session_bash(request: web.Request) -> web.Response:
         try:
@@ -350,7 +681,33 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         command = str(payload.get("command", "")).strip()
         if not command:
             return web.json_response({"error": "Missing command"}, status=400)
-        output, exit_code = await _run_server_shell(command)
+        cd_target = _extract_persistent_cd_target(command)
+        if cd_target is not None:
+            try:
+                session = await _set_server_session_project(
+                    state,
+                    request.match_info["session_id"],
+                    cd_target,
+                )
+            except Exception as exc:
+                return web.json_response({"error": str(exc)}, status=400)
+            return web.json_response(
+                {
+                    "command": command,
+                    "output": str(session.get("project_dir", "")),
+                    "exit_code": 0,
+                    "session": session,
+                }
+            )
+
+        stored_info, _ = await _stored_session_context(state, request.match_info["session_id"])
+        cwd = _session_project_dir(
+            state,
+            request.match_info["session_id"],
+            state.sessions.get(request.match_info["session_id"]),
+            stored_info,
+        )
+        output, exit_code = await _run_server_shell(command, cwd=cwd)
         return web.json_response(
             {
                 "command": command,
@@ -484,11 +841,23 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
 
     async def handle_session_delete(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
+        deleted = False
         if sid in state.sessions:
             session = state.sessions.pop(sid)
             state.session_provider_models.pop(sid, None)
+            state.session_projects.pop(sid, None)
+            state.session_thinking_levels.pop(sid, None)
             with suppress(Exception):
                 await session.provider.close()
+            deleted = True
+        else:
+            state.session_provider_models.pop(sid, None)
+            state.session_projects.pop(sid, None)
+            state.session_thinking_levels.pop(sid, None)
+        if state.store is not None and await state.store.get_session(sid) is not None:
+            await state.store.delete_session(sid)
+            deleted = True
+        if deleted:
             return web.json_response({"deleted": sid})
         return web.json_response({"error": "Session not found"}, status=404)
 
@@ -501,7 +870,10 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
     app.router.add_post("/api/oauth/complete", handle_oauth_complete)
     app.router.add_get("/api/sessions", handle_sessions_list)
     app.router.add_get("/api/sessions/{session_id}", handle_session_get)
+    app.router.add_get("/api/sessions/{session_id}/messages", handle_session_messages_get)
     app.router.add_put("/api/sessions/{session_id}/model", handle_session_model_put)
+    app.router.add_put("/api/sessions/{session_id}/project", handle_session_project_put)
+    app.router.add_put("/api/sessions/{session_id}/thinking", handle_session_thinking_put)
     app.router.add_post("/api/sessions/{session_id}/bash", handle_session_bash)
     app.router.add_delete("/api/sessions/{session_id}", handle_session_delete)
     for ext in state.server_extensions:
@@ -532,10 +904,14 @@ async def run_server(
     merge_provider_overlay(config, provider_overlay)
     context = ExtensionContext(project_dir=project_dir, runtime="server", config=config)
     server_extensions = await load_server_extensions_async(context=context)
+    store = SessionStore(config.sessions.db_path)
+    await store.open()
     state = ServerState(
         config=config,
+        default_project_dir=project_dir,
         provider_overlay=provider_overlay,
         server_extensions=server_extensions,
+        store=store,
     )
 
     # Use explicit args → config → defaults
@@ -583,5 +959,12 @@ async def run_server(
         if generated_token_path is not None:
             announce(f"  Saved auth token to: {generated_token_path}")
 
-    async with websockets.serve(ws_handler, host, port):  # type: ignore[attr-defined]
-        await asyncio.Future()  # Run forever
+    try:
+        async with websockets.serve(ws_handler, host, port):  # type: ignore[attr-defined]
+            await asyncio.Future()  # Run forever
+    finally:
+        for session in list(state.sessions.values()):
+            with suppress(Exception):
+                await session.provider.close()
+        await rest_runner.cleanup()
+        await store.close()

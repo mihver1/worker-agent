@@ -12,6 +12,7 @@ from worker_ai.models import Done, TextDelta, Usage
 from worker_ai.oauth import OAuthToken, RemoteOAuthChallenge, TokenStore
 from worker_core.config import ProviderConfig, ProviderModelConfig, WorkerConfig
 from worker_core.extensions import discover_extensions
+from worker_core.sessions import SessionStore
 from worker_server.server import ServerState, _create_rest_app, handle_client
 
 # ── OAuth Token Store ─────────────────────────────────────────────
@@ -633,6 +634,21 @@ class TestRESTAPI:
             assert data["session"]["model"] == state.config.agent.model
 
     @pytest.mark.asyncio
+    async def test_session_get_returns_default_project_before_creation(self, tmp_path):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(
+                "/api/sessions/remote-session",
+                headers={"Authorization": "Bearer test_token"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["session"]["project_dir"] == str(tmp_path)
+
+    @pytest.mark.asyncio
     async def test_remote_bash_endpoint_executes_command(self, state):
         from aiohttp.test_utils import TestClient, TestServer
 
@@ -647,6 +663,159 @@ class TestRESTAPI:
             data = await resp.json()
             assert data["output"] == "remote-bash-test"
             assert data["exit_code"] == 0
+
+    @pytest.mark.asyncio
+    async def test_session_project_endpoint_and_cd_persist_remote_cwd(self, tmp_path):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        project_a = tmp_path / "project-a"
+        project_b = tmp_path / "project-b"
+        project_a.mkdir()
+        project_b.mkdir()
+
+        state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.put(
+                "/api/sessions/remote-session/project",
+                headers={"Authorization": "Bearer test_token"},
+                json={"project_dir": str(project_a)},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["session"]["project_dir"] == str(project_a)
+
+            resp = await client.post(
+                "/api/sessions/remote-session/bash",
+                headers={"Authorization": "Bearer test_token"},
+                json={"command": "pwd"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["output"] == str(project_a)
+
+            resp = await client.post(
+                "/api/sessions/remote-session/bash",
+                headers={"Authorization": "Bearer test_token"},
+                json={"command": f"cd {project_b}"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["output"] == str(project_b)
+            assert data["session"]["project_dir"] == str(project_b)
+
+            resp = await client.post(
+                "/api/sessions/remote-session/bash",
+                headers={"Authorization": "Bearer test_token"},
+                json={"command": "pwd"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+            assert data["output"] == str(project_b)
+
+    @pytest.mark.asyncio
+    async def test_sessions_list_includes_persisted_remote_sessions(self, tmp_path):
+        from aiohttp.test_utils import TestClient, TestServer
+        from worker_ai.models import Message, Role
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            project_dir = str(tmp_path / "project")
+            (tmp_path / "project").mkdir()
+            await store.create_session(
+                "persisted-remote",
+                "openai/gpt-4.1",
+                title="Persisted remote session",
+                project_dir=project_dir,
+            )
+            await store.add_message(
+                "persisted-remote",
+                Message(role=Role.USER, content="hello"),
+            )
+
+            state = ServerState(
+                config=WorkerConfig(),
+                default_project_dir=str(tmp_path),
+                store=store,
+            )
+            app = _create_rest_app(state, "test_token")
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.get(
+                    "/api/sessions",
+                    headers={"Authorization": "Bearer test_token"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+        finally:
+            await store.close()
+
+        assert len(data["sessions"]) == 1
+        session = data["sessions"][0]
+        assert session["id"] == "persisted-remote"
+        assert session["title"] == "Persisted remote session"
+        assert session["model"] == "openai/gpt-4.1"
+        assert session["project_dir"] == project_dir
+        assert session["thinking_level"] == "off"
+        assert session["messages"] == 2
+        assert session["exists"] is True
+        assert session["created_at"]
+        assert session["updated_at"]
+
+    @pytest.mark.asyncio
+    async def test_session_messages_endpoint_reads_persisted_history(self, tmp_path):
+        from aiohttp.test_utils import TestClient, TestServer
+        from worker_ai.models import Message, Role
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            await store.create_session(
+                "persisted-remote",
+                "openai/gpt-4.1",
+                project_dir=str(tmp_path),
+            )
+            await store.add_message(
+                "persisted-remote",
+                Message(role=Role.USER, content="hello"),
+            )
+            await store.add_message(
+                "persisted-remote",
+                Message(role=Role.ASSISTANT, content="world"),
+            )
+
+            state = ServerState(config=WorkerConfig(), store=store)
+            app = _create_rest_app(state, "test_token")
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.get(
+                    "/api/sessions/persisted-remote/messages",
+                    headers={"Authorization": "Bearer test_token"},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+        finally:
+            await store.close()
+
+        assert data["messages"] == [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_session_thinking_endpoint_updates_remote_session_state(self, state):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.put(
+                "/api/sessions/remote-session/thinking",
+                headers={"Authorization": "Bearer test_token"},
+                json={"thinking_level": "high"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+
+        assert data["session"]["thinking_level"] == "high"
 
     @pytest.mark.asyncio
     async def test_credentials_import_saves_overlay_and_oauth_token(
@@ -919,6 +1088,79 @@ class TestWebSocketProtocol:
         messages = [json.loads(m) for m in ws.sent]
         assert messages[0]["type"] == "error"
         assert "Maximum sessions reached" in messages[0]["error"]
+
+    @pytest.mark.asyncio
+    async def test_create_server_session_rehydrates_persisted_messages(self, tmp_path, monkeypatch):
+        import worker_server.server as server_mod
+        from worker_ai.models import Message, Role
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            project_dir = str(tmp_path / "project")
+            (tmp_path / "project").mkdir()
+            await store.create_session(
+                "persisted-remote",
+                "openai/gpt-4.1",
+                project_dir=project_dir,
+            )
+            await store.add_message(
+                "persisted-remote",
+                Message(role=Role.USER, content="hello"),
+            )
+            await store.add_message(
+                "persisted-remote",
+                Message(role=Role.ASSISTANT, content="world"),
+            )
+
+            config = WorkerConfig()
+            state = ServerState(
+                config=config,
+                default_project_dir=str(tmp_path),
+                store=store,
+            )
+
+            fake_runtime = AsyncMock()
+            fake_runtime.provider = MockProvider()
+            monkeypatch.setattr(
+                server_mod,
+                "bootstrap_runtime",
+                AsyncMock(return_value=fake_runtime),
+            )
+
+            def _fake_create_session(
+                _config,
+                runtime,
+                *,
+                project_dir,
+                store,
+                session_id,
+                **_kwargs,
+            ):
+                from worker_core.agent import AgentSession
+
+                return AgentSession(
+                    provider=runtime.provider,
+                    model="gpt-4.1",
+                    tools=[],
+                    project_dir=project_dir,
+                    store=store,
+                    session_id=session_id,
+                )
+
+            monkeypatch.setattr(
+                server_mod,
+                "create_agent_session_from_bootstrap",
+                _fake_create_session,
+            )
+
+            session = await server_mod._create_server_session(state, "persisted-remote")
+        finally:
+            await store.close()
+
+        assert [message.content for message in session.messages[1:]] == ["hello", "world"]
+        assert state.session_provider_models["persisted-remote"] == "openai/gpt-4.1"
+        assert state.session_projects["persisted-remote"] == project_dir
 
 
 # ── Extension Discovery ──────────────────────────────────────────

@@ -61,7 +61,9 @@ class SessionStore:
         await self._db.executescript(_SCHEMA)
         # Migration: add project_dir column if missing
         try:
-            await self._db.execute("ALTER TABLE sessions ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''")
+            await self._db.execute(
+                "ALTER TABLE sessions ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''"
+            )
             await self._db.commit()
         except Exception:  # column already exists
             pass
@@ -88,6 +90,20 @@ class SessionStore:
                 "VALUES (?, ?, ?, ?, ?, ?)"
             ),
             (session_id, title, model, project_dir, now, now),
+        )
+        await self.db.commit()
+
+    async def update_session_model(self, session_id: str, model: str) -> None:
+        await self.db.execute(
+            "UPDATE sessions SET model = ?, updated_at = ? WHERE id = ?",
+            (model, _now(), session_id),
+        )
+        await self.db.commit()
+
+    async def update_session_project(self, session_id: str, project_dir: str) -> None:
+        await self.db.execute(
+            "UPDATE sessions SET project_dir = ?, updated_at = ? WHERE id = ?",
+            (project_dir, _now(), session_id),
         )
         await self.db.commit()
 
@@ -161,6 +177,14 @@ class SessionStore:
         await self.db.commit()
         return cursor.lastrowid  # type: ignore[return-value]
 
+    async def count_messages(self, session_id: str) -> int:
+        cursor = await self.db.execute(
+            "SELECT COUNT(*) AS count FROM messages WHERE session_id = ?",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        return int(row["count"]) if row is not None else 0
+
     async def get_messages(self, session_id: str) -> list[Message]:
         """Load linear message history for a session (follows parent chain from latest)."""
         cursor = await self.db.execute(
@@ -214,7 +238,10 @@ class SessionStore:
 
     async def get_session(self, session_id: str) -> SessionInfo | None:
         cursor = await self.db.execute(
-            "SELECT id, title, model, created_at, updated_at, project_dir FROM sessions WHERE id = ?",
+            (
+                "SELECT id, title, model, created_at, updated_at, project_dir "
+                "FROM sessions WHERE id = ?"
+            ),
             (session_id,),
         )
         row = await cursor.fetchone()

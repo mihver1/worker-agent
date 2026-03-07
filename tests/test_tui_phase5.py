@@ -301,6 +301,19 @@ class TestStatusFooter:
         footer.set_model("anthropic/claude-sonnet")
         text = str(footer.render())
         assert "anthropic/claude-sonnet" in text
+    def test_set_cwd_overrides_rendered_working_directory(self, monkeypatch):
+        """set_cwd lets the footer render a remote/project-specific path."""
+        import worker_core.cmux as cmux_mod
+
+        monkeypatch.setattr(cmux_mod, "_CMUX_BIN", "")
+        monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
+
+        from worker_tui.app import StatusFooter
+
+        footer = StatusFooter()
+        footer.set_cwd("/srv/worker/project")
+        text = str(footer.render())
+        assert "/srv/worker/project" in text
 
     def test_cmux_indicator_when_in_cmux(self, monkeypatch):
         """Footer shows 'cmux' indicator when in cmux."""
@@ -635,12 +648,53 @@ class TestRemoteTransportHelpers:
 
 class TestRemoteModeCommandRouting:
     @pytest.mark.asyncio
+    async def test_sync_remote_session_state_updates_footer_with_remote_project(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                return {
+                    "session": {
+                        "id": session_id,
+                        "model": "openai/gpt-4.1",
+                        "project_dir": "/srv/worker/project",
+                    }
+                }
+
+        class _Footer:
+            def __init__(self):
+                self.model = ""
+                self.cwd = ""
+
+            def set_model(self, model: str) -> None:
+                self.model = model
+
+            def set_cwd(self, cwd: str) -> None:
+                self.cwd = cwd
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: footer  # type: ignore[method-assign]
+
+        await app._sync_remote_session_state()
+
+        assert footer.model == "openai/gpt-4.1"
+        assert footer.cwd == "/srv/worker/project"
+        assert app._remote_project_dir == "/srv/worker/project"
+    @pytest.mark.asyncio
     async def test_model_command_reads_remote_session_state(self):
         from worker_tui.app import WorkerApp
 
         class _RemoteClient:
             async def get_session(self, session_id: str):
-                return {"session": {"id": session_id, "model": "openai/gpt-4.1"}}
+                return {
+                    "session": {
+                        "id": session_id,
+                        "model": "openai/gpt-4.1",
+                        "project_dir": "/srv/worker/project",
+                    }
+                }
 
         app = WorkerApp(remote_url="ws://localhost:7432")
         app._remote_control_client = _RemoteClient()
@@ -652,6 +706,187 @@ class TestRemoteModeCommandRouting:
         await app._handle_command("/model")
 
         assert seen_messages == [("Current model: openai/gpt-4.1", "tool")]
+
+    @pytest.mark.asyncio
+    async def test_project_command_switches_remote_project(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def set_session_project(self, session_id: str, project_dir: str):
+                return {
+                    "session": {
+                        "id": session_id,
+                        "model": "openai/gpt-4.1",
+                        "project_dir": "/srv/projects/demo",
+                    }
+                }
+
+        class _Footer:
+            def __init__(self):
+                self.model = ""
+                self.cwd = ""
+
+            def set_model(self, model: str) -> None:
+                self.model = model
+
+            def set_cwd(self, cwd: str) -> None:
+                self.cwd = cwd
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: footer  # type: ignore[method-assign]
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_project("/srv/projects/demo")
+
+        assert footer.model == "openai/gpt-4.1"
+        assert footer.cwd == "/srv/projects/demo"
+        assert seen_messages[-1] == (
+            "Switched remote project to: /srv/projects/demo",
+            "tool",
+        )
+
+    @pytest.mark.asyncio
+    async def test_thinking_command_uses_remote_control_client(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                return {"session": {"id": session_id, "thinking_level": "medium"}}
+
+            async def set_session_thinking(self, session_id: str, thinking_level: str):
+                return {
+                    "session": {
+                        "id": session_id,
+                        "thinking_level": thinking_level,
+                    }
+                }
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_thinking("")
+        await app._cmd_thinking("high")
+
+        assert seen_messages == [
+            (
+                "Current thinking level: medium\n"
+                "Available: off, minimal, low, medium, high, xhigh\n"
+                "Usage: /thinking <level>",
+                "tool",
+            ),
+            ("Thinking level set to: high", "tool"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_resume_command_lists_remote_sessions(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def list_sessions(self):
+                return {
+                    "sessions": [
+                        {
+                            "id": "remote-1",
+                            "title": "Remote issue",
+                            "model": "openai/gpt-4.1",
+                            "project_dir": "/srv/project",
+                            "updated_at": "2026-03-06 22:51:00",
+                        }
+                    ]
+                }
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_resume("")
+
+        assert seen_messages == [
+            (
+                "Recent sessions:\n"
+                "  1. [2026-03-06 22:51:00] Remote issue (openai/gpt-4.1) @ /srv/project\n"
+                "\n"
+                "Type /resume <number> to load a session.",
+                "tool",
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_resume_command_restores_remote_session(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                return {
+                    "session": {
+                        "id": session_id,
+                        "title": "Remote issue",
+                        "model": "openai/gpt-4.1",
+                        "project_dir": "/srv/project",
+                    }
+                }
+
+            async def get_session_messages(self, session_id: str):
+                return {
+                    "messages": [
+                        {"role": "user", "content": "hello"},
+                        {"role": "assistant", "content": "world"},
+                    ]
+                }
+
+        class _Container:
+            def __init__(self):
+                self.cleared = False
+
+            def remove_children(self) -> None:
+                self.cleared = True
+
+        class _Footer:
+            def __init__(self):
+                self.model = ""
+                self.cwd = ""
+
+            def set_model(self, model: str) -> None:
+                self.model = model
+
+            def set_cwd(self, cwd: str) -> None:
+                self.cwd = cwd
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        container = _Container()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: (  # type: ignore[method-assign]
+            container if selector == "#chat-container" else footer
+        )
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_resume("remote-1")
+
+        assert container.cleared is True
+        assert footer.model == "openai/gpt-4.1"
+        assert footer.cwd == "/srv/project"
+        assert app._remote_session_id == "remote-1"
+        assert seen_messages == [
+            ("hello", "user"),
+            ("world", "assistant"),
+            ("Resumed remote session: Remote issue", "tool"),
+        ]
 
     @pytest.mark.asyncio
     async def test_double_bang_routes_to_remote_shell(self, monkeypatch):

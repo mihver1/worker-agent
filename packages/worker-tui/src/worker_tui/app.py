@@ -231,6 +231,8 @@ BUILTIN_COMMAND_SUGGESTIONS: tuple[SlashCommandSuggestion, ...] = (
     SlashCommandSuggestion("/help", "show available commands"),
     SlashCommandSuggestion("/model", "show current model or switch model"),
     SlashCommandSuggestion("/models", "list available models"),
+    SlashCommandSuggestion("/project", "show or change the active project"),
+    SlashCommandSuggestion("/cd", "alias for /project"),
     SlashCommandSuggestion("/providers", "list supported providers and setup hints"),
     SlashCommandSuggestion("/connect", "log in to a provider"),
     SlashCommandSuggestion("/resume", "resume a saved session"),
@@ -324,6 +326,7 @@ class StatusFooter(Static):
         self._total_output: int = 0
         self._total_cost: float = 0.0
         self._context_pct: float = 0.0
+        self._cwd: str = ""
         self._in_cmux: bool = is_cmux()
 
     def render(self) -> Text:
@@ -336,7 +339,7 @@ class StatusFooter(Static):
         if self._context_pct > 0:
             parts.append(f"ctx {self._context_pct:.0%}")
         # Show current working directory (~ for home)
-        cwd = os.getcwd()
+        cwd = self._cwd or os.getcwd()
         home = os.path.expanduser("~")
         if cwd.startswith(home):
             cwd = "~" + cwd[len(home):]
@@ -367,6 +370,10 @@ class StatusFooter(Static):
 
     def set_model(self, model: str) -> None:
         self._model = model
+        self.refresh()
+
+    def set_cwd(self, cwd: str) -> None:
+        self._cwd = cwd
         self.refresh()
 
 
@@ -595,6 +602,7 @@ class WorkerApp(App):
         self._ws: Any = None  # websocket connection for remote mode
         self._remote_session_id = str(uuid.uuid4())
         self._remote_control_client: RemoteControlClient | None = None
+        self._remote_project_dir: str = ""
         self._prompts: dict[str, str] = {}  # loaded prompt templates
         self._skills: dict[str, Any] = {}  # loaded skills (Skill objects)
         self._active_theme: str = "dark"
@@ -655,6 +663,17 @@ class WorkerApp(App):
             )
         return self._remote_control_client
 
+    def _apply_remote_session_state(self, session: dict[str, Any]) -> None:
+        footer = self.query_one("#status-footer", StatusFooter)
+        model = str(session.get("model", "")).strip()
+        if model:
+            self._provider_model = model
+            footer.set_model(model)
+        project_dir = str(session.get("project_dir", "")).strip()
+        if project_dir:
+            self._remote_project_dir = project_dir
+            footer.set_cwd(project_dir)
+
     async def _sync_remote_session_state(self) -> None:
         if not self.remote_url:
             return
@@ -663,11 +682,7 @@ class WorkerApp(App):
         except Exception:
             return
         session = payload.get("session", {})
-        model = str(session.get("model", "")).strip()
-        if not model:
-            return
-        self._provider_model = model
-        self.query_one("#status-footer", StatusFooter).set_model(model)
+        self._apply_remote_session_state(session)
 
     async def _forward_remote_credentials(self, config: Any) -> None:
         exports, skipped = await collect_forward_credentials(
@@ -1030,6 +1045,9 @@ class WorkerApp(App):
                 "  /model              — show current model\n"
                 "  /model <p/model>    — switch model\n"
                 "  /models             — list all available models\n"
+                "  /project            — show current project on the active host\n"
+                "  /project <path>     — switch project/cwd on the active host\n"
+                "  /cd <path>          — alias for /project <path>\n"
                 "  /providers          — list supported providers and setup hints\n"
                 "  /connect <provider> — login to a provider\n"
                 "  /resume             — list and resume a session\n"
@@ -1071,6 +1089,8 @@ class WorkerApp(App):
                 self._add_message(f"Current model: {model}", role="tool")
         elif cmd == "/models":
             self._list_models()
+        elif cmd in ("/project", "/cd"):
+            await self._cmd_project(arg)
         elif cmd == "/providers":
             await self._list_providers()
         elif cmd == "/connect":
@@ -1103,7 +1123,7 @@ class WorkerApp(App):
         elif cmd == "/theme":
             self._cmd_theme(arg)
         elif cmd == "/thinking":
-            self._cmd_thinking(arg)
+            await self._cmd_thinking(arg)
         elif cmd == "/export":
             self._cmd_export(arg)
         elif cmd == "/split":
@@ -1365,9 +1385,9 @@ class WorkerApp(App):
                 self._add_message(f"Failed to switch remote model: {exc}", role="error")
                 return
             session = payload.get("session", {})
+            self._apply_remote_session_state(session)
             self._provider_model = str(session.get("model", "")).strip() or model_str
             self.sub_title = self._provider_model
-            self.query_one("#status-footer", StatusFooter).set_model(self._provider_model)
             self._add_message(f"Switched to {self._provider_model}", role="tool")
             return
         if "/" not in model_str:
@@ -1684,8 +1704,112 @@ class WorkerApp(App):
 
     # ── Session commands ───────────────────────────────────────
 
+    async def _cmd_project(self, arg: str) -> None:
+        """Show or change the active project/cwd."""
+        if not self.remote_url:
+            cwd = os.getcwd()
+            if not arg:
+                self._add_message(f"Current project: {cwd}", role="tool")
+                return
+            self._add_message(
+                "Changing project is currently supported only in remote mode.",
+                role="error",
+            )
+            return
+
+        if not arg:
+            if not self._remote_project_dir:
+                await self._sync_remote_session_state()
+            project_dir = self._remote_project_dir or "(unknown)"
+            self._add_message(f"Current remote project: {project_dir}", role="tool")
+            return
+
+        try:
+            payload = await self._remote_control().set_session_project(
+                self._remote_session_id,
+                arg,
+            )
+        except Exception as exc:
+            self._add_message(f"Failed to switch remote project: {exc}", role="error")
+            return
+
+        session = payload.get("session", {})
+        self._apply_remote_session_state(session)
+        project_dir = str(session.get("project_dir", "")).strip() or arg
+        self._add_message(f"Switched remote project to: {project_dir}", role="tool")
+    async def _cmd_resume_remote(self, arg: str) -> None:
+        """List or resume server-backed remote sessions."""
+        if arg and not arg.isdigit():
+            await self._resume_remote_session(arg)
+            return
+        try:
+            payload = await self._remote_control().list_sessions()
+        except Exception as exc:
+            self._add_message(f"Failed to load remote sessions: {exc}", role="error")
+            return
+
+        sessions = payload.get("sessions", [])
+        if arg.isdigit():
+            idx = int(arg) - 1
+            if 0 <= idx < len(sessions):
+                session_id = str(sessions[idx].get("id", "")).strip()
+                if session_id:
+                    await self._resume_remote_session(session_id)
+                    return
+            self._add_message(f"Invalid index: {arg}", role="error")
+            return
+
+        if not sessions:
+            self._add_message("No saved remote sessions.", role="tool")
+            return
+
+        lines = ["Recent sessions:"]
+        for i, session in enumerate(sessions, 1):
+            title = str(session.get("title", "")).strip() or "(untitled)"
+            model = str(session.get("model", "")).strip() or "remote"
+            updated_at = str(session.get("updated_at", "")).strip()
+            project_dir = str(session.get("project_dir", "")).strip()
+            prefix = f"  {i}. [{updated_at}] " if updated_at else f"  {i}. "
+            proj_label = f" @ {project_dir}" if project_dir else ""
+            lines.append(f"{prefix}{title} ({model}){proj_label}")
+        lines.append("\nType /resume <number> to load a session.")
+        self._add_message("\n".join(lines), role="tool")
+
+    async def _resume_remote_session(self, session_id: str) -> None:
+        """Load a remote session and replace the current chat."""
+        try:
+            session_payload = await self._remote_control().get_session(session_id)
+            messages_payload = await self._remote_control().get_session_messages(session_id)
+        except Exception as exc:
+            self._add_message(f"Failed to resume remote session: {exc}", role="error")
+            return
+
+        session = session_payload.get("session", {})
+        self._remote_session_id = session_id
+        self._apply_remote_session_state(session)
+
+        container = self.query_one("#chat-container", Vertical)
+        container.remove_children()
+        self._tool_collapsibles.clear()
+
+        for message in messages_payload.get("messages", []):
+            role = str(message.get("role", ""))
+            content = str(message.get("content", ""))
+            if role == Role.USER.value:
+                self._add_message(content, role="user")
+            elif role == Role.ASSISTANT.value and content:
+                self._add_message(content, role="assistant")
+            elif role == Role.SYSTEM.value and content:
+                self._add_message("\U0001f4cb [Restored session]", role="tool")
+
+        title = str(session.get("title", "")).strip() or session_id[:8]
+        self._add_message(f"Resumed remote session: {title}", role="tool")
+
     async def _cmd_resume(self, arg: str) -> None:
         """List sessions or resume by number/ID."""
+        if self.remote_url:
+            await self._cmd_resume_remote(arg)
+            return
         if not self._store:
             self._add_message("Session store not available.", role="error")
             return
@@ -1919,9 +2043,44 @@ class WorkerApp(App):
 
     # ── Thinking command ──────────────────────────────────────────
 
-    def _cmd_thinking(self, arg: str) -> None:
+    async def _cmd_thinking(self, arg: str) -> None:
         """Set or show thinking level."""
         valid = ("off", "minimal", "low", "medium", "high", "xhigh")
+        if self.remote_url:
+            if not arg:
+                try:
+                    payload = await self._remote_control().get_session(self._remote_session_id)
+                except Exception as exc:
+                    self._add_message(f"Failed to load remote thinking level: {exc}", role="error")
+                    return
+                session = payload.get("session", {})
+                level = str(session.get("thinking_level", "")).strip() or "off"
+                self._add_message(
+                    f"Current thinking level: {level}\n"
+                    f"Available: {', '.join(valid)}\n"
+                    f"Usage: /thinking <level>",
+                    role="tool",
+                )
+                return
+            level = arg.strip().lower()
+            if level not in valid:
+                self._add_message(
+                    f"Invalid level '{level}'. Available: {', '.join(valid)}",
+                    role="error",
+                )
+                return
+            try:
+                payload = await self._remote_control().set_session_thinking(
+                    self._remote_session_id,
+                    level,
+                )
+            except Exception as exc:
+                self._add_message(f"Failed to set remote thinking level: {exc}", role="error")
+                return
+            session = payload.get("session", {})
+            applied_level = str(session.get("thinking_level", "")).strip() or level
+            self._add_message(f"Thinking level set to: {applied_level}", role="tool")
+            return
         if not self._session:
             self._add_message("No active session.", role="error")
             return
@@ -2072,6 +2231,9 @@ class WorkerApp(App):
         """Execute a shell command on the remote server and display the output."""
         try:
             payload = await self._remote_control().run_bash(self._remote_session_id, cmd)
+            session = payload.get("session")
+            if isinstance(session, dict):
+                self._apply_remote_session_state(session)
             output = str(payload.get("output", "")).rstrip()
             exit_code = int(payload.get("exit_code", 0))
             if output:
