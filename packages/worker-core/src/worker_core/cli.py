@@ -64,10 +64,16 @@ def cli(
         )
         return
     if ctx.invoked_subcommand is None:
-        # Default: local mode (TUI + agent in-process)
+        # Default: managed local server-backed TUI.
         from worker_tui.app import run_tui
-
-        run_tui(continue_session=continue_session, resume_id=resume_id or "")
+        from worker_tui.local_server import ensure_managed_local_server
+        handle = asyncio.run(ensure_managed_local_server(os.getcwd()))
+        run_tui(
+            remote_url=handle.remote_url,
+            auth_token=handle.auth_token,
+            continue_session=continue_session,
+            resume_id=resume_id or "",
+        )
 
 
 @cli.command()
@@ -85,7 +91,8 @@ def init() -> None:
 @cli.command()
 @click.option("--host", default=None, help="Bind address")
 @click.option("--port", default=None, type=int, help="Bind port")
-def serve(host: str | None, port: int | None) -> None:
+@click.option("--token", default="", hidden=True)
+def serve(host: str | None, port: int | None, token: str) -> None:
     """Start the headless server daemon."""
     from worker_server.server import run_server
 
@@ -94,6 +101,8 @@ def serve(host: str | None, port: int | None) -> None:
         kwargs["host"] = host
     if port:
         kwargs["port"] = port
+    if token:
+        kwargs["auth_token"] = token
     kwargs["announce"] = click.echo
     asyncio.run(run_server(**kwargs))
 
@@ -114,7 +123,6 @@ def connect(url: str, token: str, forward_credentials: str) -> None:
         auth_token=token,
         forward_credentials=forward_credentials,
     )
-    run_tui(remote_url=url, auth_token=token)
 
 
 @cli.group()
@@ -385,6 +393,14 @@ def rpc() -> None:
     from worker_server.rpc import run_rpc
 
     asyncio.run(run_rpc())
+
+
+@cli.command()
+def acp() -> None:
+    """Start ACP agent on stdin/stdout."""
+    from worker_server.acp import run_acp
+
+    asyncio.run(run_acp())
 
 
 @cli.command()

@@ -646,8 +646,7 @@ class WorkerApp(App):
             self.bind(key, action, description=action)
 
         if self.remote_url:
-            await self._sync_remote_session_state()
-            await self._sync_remote_extension_commands()
+            await self._restore_initial_remote_session()
             if self._forward_credentials_spec:
                 await self._forward_remote_credentials(config)
 
@@ -679,13 +678,44 @@ class WorkerApp(App):
     async def _sync_remote_session_state(self) -> None:
         if not self.remote_url:
             return
+        footer = self.query_one("#status-footer", StatusFooter)
         try:
             payload = await self._remote_control().get_session(self._remote_session_id)
         except Exception:
+            try:
+                payload = await self._remote_control().get_server_info()
+            except Exception:
+                return
+            model = str(payload.get("default_model", "")).strip()
+            if model:
+                self._provider_model = model
+                footer.set_model(model)
+            project_dir = str(payload.get("project_dir", "")).strip()
+            if project_dir:
+                self._remote_project_dir = project_dir
+                footer.set_cwd(project_dir)
             return
         session = payload.get("session", {})
         self._apply_remote_session_state(session)
 
+    async def _restore_initial_remote_session(self) -> None:
+        if self._resume_id:
+            await self._resume_remote_session(self._resume_id)
+            return
+        if self._continue_session:
+            try:
+                payload = await self._remote_control().list_sessions()
+            except Exception as exc:
+                self._add_message(f"Failed to load remote sessions: {exc}", role="error")
+            else:
+                sessions = payload.get("sessions", [])
+                if sessions:
+                    session_id = str(sessions[0].get("id", "")).strip()
+                    if session_id:
+                        await self._resume_remote_session(session_id)
+                        return
+        await self._sync_remote_session_state()
+        await self._sync_remote_extension_commands()
     def _set_remote_extension_commands(self, commands: list[Any]) -> None:
         normalized: set[str] = set()
         for command in commands:
@@ -1153,7 +1183,7 @@ class WorkerApp(App):
         elif cmd in ("/resume", "/sessions"):
             await self._cmd_resume(arg)
         elif cmd == "/compact":
-            self._cmd_compact(arg)
+            await self._cmd_compact(arg)
         elif cmd == "/name":
             if not arg:
                 self._add_message("Usage: /name <title>", role="error")
@@ -1166,7 +1196,7 @@ class WorkerApp(App):
         elif cmd == "/prompts":
             self._cmd_prompts()
         elif cmd.startswith("/skill:"):
-            self._cmd_skill(cmd[7:])  # strip "/skill:"
+            await self._cmd_skill(cmd[7:])  # strip "/skill:"
         elif cmd == "/skills":
             self._cmd_skills_list()
         elif cmd == "/theme":
@@ -1174,7 +1204,7 @@ class WorkerApp(App):
         elif cmd == "/thinking":
             await self._cmd_thinking(arg)
         elif cmd == "/export":
-            self._cmd_export(arg)
+            await self._cmd_export(arg)
         elif cmd == "/split":
             await self._cmd_split(arg)
         elif cmd == "/browser":
@@ -1302,31 +1332,65 @@ class WorkerApp(App):
                 self._add_message(f"Connection failed: {e}", role="error")
                 return
         await self._ws.send(json.dumps(self._remote_message_payload(text)))
-
-        widget = self._add_message("", role="assistant")
+        widget: MessageWidget | None = None
+        reasoning_widget: MessageWidget | None = None
+        had_tool_calls = False
 
         try:
             async for raw in self._ws:
                 msg = json.loads(raw)
                 msg_type = msg.get("type", "")
-
-                if msg_type == "text_delta":
+                if msg_type == "reasoning_delta":
+                    if reasoning_widget is None:
+                        reasoning_widget = MessageWidget("", role="reasoning")
+                        container = self.query_one("#chat-container", Vertical)
+                        collapsible = Collapsible(
+                            reasoning_widget, title="💡 thinking", collapsed=True,
+                        )
+                        container.mount(collapsible)
+                        self._tool_collapsibles.append(collapsible)
+                    reasoning_widget.append_content(msg.get("content", ""))
+                elif msg_type == "text_delta":
+                    if widget is None or had_tool_calls:
+                        widget = self._add_message("", role="assistant")
+                        had_tool_calls = False
+                        reasoning_widget = None
                     widget.append_content(msg.get("content", ""))
+                    self.call_after_refresh(self._scroll_to_bottom)
                 elif msg_type == "tool_call":
-                    self._add_message(f"⚙ {msg.get('tool', '')}", role="tool")
+                    had_tool_calls = True
+                    tool_name = str(msg.get("tool", "")).strip()
+                    tool_args = msg.get("args", {})
+                    if isinstance(tool_args, dict) and tool_args:
+                        rendered_args = ", ".join(
+                            f"{key}={value!r}" for key, value in tool_args.items()
+                        )
+                        tool_label = f"⚙ {tool_name}({rendered_args})"
+                    else:
+                        tool_label = f"⚙ {tool_name}"
+                    self._add_tool_message(tool_label)
                 elif msg_type == "tool_result":
                     output = msg.get("output", "")
                     if len(output) > 200:
                         output = output[:200] + "..."
-                    self._add_message(f"  → {output}", role="tool")
+                    self._add_tool_message(f"  → {output}")
+                elif msg_type == "permission_request":
+                    await self._handle_remote_permission_request(msg)
+                elif msg_type == "session_updated":
+                    session = msg.get("session")
+                    if isinstance(session, dict):
+                        self._apply_remote_session_state(session)
                 elif msg_type == "error":
                     self._add_message(msg.get("error", "Unknown error"), role="error")
                 elif msg_type == "done":
                     usage = msg.get("usage")
                     if usage:
-                        self._add_message(
-                            f"tokens: {usage.get('input', 0)} in / {usage.get('output', 0)} out",
-                            role="tool",
+                        footer = self.query_one("#status-footer", StatusFooter)
+                        footer.update_usage(
+                            int(usage.get("input", 0)),
+                            int(usage.get("output", 0)),
+                            self._input_price,
+                            self._output_price,
                         )
                     break
         except Exception as e:
@@ -1334,6 +1398,27 @@ class WorkerApp(App):
             self._ws = None
 
         self._scroll_to_bottom()
+
+    async def _handle_remote_permission_request(self, payload: dict[str, Any]) -> None:
+        request_id = str(payload.get("request_id", "")).strip()
+        if not request_id or self._ws is None:
+            return
+        tool_name = str(payload.get("tool", "")).strip() or "tool"
+        raw_args = payload.get("args", {})
+        args = raw_args if isinstance(raw_args, dict) else {}
+        decision = await self.push_screen_wait(PermissionScreen(tool_name, args))
+        resolved = decision if decision in {"once", "all", "deny"} else "deny"
+        if resolved == "all":
+            self._auto_approve_all = True
+        await self._ws.send(
+            json.dumps(
+                {
+                    "type": "approve_tool",
+                    "request_id": request_id,
+                    "decision": resolved,
+                }
+            )
+        )
 
     # ── Model management ────────────────────────────────────────
 
@@ -1944,11 +2029,32 @@ class WorkerApp(App):
     @work(exclusive=True, thread=False)
     async def _cmd_compact(self, custom_prompt: str = "") -> None:
         """Compact conversation history."""
+
+        self._add_message("Compacting conversation history...", role="tool")
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().compact_session(
+                    self._remote_session_id,
+                    custom_prompt,
+                )
+            except Exception as exc:
+                self._add_message(f"Compact failed: {exc}", role="error")
+                return
+            session = payload.get("session")
+            if isinstance(session, dict):
+                self._apply_remote_session_state(session)
+            summary = str(payload.get("summary", ""))
+            if summary:
+                self._add_message(
+                    f"Session compacted. Summary ({len(summary)} chars) saved.",
+                    role="tool",
+                )
+            else:
+                self._add_message("Session compacted.", role="tool")
+            return
         if not self._session:
             self._add_message("No active session.", role="error")
             return
-
-        self._add_message("Compacting conversation history...", role="tool")
         try:
             summary = await self._session.compact(custom_prompt)
             self._add_message(
@@ -1960,6 +2066,20 @@ class WorkerApp(App):
 
     async def _cmd_name(self, title: str) -> None:
         """Rename the current session."""
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().set_session_title(
+                    self._remote_session_id,
+                    title,
+                )
+            except Exception as exc:
+                self._add_message(f"Rename failed: {exc}", role="error")
+                return
+            session = payload.get("session")
+            if isinstance(session, dict):
+                self._apply_remote_session_state(session)
+            self._add_message(f"Session renamed to: {title}", role="tool")
+            return
         if not self._store or not self._session:
             self._add_message("No active session.", role="error")
             return
@@ -1968,11 +2088,18 @@ class WorkerApp(App):
 
     async def _cmd_tree(self) -> None:
         """Show message tree for current session."""
-        if not self._store or not self._session:
-            self._add_message("No active session.", role="error")
-            return
-
-        nodes = await self._store.get_message_nodes(self._session.session_id)
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().get_session_tree(self._remote_session_id)
+            except Exception as exc:
+                self._add_message(f"Tree failed: {exc}", role="error")
+                return
+            nodes = payload.get("nodes", [])
+        else:
+            if not self._store or not self._session:
+                self._add_message("No active session.", role="error")
+                return
+            nodes = await self._store.get_message_nodes(self._session.session_id)
         if not nodes:
             self._add_message("No messages in session.", role="tool")
             return
@@ -1989,25 +2116,55 @@ class WorkerApp(App):
 
     async def _cmd_fork(self, arg: str) -> None:
         """Fork session from a message index."""
+        idx: int | None = None
+        if arg:
+            if not arg.isdigit():
+                self._add_message(
+                    "Usage: /fork [message_index]  (see /tree for indices)",
+                    role="error",
+                )
+                return
+            idx = int(arg)
+
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().fork_session(
+                    self._remote_session_id,
+                    message_index=idx,
+                )
+            except Exception as exc:
+                self._add_message(f"Fork failed: {exc}", role="error")
+                return
+            new_session = str(payload.get("session_id", "")).strip()
+            if idx is None:
+                label = "Forked current session."
+            else:
+                label = f"Forked session at message {idx}."
+            suffix = (
+                f" New session ID: {new_session[:8]}… Use /resume to switch."
+                if new_session
+                else ""
+            )
+            self._add_message(f"{label}{suffix}", role="tool")
+            return
+
         if not self._store or not self._session:
             self._add_message("No active session.", role="error")
             return
 
-        if not arg.isdigit():
-            self._add_message(
-                "Usage: /fork <message_index>  (see /tree for indices)", role="error",
-            )
-            return
-
-        idx = int(arg)
         new_id = str(uuid.uuid4())
         try:
             await self._store.fork_session(
-                self._session.session_id, new_id, up_to_message_idx=idx,
+                self._session.session_id,
+                new_id,
+                up_to_message_idx=idx,
             )
+            if idx is None:
+                label = "Forked current session."
+            else:
+                label = f"Forked session at message {idx}."
             self._add_message(
-                f"Forked session at message {idx}. "
-                f"New session ID: {new_id[:8]}\u2026 Use /resume to switch.",
+                f"{label} New session ID: {new_id[:8]}… Use /resume to switch.",
                 role="tool",
             )
         except Exception as e:
@@ -2070,8 +2227,22 @@ class WorkerApp(App):
             lines.append(f"  {sk.name}{desc}")
         self._add_message("\n".join(lines), role="tool")
 
-    def _cmd_skill(self, name: str) -> None:
+    async def _cmd_skill(self, name: str) -> None:
         """Load a skill into the current session's system prompt."""
+        if self.remote_url:
+            try:
+                payload = await self._remote_control().inject_skill(
+                    self._remote_session_id,
+                    name,
+                )
+            except Exception as exc:
+                self._add_message(f"Skill load failed: {exc}", role="error")
+                return
+            session = payload.get("session")
+            if isinstance(session, dict):
+                self._apply_remote_session_state(session)
+            self._add_message(f"Skill '{name}' loaded into session.", role="tool")
+            return
         if not self._session:
             self._add_message("No active session.", role="error")
             return
@@ -2196,30 +2367,46 @@ class WorkerApp(App):
 
     # ── Export command ───────────────────────────────────────
 
-    def _cmd_export(self, arg: str) -> None:
+    async def _cmd_export(self, arg: str) -> None:
         """Export session to HTML."""
         from datetime import datetime
 
-        from worker_ai.models import Role
+        from worker_ai.models import Message, Role
         from worker_core.export import export_html
-
-        if not self._session:
-            self._add_message("No active session.", role="error")
-            return
-
-        messages = [
-            m for m in self._session.messages
-            if m.role in (Role.USER, Role.ASSISTANT)
-        ]
+        if self.remote_url:
+            try:
+                session_payload = await self._remote_control().get_session(self._remote_session_id)
+                messages_payload = await self._remote_control().get_session_messages(
+                    self._remote_session_id,
+                )
+            except Exception as exc:
+                self._add_message(f"Export failed: {exc}", role="error")
+                return
+            session = session_payload.get("session", {})
+            model = str(session.get("model", "")).strip() or self._provider_model or "remote"
+            messages = [
+                Message(role=Role(item["role"]), content=str(item.get("content", "")))
+                for item in messages_payload.get("messages", [])
+                if item.get("role") in {Role.USER.value, Role.ASSISTANT.value}
+            ]
+        else:
+            if not self._session:
+                self._add_message("No active session.", role="error")
+                return
+            model = self._session.model
+            messages = [
+                m for m in self._session.messages
+                if m.role in (Role.USER, Role.ASSISTANT)
+            ]
         if not messages:
             self._add_message("Nothing to export.", role="error")
             return
 
         html = export_html(
             messages,
-            title=f"Worker — {self._session.model}",
-            model=self._session.model,
-            session_id=self._session.session_id,
+            title=f"Worker — {model}",
+            model=model,
+            session_id=self._remote_session_id if self.remote_url else self._session.session_id,
         )
         filename = arg or f"worker-export-{datetime.now().strftime('%Y%m%d-%H%M%S')}.html"
         try:
@@ -2234,12 +2421,37 @@ class WorkerApp(App):
     async def _cmd_reload(self) -> None:
         """Hot-reload extensions, prompts, and skills."""
         from worker_core.extensions import reload_extensions_async
-
+        config = load_config(os.getcwd())
+        context = ExtensionContext(project_dir=os.getcwd(), runtime="tui", config=config)
+        if self.remote_url:
+            self._tui_extensions = await reload_tui_extensions_async(
+                self._tui_extensions,
+                context=context,
+            )
+            for ext in self._tui_extensions:
+                with suppress(Exception):
+                    await ext.mount(self)
+                self._register_tui_extension_keybindings(ext)
+            project_dir = os.getcwd()
+            self._prompts = load_prompts(project_dir)
+            self._skills = load_skills(project_dir)
+            try:
+                payload = await self._remote_control().reload_session(self._remote_session_id)
+            except Exception as exc:
+                self._add_message(f"Reload failed: {exc}", role="error")
+                return
+            session = payload.get("session")
+            if isinstance(session, dict):
+                self._apply_remote_session_state(session)
+            self._add_message(
+                f"Reloaded remote session, {len(self._tui_extensions)} tui extension(s), "
+                f"{len(self._prompts)} prompt(s), {len(self._skills)} skill(s)",
+                role="tool",
+            )
+            return
         if not self._session:
             self._add_message("No active session.", role="error")
             return
-        config = load_config(os.getcwd())
-        context = ExtensionContext(project_dir=os.getcwd(), runtime="tui", config=config)
         self._extensions, new_hooks = await reload_extensions_async(
             self._extensions, context=context
         )

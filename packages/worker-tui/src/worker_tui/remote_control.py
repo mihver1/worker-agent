@@ -72,6 +72,9 @@ class RemoteControlClient:
     async def list_models(self) -> dict[str, Any]:
         return await self.request("GET", "/api/models")
 
+    async def get_server_info(self) -> dict[str, Any]:
+        return await self.request("GET", "/api/server/info")
+
     async def list_sessions(self) -> dict[str, Any]:
         return await self.request("GET", "/api/sessions")
 
@@ -81,6 +84,8 @@ class RemoteControlClient:
     async def get_session_messages(self, session_id: str) -> dict[str, Any]:
         return await self.request("GET", f"/api/sessions/{session_id}/messages")
 
+    async def get_session_tree(self, session_id: str) -> dict[str, Any]:
+        return await self.request("GET", f"/api/sessions/{session_id}/tree")
     async def list_session_commands(self, session_id: str) -> dict[str, Any]:
         return await self.request("GET", f"/api/sessions/{session_id}/commands")
 
@@ -104,6 +109,13 @@ class RemoteControlClient:
             json_data={"model": model},
         )
 
+    async def set_session_title(self, session_id: str, title: str) -> dict[str, Any]:
+        return await self.request(
+            "PUT",
+            f"/api/sessions/{session_id}/title",
+            json_data={"title": title},
+        )
+
     async def set_session_project(self, session_id: str, project_dir: str) -> dict[str, Any]:
         return await self.request(
             "PUT",
@@ -116,6 +128,42 @@ class RemoteControlClient:
             "PUT",
             f"/api/sessions/{session_id}/thinking",
             json_data={"thinking_level": thinking_level},
+        )
+
+    async def compact_session(self, session_id: str, prompt: str = "") -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/sessions/{session_id}/compact",
+            json_data={"prompt": prompt},
+        )
+
+    async def fork_session(
+        self,
+        session_id: str,
+        *,
+        message_index: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {}
+        if message_index is not None:
+            payload["message_index"] = message_index
+        return await self.request(
+            "POST",
+            f"/api/sessions/{session_id}/fork",
+            json_data=payload,
+        )
+
+    async def inject_skill(self, session_id: str, skill: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/sessions/{session_id}/skill",
+            json_data={"skill": skill},
+        )
+
+    async def reload_session(self, session_id: str) -> dict[str, Any]:
+        return await self.request(
+            "POST",
+            f"/api/sessions/{session_id}/reload",
+            json_data={},
         )
 
     async def run_bash(self, session_id: str, command: str) -> dict[str, Any]:

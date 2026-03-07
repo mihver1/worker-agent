@@ -646,6 +646,93 @@ class TestRemoteTransportHelpers:
         assert payload["session_id"]
 
 
+class TestManagedLocalServer:
+    @pytest.mark.asyncio
+    async def test_ensure_managed_local_server_reuses_healthy_registry(self, tmp_path, monkeypatch):
+        import worker_tui.local_server as local_server_mod
+
+        handle = local_server_mod.LocalServerHandle(
+            remote_url="ws://127.0.0.1:9011",
+            auth_token="wkr_existing",
+            project_dir=str(tmp_path),
+            pid=777,
+        )
+        local_server_mod._save_registry(handle)
+
+        async def fake_server_matches_project(candidate):
+            assert candidate == handle
+            return True
+
+        monkeypatch.setattr(
+            local_server_mod,
+            "_server_matches_project",
+            fake_server_matches_project,
+        )
+        monkeypatch.setattr(
+            local_server_mod,
+            "load_config",
+            lambda _: (_ for _ in ()).throw(AssertionError("load_config should not be called")),
+        )
+
+        reused = await local_server_mod.ensure_managed_local_server(str(tmp_path))
+
+        assert reused == handle
+
+    @pytest.mark.asyncio
+    async def test_ensure_managed_local_server_starts_detached_server_and_saves_registry(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        import json
+
+        import worker_tui.local_server as local_server_mod
+
+        config = SimpleNamespace(
+            server=SimpleNamespace(auth_token="wkr_configured", port=7432),
+        )
+        started: dict[str, object] = {}
+
+        class _Process:
+            pid = 4321
+            returncode = None
+
+            def poll(self):
+                return None
+
+        def fake_popen(command, **kwargs):
+            started["command"] = command
+            started["kwargs"] = kwargs
+            return _Process()
+
+        async def fake_wait_until_ready(handle, process):
+            started["handle"] = handle
+            started["process"] = process
+
+        monkeypatch.setattr(local_server_mod, "load_config", lambda _: config)
+        monkeypatch.setattr(local_server_mod, "_pick_port", lambda preferred_port: 9011)
+        monkeypatch.setattr(
+            local_server_mod,
+            "_wait_until_ready",
+            fake_wait_until_ready,
+        )
+        monkeypatch.setattr(local_server_mod.subprocess, "Popen", fake_popen)
+
+        handle = await local_server_mod.ensure_managed_local_server(str(tmp_path))
+
+        assert handle.remote_url == "ws://127.0.0.1:9011"
+        assert handle.auth_token == "wkr_configured"
+        assert handle.project_dir == str(tmp_path)
+        assert handle.pid == 4321
+        assert started["command"] == local_server_mod._server_command(9011, "wkr_configured")
+        assert started["kwargs"]["cwd"] == str(tmp_path)
+        assert started["kwargs"]["start_new_session"] is True
+        registry = json.loads((tmp_path / ".worker" / "server.json").read_text())
+        assert registry["remote_url"] == handle.remote_url
+        assert registry["auth_token"] == handle.auth_token
+        assert registry["pid"] == handle.pid
+
+
 class TestRemoteModeCommandRouting:
     @pytest.mark.asyncio
     async def test_sync_remote_session_state_updates_footer_with_remote_project(self):
@@ -682,6 +769,43 @@ class TestRemoteModeCommandRouting:
         assert footer.model == "openai/gpt-4.1"
         assert footer.cwd == "/srv/worker/project"
         assert app._remote_project_dir == "/srv/worker/project"
+
+    @pytest.mark.asyncio
+    async def test_sync_remote_session_state_falls_back_to_server_info(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                raise RuntimeError(f"missing session: {session_id}")
+
+            async def get_server_info(self):
+                return {
+                    "default_model": "openai/gpt-4.1",
+                    "project_dir": "/srv/fallback/project",
+                }
+
+        class _Footer:
+            def __init__(self):
+                self.model = ""
+                self.cwd = ""
+
+            def set_model(self, model: str) -> None:
+                self.model = model
+
+            def set_cwd(self, cwd: str) -> None:
+                self.cwd = cwd
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: footer  # type: ignore[method-assign]
+
+        await app._sync_remote_session_state()
+
+        assert footer.model == "openai/gpt-4.1"
+        assert footer.cwd == "/srv/fallback/project"
+        assert app._provider_model == "openai/gpt-4.1"
+        assert app._remote_project_dir == "/srv/fallback/project"
     @pytest.mark.asyncio
     async def test_model_command_reads_remote_session_state(self):
         from worker_tui.app import WorkerApp
@@ -820,6 +944,24 @@ class TestRemoteModeCommandRouting:
         assert seen_messages == [("delegated:inspect src", "tool")]
 
     @pytest.mark.asyncio
+    async def test_restore_initial_remote_session_continue_uses_latest_session(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def list_sessions(self):
+                return {"sessions": [{"id": "remote-latest"}]}
+
+        app = WorkerApp(remote_url="ws://localhost:7432", continue_session=True)
+        app._remote_control_client = _RemoteClient()
+        app._resume_remote_session = AsyncMock()  # type: ignore[method-assign]
+        app._sync_remote_session_state = AsyncMock()  # type: ignore[method-assign]
+
+        await app._restore_initial_remote_session()
+
+        app._resume_remote_session.assert_awaited_once_with("remote-latest")
+        app._sync_remote_session_state.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_resume_command_lists_remote_sessions(self):
         from worker_tui.app import WorkerApp
 
@@ -919,6 +1061,197 @@ class TestRemoteModeCommandRouting:
             ("hello", "user"),
             ("world", "assistant"),
             ("Resumed remote session: Remote issue", "tool"),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_fork_command_passes_remote_message_index(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            def __init__(self):
+                self.calls: list[tuple[str, int | None]] = []
+
+            async def fork_session(self, session_id: str, *, message_index: int | None = None):
+                self.calls.append((session_id, message_index))
+                return {"session_id": "forked-session"}
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        client = _RemoteClient()
+        app._remote_control_client = client
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_fork("7")
+
+        assert client.calls == [(app._remote_session_id, 7)]
+        assert seen_messages[0][1] == "tool"
+        assert "message 7" in seen_messages[0][0]
+        assert "/resume" in seen_messages[0][0]
+
+    @pytest.mark.asyncio
+    async def test_skill_command_uses_remote_control_client(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def inject_skill(self, session_id: str, skill: str):
+                return {"status": "ok", "session_id": session_id, "skill": skill}
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_skill("debug")
+
+        assert seen_messages == [("Skill 'debug' loaded into session.", "tool")]
+
+    @pytest.mark.asyncio
+    async def test_export_command_writes_remote_session_history(self, tmp_path, monkeypatch):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                return {"session": {"id": session_id, "model": "openai/gpt-4.1"}}
+
+            async def get_session_messages(self, session_id: str):
+                return {
+                    "messages": [
+                        {"role": "user", "content": "hello"},
+                        {"role": "assistant", "content": "world"},
+                        {"role": "system", "content": "ignored"},
+                    ]
+                }
+
+        monkeypatch.chdir(tmp_path)
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_export("remote.html")
+
+        html = (tmp_path / "remote.html").read_text(encoding="utf-8")
+        assert "hello" in html
+        assert "world" in html
+        assert "ignored" not in html
+        assert seen_messages == [("Exported to remote.html", "tool")]
+
+    @pytest.mark.asyncio
+    async def test_reload_command_reloads_remote_session_and_local_resources(self, monkeypatch):
+        import worker_tui.app as tui_app
+        from worker_tui.app import WorkerApp
+
+        class _Footer:
+            def __init__(self):
+                self.model = ""
+                self.cwd = ""
+
+            def set_model(self, model: str) -> None:
+                self.model = model
+
+            def set_cwd(self, cwd: str) -> None:
+                self.cwd = cwd
+
+        class _RemoteClient:
+            async def reload_session(self, session_id: str):
+                return {
+                    "session": {
+                        "id": session_id,
+                        "model": "openai/gpt-4.1",
+                        "project_dir": "/srv/project",
+                    }
+                }
+
+        mounted: list[object] = []
+
+        class _Ext:
+            async def mount(self, app):
+                mounted.append(app)
+
+        async def fake_reload_tui_extensions(existing, *, context):
+            assert context.runtime == "tui"
+            return [_Ext(), _Ext()]
+
+        monkeypatch.setattr(tui_app, "load_config", lambda _: _tui_test_config())
+        monkeypatch.setattr(
+            tui_app,
+            "reload_tui_extensions_async",
+            fake_reload_tui_extensions,
+        )
+        monkeypatch.setattr(tui_app, "load_prompts", lambda _: {"fix": "Prompt"})
+        monkeypatch.setattr(
+            tui_app,
+            "load_skills",
+            lambda _: {"debug": SimpleNamespace(name="debug", description="Debug")},
+        )
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: footer  # type: ignore[method-assign]
+        app._tui_extensions = [object()]
+        registered: list[object] = []
+        app._register_tui_extension_keybindings = (  # type: ignore[method-assign]
+            lambda ext: registered.append(ext)
+        )
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+
+        await app._cmd_reload()
+
+        assert len(mounted) == 2
+        assert len(registered) == 2
+        assert footer.model == "openai/gpt-4.1"
+        assert footer.cwd == "/srv/project"
+        assert seen_messages[-1] == (
+            "Reloaded remote session, 2 tui extension(s), 1 prompt(s), 1 skill(s)",
+            "tool",
+        )
+
+    @pytest.mark.asyncio
+    async def test_handle_remote_permission_request_sends_selected_decision(self):
+        import json
+
+        from worker_tui.app import WorkerApp
+
+        class _WebSocket:
+            def __init__(self):
+                self.sent: list[dict[str, str]] = []
+
+            async def send(self, raw: str) -> None:
+                self.sent.append(json.loads(raw))
+
+        async def fake_push_screen_wait(screen):
+            return "all"
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._ws = _WebSocket()
+        app.push_screen_wait = fake_push_screen_wait  # type: ignore[method-assign]
+
+        await app._handle_remote_permission_request(
+            {
+                "request_id": "req-1",
+                "tool": "read",
+                "args": {"path": "README.md"},
+            }
+        )
+
+        assert app._auto_approve_all is True
+        assert app._ws.sent == [  # type: ignore[union-attr]
+            {
+                "type": "approve_tool",
+                "request_id": "req-1",
+                "decision": "all",
+            }
         ]
 
     @pytest.mark.asyncio

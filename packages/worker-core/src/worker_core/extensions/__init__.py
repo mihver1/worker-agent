@@ -146,6 +146,24 @@ def discover_extensions(group: str = "worker.extensions") -> dict[str, type[Any]
     return extensions
 
 
+def _callable_kwargs(fn: Callable[..., Any], kwargs: dict[str, Any]) -> dict[str, Any]:
+    """Filter kwargs to what the callable accepts unless it has **kwargs."""
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):
+        return kwargs
+
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params):
+        return kwargs
+
+    supported_names = {
+        param.name
+        for param in params
+        if param.kind in {inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY}
+    }
+    return {name: value for name, value in kwargs.items() if name in supported_names}
+
+
 def _instantiate_extensions(
     classes: dict[str, type[Any]],
     *,
@@ -225,7 +243,7 @@ class HookDispatcher:
     async def fire(self, event: str, **kwargs: Any) -> None:
         """Fire all hooks for the given event."""
         for fn in self._hooks.get(event, []):
-            result = fn(**kwargs)
+            result = fn(**_callable_kwargs(fn, kwargs))
             if inspect.isawaitable(result):
                 await result
 
@@ -236,7 +254,8 @@ class HookDispatcher:
         a non-None result, the value is replaced for subsequent hooks.
         """
         for fn in self._hooks.get(event, []):
-            result = fn(value=value, **kwargs)
+            call_kwargs = _callable_kwargs(fn, {"value": value, **kwargs})
+            result = fn(**call_kwargs)
             if inspect.isawaitable(result):
                 result = await result
             if result is not None:

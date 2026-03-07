@@ -59,6 +59,7 @@ class AgentEvent:
     tool_call_id: str = ""
     usage: Usage | None = None
     error: str = ""
+    is_error: bool = False
 
 
 # ── Agent session ─────────────────────────────────────────────────
@@ -568,6 +569,7 @@ class AgentSession:
                     tool_name=tc.name,
                     tool_call_id=tc.id,
                     content=result,
+                    is_error=is_error,
                 )
 
                 await self._append_message(

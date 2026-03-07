@@ -400,11 +400,10 @@ class TestCliConnect:
         import worker_tui.app as tui_app
         from click.testing import CliRunner
         from worker_core import cli as cli_mod
-
-        captured: dict[str, str] = {}
+        calls: list[dict[str, str]] = []
 
         def fake_run_tui(**kwargs):
-            captured.update(kwargs)
+            calls.append(dict(kwargs))
 
         monkeypatch.setattr(tui_app, "run_tui", fake_run_tui)
 
@@ -422,10 +421,67 @@ class TestCliConnect:
         )
 
         assert result.exit_code == 0
+        assert calls == [
+            {
+                "remote_url": "ws://host:7432",
+                "auth_token": "tok_test",
+                "forward_credentials": "all",
+            }
+        ]
+
+
+class TestCliDefaultMode:
+    def test_worker_default_uses_managed_local_server(self, monkeypatch):
+        import worker_core.migrations as migrations_mod
+        import worker_tui.app as tui_app
+        import worker_tui.local_server as local_server_mod
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        monkeypatch.setattr(migrations_mod, "check_and_migrate", lambda: None)
+        monkeypatch.setattr(cli_mod.os, "getcwd", lambda: "/tmp/project")
+
+        async def fake_ensure_managed_local_server(project_dir: str):
+            assert project_dir == "/tmp/project"
+            return local_server_mod.LocalServerHandle(
+                remote_url="ws://127.0.0.1:9011",
+                auth_token="wkr_local_token",
+                project_dir=project_dir,
+                pid=4321,
+            )
+
+        captured: dict[str, object] = {}
+
+        def fake_run_tui(**kwargs):
+            captured.update(kwargs)
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        monkeypatch.setattr(
+            local_server_mod,
+            "ensure_managed_local_server",
+            fake_ensure_managed_local_server,
+        )
+        monkeypatch.setattr(tui_app, "run_tui", fake_run_tui)
+        monkeypatch.setattr(cli_mod.asyncio, "run", run_coro)
+
+        runner = CliRunner()
+        result = runner.invoke(
+            cli_mod.cli,
+            ["--continue", "--resume", "sess-123"],
+        )
+
+        assert result.exit_code == 0
         assert captured == {
-            "remote_url": "ws://host:7432",
-            "auth_token": "tok_test",
-            "forward_credentials": "all",
+            "remote_url": "ws://127.0.0.1:9011",
+            "auth_token": "wkr_local_token",
+            "continue_session": True,
+            "resume_id": "sess-123",
         }
 
 class TestCliServe:
@@ -461,6 +517,62 @@ class TestCliServe:
         assert captured["port"] == 9000
         assert "Worker server starting" in result.output
         assert "Auth token: wkr_test_token" in result.output
+
+    def test_worker_serve_passes_hidden_auth_token(self, monkeypatch):
+        import worker_server.server as server_mod
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        captured: dict[str, object] = {}
+
+        async def fake_run_server(**kwargs):
+            captured.update(kwargs)
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        monkeypatch.setattr(server_mod, "run_server", fake_run_server)
+        monkeypatch.setattr(cli_mod.asyncio, "run", run_coro)
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["serve", "--token", "tok_hidden"])
+
+        assert result.exit_code == 0
+        assert captured["auth_token"] == "tok_hidden"
+
+
+class TestCliAcp:
+    def test_worker_acp_runs_acp_entrypoint(self, monkeypatch):
+        import worker_core.migrations as migrations_mod
+        import worker_server.acp as acp_mod
+        from click.testing import CliRunner
+        from worker_core import cli as cli_mod
+
+        seen: list[bool] = []
+
+        async def fake_run_acp():
+            seen.append(True)
+
+        def run_coro(coro):
+            loop = asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        monkeypatch.setattr(migrations_mod, "check_and_migrate", lambda: None)
+        monkeypatch.setattr(acp_mod, "run_acp", fake_run_acp)
+        monkeypatch.setattr(cli_mod.asyncio, "run", run_coro)
+
+        runner = CliRunner()
+        result = runner.invoke(cli_mod.cli, ["acp"])
+
+        assert result.exit_code == 0
+        assert seen == [True]
 
 
 class TestCliExtensions:
@@ -691,6 +803,23 @@ class TestRESTAPI:
             assert data["session"]["project_dir"] == str(tmp_path)
 
     @pytest.mark.asyncio
+    async def test_server_info_returns_default_project_and_model(self, tmp_path):
+        from aiohttp.test_utils import TestClient, TestServer
+
+        state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+        app = _create_rest_app(state, "test_token")
+        async with TestClient(TestServer(app)) as client:
+            resp = await client.get(
+                "/api/server/info",
+                headers={"Authorization": "Bearer test_token"},
+            )
+            assert resp.status == 200
+            data = await resp.json()
+
+        assert data["project_dir"] == str(tmp_path)
+        assert data["default_model"] == state.config.agent.model
+
+    @pytest.mark.asyncio
     async def test_remote_bash_endpoint_executes_command(self, state):
         from aiohttp.test_utils import TestClient, TestServer
 
@@ -883,6 +1012,51 @@ class TestRESTAPI:
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "world"},
         ]
+
+    @pytest.mark.asyncio
+    async def test_session_fork_endpoint_uses_requested_message_index(self, tmp_path):
+        from aiohttp.test_utils import TestClient, TestServer
+        from worker_ai.models import Message, Role
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            await store.create_session(
+                "remote-session",
+                "openai/gpt-4.1",
+                title="Original",
+                project_dir=str(tmp_path),
+            )
+            await store.add_message(
+                "remote-session",
+                Message(role=Role.USER, content="first"),
+            )
+            await store.add_message(
+                "remote-session",
+                Message(role=Role.ASSISTANT, content="second"),
+            )
+
+            state = ServerState(
+                config=WorkerConfig(),
+                default_project_dir=str(tmp_path),
+                store=store,
+            )
+            app = _create_rest_app(state, "test_token")
+            async with TestClient(TestServer(app)) as client:
+                resp = await client.post(
+                    "/api/sessions/remote-session/fork",
+                    headers={"Authorization": "Bearer test_token"},
+                    json={"message_index": 0},
+                )
+                assert resp.status == 200
+                data = await resp.json()
+            forked_messages = await store.get_messages(data["session_id"])
+        finally:
+            await store.close()
+
+        assert [message.content for message in forked_messages] == ["first"]
+        assert data["session"]["project_dir"] == str(tmp_path)
+        assert data["session"]["model"] == "openai/gpt-4.1"
 
     @pytest.mark.asyncio
     async def test_session_thinking_endpoint_updates_remote_session_state(self, state):
@@ -1085,10 +1259,26 @@ class TestWebSocketProtocol:
         state.sessions["test_session"] = session
 
         ws = FakeWebSocket()
-        ws.inject(json.dumps({"type": "message", "session_id": "test_session", "content": "hi"}))
-        ws.close_input()
+        client_task = asyncio.create_task(handle_client(ws, state))  # type: ignore[arg-type]
+        try:
+            ws.inject(
+                json.dumps(
+                    {"type": "message", "session_id": "test_session", "content": "hi"}
+                )
+            )
 
-        await handle_client(ws, state)  # type: ignore[arg-type]
+            async def _wait_for_stream() -> None:
+                while True:
+                    messages = [json.loads(message) for message in ws.sent]
+                    types = {message["type"] for message in messages}
+                    if {"text_delta", "done"} <= types:
+                        return
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(_wait_for_stream(), timeout=1.0)
+        finally:
+            ws.close_input()
+            await asyncio.wait_for(client_task, timeout=1.0)
 
         # Parse sent messages
         messages = [json.loads(m) for m in ws.sent]
@@ -1244,6 +1434,44 @@ class TestWebSocketProtocol:
         assert [message.content for message in session.messages[1:]] == ["hello", "world"]
         assert state.session_provider_models["persisted-remote"] == "openai/gpt-4.1"
         assert state.session_projects["persisted-remote"] == project_dir
+
+    @pytest.mark.asyncio
+    async def test_background_session_run_survives_client_disconnect(self):
+        from worker_core.agent import AgentSession
+
+        started = asyncio.Event()
+        finish = asyncio.Event()
+
+        class _DetachedSession(AgentSession):
+            async def run(self, content: str):
+                assert content == "hi"
+                started.set()
+                await finish.wait()
+                yield TextDelta(content="still running")
+                yield Done(usage=Usage(input_tokens=1, output_tokens=1))
+
+        state = ServerState(config=WorkerConfig())
+        state.sessions["test_session"] = _DetachedSession(
+            provider=MockProvider(),
+            model="test",
+            tools=[],
+        )
+
+        ws = FakeWebSocket()
+        ws.inject(json.dumps({"type": "message", "session_id": "test_session", "content": "hi"}))
+        ws.close_input()
+
+        await handle_client(ws, state)  # type: ignore[arg-type]
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+
+        controller = state.session_controllers["test_session"]
+        assert controller.running is True
+
+        finish.set()
+        task = controller._run_task
+        assert task is not None
+        await asyncio.wait_for(task, timeout=1.0)
+        assert controller.running is False
 
 
 # ── Extension Discovery ──────────────────────────────────────────
