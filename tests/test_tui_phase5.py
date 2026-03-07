@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -511,6 +512,52 @@ class TestProviderCommandDispatch:
 
         app._list_providers.assert_awaited_once()
 
+class TestPermissionRequests:
+    @pytest.mark.asyncio
+    async def test_permission_requests_are_queued_until_resolved(self, monkeypatch):
+        from worker_tui.app import WorkerApp
+
+        class _Panel:
+            def __init__(self) -> None:
+                self.opened: list[tuple[str, dict[str, str]]] = []
+                self.closed = 0
+
+            def open_request(self, tool_name: str, tool_args: dict[str, str]) -> None:
+                self.opened.append((tool_name, dict(tool_args)))
+
+            def close_request(self) -> None:
+                self.closed += 1
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        panel = _Panel()
+        monkeypatch.setattr(app, "query_one", lambda selector, _cls=None: panel)
+        monkeypatch.setattr(app, "call_after_refresh", lambda callback: None)
+
+        first = asyncio.create_task(
+            app._request_permission_decision("read", {"path": "README.md"})
+        )
+        await asyncio.sleep(0)
+        second = asyncio.create_task(
+            app._request_permission_decision("bash", {"command": "pwd"})
+        )
+        await asyncio.sleep(0)
+
+        assert panel.opened == [("read", {"path": "README.md"})]
+
+        app._resolve_permission_panel_decision("once")
+        await asyncio.sleep(0)
+
+        assert await first == "once"
+        assert panel.opened == [
+            ("read", {"path": "README.md"}),
+            ("bash", {"command": "pwd"}),
+        ]
+
+        app._resolve_permission_panel_decision("deny")
+        await asyncio.sleep(0)
+
+        assert await second == "deny"
+
 
 class TestTuiAutocompleteIntegration:
     @pytest.mark.asyncio
@@ -598,6 +645,39 @@ class TestTuiAutocompleteIntegration:
             await pilot.pause()
 
             assert input_bar.value == visible_commands[5]
+
+    @pytest.mark.asyncio
+    async def test_permission_panel_is_inline_and_restores_input_focus(self, monkeypatch):
+        from textual.containers import Vertical
+        from textual.widgets import Input
+        from worker_tui.app import PermissionPanel, WorkerApp
+
+        _patch_tui_test_context(monkeypatch)
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+
+            decision_task = asyncio.create_task(
+                app._request_permission_decision("bash", {"command": "printf hello"})
+            )
+            await pilot.pause()
+
+            panel = app.query_one("#permission-panel", PermissionPanel)
+            main = app.query_one("#main-content", Vertical)
+            input_bar = app.query_one("#input-bar", Input)
+
+            assert list(main.children)[0] is panel
+            assert panel.has_class("visible")
+            assert panel.has_focus
+            assert not input_bar.has_focus
+
+            panel.action_approve_all()
+            await pilot.pause()
+
+            assert await decision_task == "all"
+            assert not panel.has_class("visible")
+            assert input_bar.has_focus
 
 
 # ── Remote payload/auth helper tests ──────────────────────────────
@@ -1289,12 +1369,9 @@ class TestRemoteModeCommandRouting:
             async def send(self, raw: str) -> None:
                 self.sent.append(json.loads(raw))
 
-        async def fake_push_screen_wait(screen):
-            return "all"
-
         app = WorkerApp(remote_url="ws://localhost:7432")
         app._ws = _WebSocket()
-        app.push_screen_wait = fake_push_screen_wait  # type: ignore[method-assign]
+        app._request_permission_decision = AsyncMock(return_value="all")  # type: ignore[method-assign]
 
         await app._handle_remote_permission_request(
             {
@@ -1304,6 +1381,10 @@ class TestRemoteModeCommandRouting:
             }
         )
 
+        app._request_permission_decision.assert_awaited_once_with(  # type: ignore[attr-defined]
+            "read",
+            {"path": "README.md"},
+        )
         assert app._auto_approve_all is True
         assert app._ws.sent == [  # type: ignore[union-attr]
             {

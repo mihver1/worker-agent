@@ -226,6 +226,14 @@ class SlashCommandSuggestion:
     value: str
     description: str
 
+@dataclass(slots=True)
+class PendingPermissionRequest:
+    """A permission request waiting for an inline user decision."""
+
+    tool_name: str
+    tool_args: dict[str, Any]
+    future: asyncio.Future[str]
+
 
 BUILTIN_COMMAND_SUGGESTIONS: tuple[SlashCommandSuggestion, ...] = (
     SlashCommandSuggestion("/help", "show available commands"),
@@ -377,40 +385,11 @@ class StatusFooter(Static):
         self.refresh()
 
 
-# ── Permission dialog ─────────────────────────────────────────
+# ── Permission panel ──────────────────────────────────────────
 
 
-class PermissionScreen(ModalScreen[str]):
-    """Modal dialog asking to approve / deny a tool call."""
-
-    CSS = """
-    PermissionScreen {
-        align: center middle;
-    }
-    #perm-dialog {
-        width: 70;
-        max-height: 18;
-        padding: 1 2;
-        background: $surface;
-        border: thick $primary;
-    }
-    #perm-title {
-        text-style: bold;
-        margin-bottom: 1;
-    }
-    #perm-detail {
-        max-height: 6;
-        margin-bottom: 1;
-        color: $text-muted;
-    }
-    #perm-buttons {
-        height: 3;
-        align: center middle;
-    }
-    #perm-buttons Button {
-        margin: 0 1;
-    }
-    """
+class PermissionPanel(Static):
+    """Inline panel asking to approve or deny a tool call."""
 
     BINDINGS = [
         Binding("y", "approve_once", "Allow once", show=False),
@@ -418,42 +397,104 @@ class PermissionScreen(ModalScreen[str]):
         Binding("n", "deny", "Deny", show=False),
         Binding("escape", "deny", "Deny", show=False),
     ]
+    DEFAULT_CSS = """
+    PermissionPanel {
+        display: none;
+        height: auto;
+        margin: 0 1;
+        padding: 0 1;
+        background: $error 15%;
+        border: thick $error;
+        color: $text;
+    }
+    PermissionPanel.visible {
+        display: block;
+    }
+    #permission-title {
+        text-style: bold;
+        color: $error;
+        margin-bottom: 1;
+    }
+    #permission-detail {
+        margin-bottom: 1;
+        color: $text;
+    }
+    #permission-hint {
+        margin-bottom: 1;
+        color: $text-muted;
+    }
+    #permission-buttons {
+        height: auto;
+    }
+    #permission-buttons Button {
+        margin: 0 1 0 0;
+    }
+    """
+    can_focus = True
 
-    def __init__(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        on_decision: Callable[[str], None],
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
-        self.tool_name = tool_name
-        self.tool_args = args
+        self._on_decision = on_decision
+        self._tool_name = ""
+        self._tool_args: dict[str, Any] = {}
 
     def compose(self) -> ComposeResult:
-        detail = ""
-        if self.tool_name == "bash":
-            detail = self.tool_args.get("command", "")
-        else:
-            detail = ", ".join(f"{k}={v!r}" for k, v in self.tool_args.items())
-        with Vertical(id="perm-dialog"):
-            yield Static(f"⚠ Permission required: [b]{self.tool_name}[/b]", id="perm-title")
-            yield Static(detail[:300], id="perm-detail")
-            with Horizontal(id="perm-buttons"):
-                yield Button("[y] Allow once", id="btn-once", variant="primary")
-                yield Button("[a] Allow all", id="btn-all", variant="success")
-                yield Button("[n] Deny", id="btn-deny", variant="error")
+        yield Static("", id="permission-title")
+        yield Static("", id="permission-detail")
+        yield Static(
+            "Keys: [y] allow once, [a] allow all, [n]/[esc] deny",
+            id="permission-hint",
+        )
+        with Horizontal(id="permission-buttons"):
+            yield Button("[y] Allow once", id="permission-btn-once", variant="primary")
+            yield Button("[a] Allow all", id="permission-btn-all", variant="success")
+            yield Button("[n] Deny", id="permission-btn-deny", variant="error")
+
+    def open_request(self, tool_name: str, tool_args: dict[str, Any]) -> None:
+        self._tool_name = tool_name
+        self._tool_args = dict(tool_args)
+        self.query_one("#permission-title", Static).update(
+            f"⚠ Permission required: {self._tool_name}"
+        )
+        self.query_one("#permission-detail", Static).update(self._detail_text())
+        self.add_class("visible")
+        self.focus()
+
+    def close_request(self) -> None:
+        self._tool_name = ""
+        self._tool_args = {}
+        self.query_one("#permission-title", Static).update("")
+        self.query_one("#permission-detail", Static).update("")
+        self.remove_class("visible")
+
+    def _detail_text(self) -> str:
+        if self._tool_name == "bash":
+            return str(self._tool_args.get("command", ""))[:300]
+        return ", ".join(f"{key}={value!r}" for key, value in self._tool_args.items())[:300]
+
+    def _submit(self, decision: str) -> None:
+        self._on_decision(decision)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn-once":
-            self.dismiss("once")
-        elif event.button.id == "btn-all":
-            self.dismiss("all")
+        if event.button.id == "permission-btn-once":
+            self._submit("once")
+        elif event.button.id == "permission-btn-all":
+            self._submit("all")
         else:
-            self.dismiss("deny")
+            self._submit("deny")
 
     def action_approve_once(self) -> None:
-        self.dismiss("once")
+        self._submit("once")
 
     def action_approve_all(self) -> None:
-        self.dismiss("all")
+        self._submit("all")
 
     def action_deny(self) -> None:
-        self.dismiss("deny")
+        self._submit("deny")
 
 
 class TextInputScreen(ModalScreen[str | None]):
@@ -613,10 +654,13 @@ class WorkerApp(App):
         self._auto_approve_all: bool = False
         self._provider_model: str = ""  # "provider/model" for DB storage
         self._suppress_next_command_menu_update: bool = False
+        self._pending_permission_requests: list[PendingPermissionRequest] = []
+        self._active_permission_request: PendingPermissionRequest | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="main-content"):
+            yield PermissionPanel(self._resolve_permission_panel_decision, id="permission-panel")
             with VerticalScroll(id="chat-scroll"):
                 yield Vertical(id="chat-container")
             yield OptionList(id="command-suggestions", compact=True)
@@ -1411,7 +1455,7 @@ class WorkerApp(App):
         tool_name = str(payload.get("tool", "")).strip() or "tool"
         raw_args = payload.get("args", {})
         args = raw_args if isinstance(raw_args, dict) else {}
-        decision = await self.push_screen_wait(PermissionScreen(tool_name, args))
+        decision = await self._request_permission_decision(tool_name, args)
         resolved = decision if decision in {"once", "all", "deny"} else "deny"
         if resolved == "all":
             self._auto_approve_all = True
@@ -2598,8 +2642,55 @@ class WorkerApp(App):
 
     # ── Permission callback ────────────────────────────────────
 
+    def _permission_panel(self) -> PermissionPanel:
+        return self.query_one("#permission-panel", PermissionPanel)
+
+    def _show_next_permission_request(self) -> None:
+        if self._active_permission_request is not None:
+            return
+        if not self._pending_permission_requests:
+            self._permission_panel().close_request()
+            self.call_after_refresh(self._focus_input)
+            return
+        self._active_permission_request = self._pending_permission_requests.pop(0)
+        self._permission_panel().open_request(
+            self._active_permission_request.tool_name,
+            self._active_permission_request.tool_args,
+        )
+
+    def _resolve_permission_panel_decision(self, decision: str) -> None:
+        request = self._active_permission_request
+        if request is None:
+            return
+        self._active_permission_request = None
+        if decision == "all":
+            self._auto_approve_all = True
+        if not request.future.done():
+            request.future.set_result(decision)
+        if decision == "all":
+            for pending in self._pending_permission_requests:
+                if not pending.future.done():
+                    pending.future.set_result("all")
+            self._pending_permission_requests.clear()
+        self._permission_panel().close_request()
+        self._show_next_permission_request()
+
+    async def _request_permission_decision(self, tool_name: str, args: dict[str, Any]) -> str:
+        if self._auto_approve_all:
+            return "all"
+        future: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+        self._pending_permission_requests.append(
+            PendingPermissionRequest(
+                tool_name=tool_name,
+                tool_args=dict(args),
+                future=future,
+            )
+        )
+        self._show_next_permission_request()
+        return await future
+
     async def _ask_permission(self, tool_name: str, args: dict[str, Any]) -> bool:
-        """Show a modal dialog and return whether the tool call is allowed."""
+        """Show an inline panel and return whether the tool call is allowed."""
         if self._auto_approve_all:
             return True
         # cmux: notify user that permission is needed
@@ -2609,7 +2700,7 @@ class WorkerApp(App):
         await cmux.notify(
             "Worker", subtitle=f"Permission required: {tool_name}",
         )
-        result = await self.push_screen_wait(PermissionScreen(tool_name, args))
+        result = await self._request_permission_decision(tool_name, args)
         if result == "all":
             self._auto_approve_all = True
             return True
