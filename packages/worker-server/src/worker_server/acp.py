@@ -114,6 +114,35 @@ def _selected_permission_option(outcome: Any) -> str | None:
     return None
 
 
+def _acp_usage_payload(usage: Any) -> Any:
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0)
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    thought_tokens = int(getattr(usage, "reasoning_tokens", 0) or 0)
+    cached_read_tokens = int(getattr(usage, "cache_read_tokens", 0) or 0)
+    cached_write_tokens = int(getattr(usage, "cache_write_tokens", 0) or 0)
+    total_tokens = (
+        input_tokens
+        + output_tokens
+        + thought_tokens
+        + cached_read_tokens
+        + cached_write_tokens
+    )
+    from acp.schema import Usage as AcpUsage
+
+    payload: dict[str, Any] = {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+    }
+    if thought_tokens:
+        payload["thought_tokens"] = thought_tokens
+    if cached_read_tokens:
+        payload["cached_read_tokens"] = cached_read_tokens
+    if cached_write_tokens:
+        payload["cached_write_tokens"] = cached_write_tokens
+    return AcpUsage(**payload)
+
+
 async def _create_state(project_dir: str | None = None) -> server_mod.ServerState:
     resolved_project_dir = str(Path(project_dir or Path.cwd()).resolve())
     config = load_config(resolved_project_dir)
@@ -185,9 +214,6 @@ async def run_acp() -> None:
             SetSessionModeResponse,
             ToolCallLocation,
             UsageUpdate,
-        )
-        from acp.schema import (
-            Usage as AcpUsage,
         )
     except ImportError as exc:
         raise RuntimeError(
@@ -509,11 +535,15 @@ async def run_acp() -> None:
             runtime.allow_all = mode_id == "code"
             await self._conn.session_update(
                 session_id=session_id,
-                update=CurrentModeUpdate(current_mode_id=mode_id),
+                update=CurrentModeUpdate(
+                    session_update="current_mode_update",
+                    current_mode_id=mode_id,
+                ),
             )
             await self._conn.session_update(
                 session_id=session_id,
                 update=ConfigOptionUpdate(
+                    session_update="config_option_update",
                     config_options=await self._session_config_options(session_id),
                 ),
             )
@@ -531,6 +561,7 @@ async def run_acp() -> None:
             await self._conn.session_update(
                 session_id=session_id,
                 update=ConfigOptionUpdate(
+                    session_update="config_option_update",
                     config_options=await self._session_config_options(session_id),
                 ),
             )
@@ -554,6 +585,7 @@ async def run_acp() -> None:
                 await self._conn.session_update(
                     session_id=session_id,
                     update=ConfigOptionUpdate(
+                        session_update="config_option_update",
                         config_options=await self._session_config_options(session_id),
                     ),
                 )
@@ -685,6 +717,7 @@ async def run_acp() -> None:
                         await self._conn.session_update(
                             session_id=session_id,
                             update=SessionInfoUpdate(
+                                session_update="session_info_update",
                                 title=generated_title,
                                 updated_at=_iso_timestamp(
                                     str(updated_serialized.get("updated_at", "")).strip() or None
@@ -696,6 +729,7 @@ async def run_acp() -> None:
                     await self._conn.session_update(
                         session_id=session_id,
                         update=SessionInfoUpdate(
+                            session_update="session_info_update",
                             title=updated_title,
                             updated_at=_iso_timestamp(
                                 str(session_info.get("updated_at", "")).strip() or None
@@ -708,16 +742,14 @@ async def run_acp() -> None:
                     await self._conn.session_update(
                         session_id=session_id,
                         update=UsageUpdate(
+                            session_update="usage_update",
                             used=session._estimate_tokens(),
                             size=context_size,
                         ),
                     )
                     return PromptResponse(
                         stop_reason=stop_reason,
-                        usage=AcpUsage(
-                            input_tokens=final_usage.input_tokens,
-                            output_tokens=final_usage.output_tokens,
-                        ),
+                        usage=_acp_usage_payload(final_usage),
                     )
                 return PromptResponse(stop_reason=stop_reason)
 

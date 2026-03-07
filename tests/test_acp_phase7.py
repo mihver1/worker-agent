@@ -331,6 +331,13 @@ def _event(event_type: Any, **kwargs: Any) -> Any:
     defaults.update(kwargs)
     return SimpleNamespace(type=event_type, **defaults)
 
+def _config_option_current_value(config_options: list[Any], option_id: str) -> Any:
+    for option in config_options:
+        root = getattr(option, "root", option)
+        if getattr(root, "id", None) == option_id:
+            return getattr(root, "current_value", None)
+    return None
+
 
 @pytest.mark.asyncio
 async def test_run_acp_scopes_workspace_and_updates_config(monkeypatch, tmp_path):
@@ -373,7 +380,22 @@ async def test_run_acp_scopes_workspace_and_updates_config(monkeypatch, tmp_path
     assert [item.session_id for item in captured["list_sessions"].sessions] == [session_id]
     assert captured["load_session"].models.current_model_id == "mock/mock-model"
     updates = [update for _, update in captured["conn"].updates]
-    assert any(getattr(update, "current_mode_id", "") == "code" for update in updates)
+    assert any(
+        getattr(update, "session_update", "") == "current_mode_update"
+        and getattr(update, "current_mode_id", "") == "code"
+        for update in updates
+        if not isinstance(update, dict)
+    )
+    assert any(
+        getattr(update, "session_update", "") == "config_option_update"
+        and _config_option_current_value(
+            getattr(update, "config_options", []),
+            "thinking",
+        )
+        == "high"
+        for update in updates
+        if not isinstance(update, dict)
+    )
 
 
 @pytest.mark.asyncio
@@ -427,7 +449,13 @@ async def test_run_acp_prompt_streams_updates_and_permission_requests(
             )
             yield _event(
                 server_mod.AgentEventType.DONE,
-                usage=SimpleNamespace(input_tokens=3, output_tokens=2),
+                usage=SimpleNamespace(
+                    input_tokens=3,
+                    output_tokens=2,
+                    reasoning_tokens=7,
+                    cache_read_tokens=11,
+                    cache_write_tokens=13,
+                ),
             )
 
         async def generate_title(self, content: str) -> str:
@@ -470,6 +498,10 @@ async def test_run_acp_prompt_streams_updates_and_permission_requests(
     assert response.stop_reason == "end_turn"
     assert response.usage.input_tokens == 3
     assert response.usage.output_tokens == 2
+    assert response.usage.thought_tokens == 7
+    assert response.usage.cached_read_tokens == 11
+    assert response.usage.cached_write_tokens == 13
+    assert response.usage.total_tokens == 36
     assert captured["conn"].permission_requests == [
         {
             "session_id": session_id,
@@ -518,7 +550,15 @@ async def test_run_acp_prompt_streams_updates_and_permission_requests(
         if not isinstance(update, dict)
     )
     assert any(
-        getattr(update, "used", None) == 12 and getattr(update, "size", None) == 100
+        getattr(update, "session_update", "") == "session_info_update"
+        and getattr(update, "title", "") == "Prompt title"
+        for update in updates
+        if not isinstance(update, dict)
+    )
+    assert any(
+        getattr(update, "session_update", "") == "usage_update"
+        and getattr(update, "used", None) == 12
+        and getattr(update, "size", None) == 100
         for update in updates
         if not isinstance(update, dict)
     )
