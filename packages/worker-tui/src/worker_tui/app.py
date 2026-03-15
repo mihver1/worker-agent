@@ -72,6 +72,7 @@ from worker_core.provider_resolver import (
     get_provider_config,
     get_provider_env_vars,
 )
+from worker_core.git_surface import render_git_diff, render_git_help, render_git_status, restore_all, restore_path
 from worker_core.rules import (
     SessionRuleOverrides,
     add_rule,
@@ -2812,6 +2813,10 @@ class WorkerApp(App):
                 "  /agents [subcmd]    — alias for /delegates\n"
                 "  /mcp [reload]       — show MCP status or reload MCP connections\n"
                 "  /schedules [subcmd] — list/run/reload scheduled tasks on the active server\n"
+                "  /git [subcmd]       — first-class git status/diff/rollback helpers\n"
+                "  /status             — alias for /git status\n"
+                "  /diff [path]        — alias for /git diff [path]\n"
+                "  /rollback <path>    — restore one file (or --all)\n"
                 "  /wt [branch]        — manage git worktrees for the current repository\n"
                 "  /tasks              — show the shared task board\n"
                 "  /task-add <title>   — add a task to the shared task board\n"
@@ -2916,6 +2921,8 @@ class WorkerApp(App):
             await self._cmd_mcp(arg)
         elif cmd == "/schedules":
             await self._cmd_schedules(arg)
+        elif cmd in {"/git", "/status", "/diff", "/rollback"}:
+            await self._cmd_git(cmd, arg)
         elif cmd == "/wt":
             await self._cmd_wt(arg)
         elif cmd == "/tasks":
@@ -5086,6 +5093,81 @@ class WorkerApp(App):
             self._add_message(output or "(no output)", role="tool")
         except Exception as exc:
             self._add_message(f"mcp error: {exc}", role="error")
+
+    async def _cmd_git(self, cmd: str, arg: str) -> None:
+        subcmd = cmd
+        subarg = arg.strip()
+        if cmd == "/status":
+            subcmd = "/git"
+            subarg = "status"
+        elif cmd == "/diff":
+            subcmd = "/git"
+            subarg = f"diff {subarg}".strip()
+        elif cmd == "/rollback":
+            subcmd = "/git"
+            subarg = f"rollback {subarg}".strip()
+
+        parts = subarg.split(maxsplit=1) if subarg else []
+        action = parts[0].lower() if parts else "status"
+        rest = parts[1].strip() if len(parts) > 1 else ""
+
+        if self.remote_url:
+            try:
+                if action in {"", "status", "help"}:
+                    if action == "help":
+                        self._add_message(render_git_help(), role="tool")
+                        return
+                    payload = await self._remote_control().run_bash(self._remote_session_id, "git status --short --branch")
+                    output = str(payload.get("output", "") or "")
+                    rendered = "Git status: clean working tree." if not output.strip() else output
+                    self._add_message(rendered if rendered.startswith("Git status") else f"Git status\n\n{rendered}", role="tool")
+                    return
+                if action == "diff":
+                    command = f"git diff -- {rest}" if rest else "git diff"
+                    payload = await self._remote_control().run_bash(self._remote_session_id, command)
+                    output = str(payload.get("output", "") or "")
+                    target = rest or "working tree"
+                    rendered = f"No unstaged diff for {target}." if not output.strip() else f"Git diff: {target}\n\n```diff\n{output}\n```"
+                    self._add_message(rendered, role="tool")
+                    return
+                if action == "rollback":
+                    if rest == "--all":
+                        payload = await self._remote_control().run_bash(self._remote_session_id, "git restore .")
+                        if int(payload.get("exit_code", 0)) == 0:
+                            self._add_message("Restored all unstaged changes.", role="tool")
+                        else:
+                            self._add_message(str(payload.get("output", "") or "git restore failed"), role="error")
+                        return
+                    if not rest:
+                        self._add_message("Usage: /rollback <path> | /rollback --all", role="error")
+                        return
+                    payload = await self._remote_control().run_bash(self._remote_session_id, f"git restore -- {rest}")
+                    if int(payload.get("exit_code", 0)) == 0:
+                        self._add_message(f"Restored: {rest}", role="tool")
+                    else:
+                        self._add_message(str(payload.get("output", "") or "git restore failed"), role="error")
+                    return
+                self._add_message(render_git_help(), role="tool")
+            except Exception as exc:
+                self._add_message(f"git error: {exc}", role="error")
+            return
+
+        cwd = os.getcwd()
+        if action in {"", "status"}:
+            self._add_message(render_git_status(cwd=cwd), role="tool")
+            return
+        if action == "diff":
+            self._add_message(render_git_diff(cwd=cwd, pathspec=rest), role="tool")
+            return
+        if action == "rollback":
+            if rest == "--all":
+                self._add_message(restore_all(cwd=cwd), role="tool")
+                return
+            message = restore_path(cwd=cwd, pathspec=rest)
+            role = "error" if message.startswith("Usage:") or message.startswith("git restore failed:") else "tool"
+            self._add_message(message, role=role)
+            return
+        self._add_message(render_git_help(), role="tool")
 
     async def _cmd_wt(self, arg: str) -> None:
         """Manage git worktrees for the current project."""
