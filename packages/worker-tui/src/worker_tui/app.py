@@ -729,6 +729,7 @@ class ToolCard(Static):
         display: dict[str, Any] | None = None,
         kind: str = "text",
         status_badge: str = "",
+        status_variant: str = "neutral",
     ) -> None:
         self._result_title = title
         self._result_body = body
