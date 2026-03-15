@@ -64,3 +64,46 @@ async def test_tool_card_composes_result_row_with_status_variant():
         assert card.query_one(".tool-message-result-row") is not None
         assert card.query_one(".tool-message-result-title") is not None
         assert card.query_one(".tool-message-badge-success") is not None
+
+
+@pytest.mark.asyncio
+async def test_tool_card_result_row_stays_compact_inside_collapsible():
+    from textual.app import App, ComposeResult
+    from textual.containers import Vertical, VerticalScroll
+    from textual.widgets import Collapsible
+
+    from worker_tui.app import ToolCard
+
+    class TestApp(App[None]):
+        CSS = """
+        #chat-scroll {
+            height: 1fr;
+        }
+        #chat-container {
+            height: auto;
+        }
+        """
+
+        def compose(self) -> ComposeResult:
+            with VerticalScroll(id="chat-scroll"):
+                with Vertical(id="chat-container"):
+                    yield Collapsible(
+                        ToolCard(
+                            "⚙ ripgrep",
+                            "pattern='undo/rewind', path='tests', glob_pattern='*.py', max_results='80'",
+                            result_title="✓ ripgrep",
+                            result_status_badge="0 matches",
+                        ),
+                        title="⚙ ripgrep",
+                        collapsed=False,
+                    )
+
+    app = TestApp()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = app.query_one(ToolCard)
+        row = card.query_one(".tool-message-result-row")
+
+        assert row.outer_size.height == 1
+        assert card.outer_size.height <= 4

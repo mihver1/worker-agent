@@ -13,7 +13,7 @@ Artel supports source-based development installs and a bootstrap installer for e
 Use this path if you want to work on the repository itself or run the latest checkout directly.
 
 ```bash
-git clone git@github.com:mihver1/worker-agent.git artel-agent
+git clone git@github.com:mihver1/artel.git artel-agent
 cd artel-agent
 uv sync
 artel init
@@ -31,7 +31,7 @@ uv run artel --help
 Use the installer if you want a self-contained local installation without managing the repository manually.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mihver1/worker-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mihver1/artel/main/install.sh | bash
 ```
 
 The installer will:

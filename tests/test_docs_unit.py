@@ -49,6 +49,7 @@ def test_mkdocs_nav_references_existing_pages() -> None:
         "providers.md",
         "extensions.md",
         "cli.md",
+        "web.md",
     }
     assert expected_pages.issubset(set(referenced_pages))
 

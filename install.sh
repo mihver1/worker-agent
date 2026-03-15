@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────
 #  Artel — installer
-#  Usage:  curl -fsSL https://raw.githubusercontent.com/mihver1/worker-agent/main/install.sh | bash
+#  Usage:  curl -fsSL https://raw.githubusercontent.com/mihver1/artel/main/install.sh | bash
 # ─────────────────────────────────────────────────────────
 set -euo pipefail
 
 # ── Defaults ──────────────────────────────────────────────
-REPO="https://github.com/mihver1/worker-agent.git"
+REPO="https://github.com/mihver1/artel.git"
 BRANCH="main"
 INSTALL_DIR="${ARTEL_INSTALL_DIR:-${WORKER_INSTALL_DIR:-$HOME/.local/share/artel-agent}}"
 BIN_DIR="${ARTEL_BIN_DIR:-${WORKER_BIN_DIR:-$HOME/.local/bin}}"
@@ -242,7 +242,7 @@ echo "    artel                     # interactive TUI"
 echo "    artel init                # reconfigure"
 echo ""
 echo "  Update:"
-echo "    curl -fsSL https://raw.githubusercontent.com/mihver1/worker-agent/main/install.sh | bash"
+echo "    curl -fsSL https://raw.githubusercontent.com/mihver1/artel/main/install.sh | bash"
 echo ""
 echo "  Uninstall:"
 echo "    rm -rf $INSTALL_DIR $ARTEL_WRAPPER $LEGACY_WRAPPER"

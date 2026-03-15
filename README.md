@@ -6,7 +6,7 @@ Extensible Python coding agent for local development, remote execution, and serv
 
 User-facing documentation is published on GitHub Pages:
 
-- [Artel documentation](https://mihver1.github.io/worker-agent/)
+- [Artel documentation](https://mihver1.github.io/artel/)
 
 Preview the docs locally:
 
@@ -34,7 +34,7 @@ uv run mkdocs serve
 uv sync
 
 # Or use the bootstrap installer
-curl -fsSL https://raw.githubusercontent.com/mihver1/worker-agent/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mihver1/artel/main/install.sh | bash
 
 # Initialize config
 artel init

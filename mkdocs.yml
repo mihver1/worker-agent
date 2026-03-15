@@ -1,7 +1,7 @@
 site_name: Artel
 site_description: Extensible Python coding agent for local, remote, and server-based workflows.
-site_url: https://mihver1.github.io/worker-agent/
-repo_url: https://github.com/mihver1/worker-agent
+site_url: https://mihver1.github.io/artel/
+repo_url: https://github.com/mihver1/artel
 repo_name: Artel source
 edit_uri: edit/main/docs/
 theme:
@@ -61,3 +61,4 @@ nav:
       - Extensions: extensions.md
   - Reference:
       - CLI: cli.md
+      - Web status: web.md

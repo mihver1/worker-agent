@@ -2685,6 +2685,15 @@ class TestRemoteModeCommandRouting:
                     }
                 }
 
+            async def list_session_commands(self, session_id: str):
+                return {"commands": []}
+
+            async def get_session_tasks(self, session_id: str):
+                return {"content": ""}
+
+            async def get_session_notes(self, session_id: str):
+                return {"content": ""}
+
             async def get_session_messages(self, session_id: str):
                 return {
                     "messages": [
@@ -2713,6 +2722,7 @@ class TestRemoteModeCommandRouting:
 
         app = WorkerApp(remote_url="ws://localhost:7432")
         app._remote_control_client = _RemoteClient()
+        app.run_worker = lambda *args, **kwargs: None  # type: ignore[method-assign]
         container = _Container()
         footer = _Footer()
         app.query_one = lambda selector, _cls=None: (  # type: ignore[method-assign]
@@ -2736,6 +2746,92 @@ class TestRemoteModeCommandRouting:
         ]
 
     @pytest.mark.asyncio
+    async def test_resume_command_restores_remote_tool_cards(self):
+        from worker_tui.app import WorkerApp
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                return {
+                    "session": {
+                        "id": session_id,
+                        "title": "Remote issue",
+                        "model": "openai/gpt-4.1",
+                        "project_dir": "/srv/project",
+                    }
+                }
+
+            async def list_session_commands(self, session_id: str):
+                return {"commands": []}
+
+            async def get_session_tasks(self, session_id: str):
+                return {"content": ""}
+
+            async def get_session_notes(self, session_id: str):
+                return {"content": ""}
+
+            async def get_session_messages(self, session_id: str):
+                return {
+                    "messages": [
+                        {"role": "user", "content": "hello"},
+                        {
+                            "role": "assistant",
+                            "content": "I'll inspect that",
+                            "tool_calls": [
+                                {"id": "tc1", "name": "read", "arguments": {"path": "README.md"}},
+                            ],
+                        },
+                        {
+                            "role": "tool",
+                            "tool_result": {"tool_call_id": "tc1", "content": "1|# Title", "is_error": False},
+                        },
+                    ]
+                }
+
+        class _Container:
+            def remove_children(self) -> None:
+                pass
+
+        class _Footer:
+            def set_model(self, model: str) -> None:
+                pass
+
+            def set_cwd(self, cwd: str) -> None:
+                pass
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        app._active_tool_cards = {}
+        app._tool_call_names = {}
+        app.run_worker = lambda *args, **kwargs: None  # type: ignore[method-assign]
+        container = _Container()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: (  # type: ignore[method-assign]
+            container if selector == "#chat-container" else footer
+        )
+        seen_messages: list[tuple[str, str]] = []
+        started_tool_cards: list[tuple[str, str, str]] = []
+        finished_tool_cards: list[tuple[str, str, str]] = []
+        app._add_message = (  # type: ignore[method-assign]
+            lambda content, role="assistant": seen_messages.append((content, role))
+        )
+        app._start_tool_card = (  # type: ignore[method-assign]
+            lambda call_id, *, title, body="": started_tool_cards.append((call_id, title, body))
+        )
+        app._finish_tool_card = (  # type: ignore[method-assign]
+            lambda call_id, *, title, body, markdown=False, display=None, kind="text", status_badge="", status_variant="neutral": finished_tool_cards.append((call_id, title, body))
+        )
+
+        await app._cmd_resume("remote-1")
+
+        assert seen_messages == [
+            ("hello", "user"),
+            ("I'll inspect that", "assistant"),
+            ("Resumed remote session: Remote issue", "tool"),
+        ]
+        assert started_tool_cards == [("tc1", "⚙ read README.md", "")]
+        assert finished_tool_cards == [("tc1", "✓ read", "1|# Title")]
+
+    @pytest.mark.asyncio
     async def test_resume_command_restores_remote_reasoning_blocks(self):
         from worker_tui.app import WorkerApp
 
@@ -2749,6 +2845,15 @@ class TestRemoteModeCommandRouting:
                         "project_dir": "/srv/project",
                     }
                 }
+
+            async def list_session_commands(self, session_id: str):
+                return {"commands": []}
+
+            async def get_session_tasks(self, session_id: str):
+                return {"content": ""}
+
+            async def get_session_notes(self, session_id: str):
+                return {"content": ""}
 
             async def get_session_messages(self, session_id: str):
                 return {
@@ -2775,6 +2880,7 @@ class TestRemoteModeCommandRouting:
 
         app = WorkerApp(remote_url="ws://localhost:7432")
         app._remote_control_client = _RemoteClient()
+        app.run_worker = lambda *args, **kwargs: None  # type: ignore[method-assign]
         container = _Container()
         footer = _Footer()
         app.query_one = lambda selector, _cls=None: (  # type: ignore[method-assign]
@@ -2850,6 +2956,76 @@ class TestRemoteModeCommandRouting:
             ("world", "assistant"),
             ("Resumed session: Local issue", "tool"),
         ]
+
+    @pytest.mark.asyncio
+    async def test_resume_command_restores_local_tool_cards(self, tmp_path):
+        from worker_ai.models import Message, Role, ToolCall, ToolResult
+        from worker_core.sessions import SessionStore
+        from worker_tui.app import WorkerApp
+
+        class _Container:
+            def remove_children(self) -> None:
+                pass
+
+        class _Session:
+            def __init__(self):
+                self.session_id = "current-session"
+                self.messages = [Message(role=Role.SYSTEM, content="system")]
+                self.thinking_level = "off"
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            await store.create_session("local-1", "openai/gpt-4.1", title="Local issue")
+            await store.add_message("local-1", Message(role=Role.USER, content="hello"))
+            await store.add_message(
+                "local-1",
+                Message(
+                    role=Role.ASSISTANT,
+                    content="I'll inspect that",
+                    tool_calls=[ToolCall(id="tc1", name="read", arguments={"path": "README.md"})],
+                ),
+            )
+            await store.add_message(
+                "local-1",
+                Message(
+                    role=Role.TOOL,
+                    tool_result=ToolResult(tool_call_id="tc1", content="1|# Title", is_error=False),
+                ),
+            )
+
+            app = WorkerApp()
+            app._store = store
+            app._session = _Session()
+            app._provider_model = "openai/gpt-4.1"
+            app._tool_collapsibles = []
+            app._active_tool_cards = {}
+            container = _Container()
+            app.query_one = lambda selector, _cls=None: container  # type: ignore[method-assign]
+            seen_messages: list[tuple[str, str]] = []
+            started_tool_cards: list[tuple[str, str, str]] = []
+            finished_tool_cards: list[tuple[str, str, str]] = []
+            app._add_message = (  # type: ignore[method-assign]
+                lambda content, role="assistant": seen_messages.append((content, role))
+            )
+            app._start_tool_card = (  # type: ignore[method-assign]
+                lambda call_id, *, title, body="": started_tool_cards.append((call_id, title, body))
+            )
+            app._finish_tool_card = (  # type: ignore[method-assign]
+                lambda call_id, *, title, body, markdown=False, display=None, kind="text", status_badge="", status_variant="neutral": finished_tool_cards.append((call_id, title, body))
+            )
+
+            await app._resume_session("local-1")
+        finally:
+            await store.close()
+
+        assert seen_messages == [
+            ("hello", "user"),
+            ("I'll inspect that", "assistant"),
+            ("Resumed session: Local issue", "tool"),
+        ]
+        assert started_tool_cards == [("tc1", "⚙ read README.md", "")]
+        assert finished_tool_cards == [("tc1", "✓ read", "1|# Title")]
 
     @pytest.mark.asyncio
     async def test_resume_command_restores_local_thinking_level(self, tmp_path):

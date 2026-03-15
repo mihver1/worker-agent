@@ -20,8 +20,12 @@ from pathlib import Path
 from types import MethodType
 from typing import Any
 
+from pygments.lexers import TextLexer, get_lexer_for_filename, guess_lexer, guess_lexer_for_filename
+from pygments.util import ClassNotFound
 import worker_core.cmux as cmux
 from rich.markdown import Markdown
+from rich.syntax import Syntax
+from rich.table import Table
 from rich.text import Text
 from textual import events, work
 from textual.timer import Timer
@@ -133,6 +137,8 @@ _RU_QWERTY_KEY_ALIASES: dict[str, str] = {
     ".": "ю",
 }
 
+_DIFF_SYNTAX_THEME = "ansi_dark"
+
 
 def _layout_safe_binding_variants(key: str) -> list[str]:
     """Return layout aliases for a Textual key string when possible."""
@@ -150,6 +156,86 @@ def _layout_safe_binding_variants(key: str) -> list[str]:
     if variant == normalized:
         return []
     return [variant]
+
+
+def _diff_metadata_style(line: str) -> str:
+    if line.startswith("+++"):
+        return "bold green"
+    if line.startswith("---"):
+        return "bold red"
+    if line.startswith("@@"):
+        return "bold cyan"
+    if line.startswith("diff --git"):
+        return "bold magenta"
+    if line.startswith("index "):
+        return "dim"
+    return "dim"
+
+
+def _diff_prefix_style(prefix: str) -> str:
+    if prefix == "+":
+        return "bold green"
+    if prefix == "-":
+        return "bold red"
+    return "dim"
+
+
+def _resolve_diff_lexer(path: str, diff_text: str) -> Any:
+    sample_lines: list[str] = []
+    for line in diff_text.splitlines():
+        if line == "…" or line.startswith(("diff --git", "index ", "@@", "---", "+++")):
+            continue
+        if line and line[0] in {"+", "-", " "}:
+            sample_lines.append(line[1:])
+        else:
+            sample_lines.append(line)
+        if len(sample_lines) >= 40:
+            break
+
+    sample = "\n".join(sample_lines).strip()
+    normalized_path = str(path or "").strip()
+
+    if normalized_path and sample:
+        with suppress(ClassNotFound):
+            return guess_lexer_for_filename(normalized_path, sample)
+    if normalized_path:
+        with suppress(ClassNotFound):
+            return get_lexer_for_filename(normalized_path)
+    if sample:
+        with suppress(ClassNotFound):
+            return guess_lexer(sample)
+    return TextLexer()
+
+
+def _build_syntax_highlighted_diff(path: str, diff_text: str) -> Table:
+    lexer = _resolve_diff_lexer(path, diff_text)
+    table = Table.grid(expand=True, padding=(0, 1))
+    table.add_column(width=1, no_wrap=True)
+    table.add_column(ratio=1)
+
+    for line in diff_text.splitlines() or [""]:
+        if not line:
+            table.add_row(Text(" "), Text(""))
+            continue
+        if line == "…" or line.startswith(("diff --git", "index ", "@@", "---", "+++")):
+            table.add_row(Text(" "), Text(line, style=_diff_metadata_style(line)))
+            continue
+        prefix = line[0]
+        if prefix in {"+", "-", " "}:
+            table.add_row(
+                Text(prefix, style=_diff_prefix_style(prefix)),
+                Syntax(
+                    line[1:] or " ",
+                    lexer,
+                    theme=_DIFF_SYNTAX_THEME,
+                    word_wrap=True,
+                    background_color="default",
+                ),
+            )
+            continue
+        table.add_row(Text(" "), Text(line))
+
+    return table
 
 
 class ComposerTextArea(TextArea):
@@ -566,6 +652,7 @@ class MessageWidget(Static):
     }
     .tool-message-result-row {
         margin-top: 1;
+        height: auto;
     }
     .tool-message-result-title {
         color: $success;
@@ -586,6 +673,9 @@ class MessageWidget(Static):
     .tool-diff-stats {
         color: $text-muted;
         margin-bottom: 1;
+    }
+    .tool-diff-body {
+        color: $text;
     }
     .error-message {
         background: $error 20%;
@@ -679,7 +769,6 @@ class DiffWidget(Static):
         self._path = path
         self._stats = stats
         self._diff_text = diff_text
-        self._markdown: MarkdownWidget | None = None
         self.add_class("tool-message")
 
     def compose(self) -> ComposeResult:
@@ -687,12 +776,20 @@ class DiffWidget(Static):
         if self._stats:
             yield Static(self._stats, classes="tool-diff-stats")
         if self._diff_text:
-            self._markdown = MarkdownWidget(f"```diff\n{self._diff_text}\n```")
-            yield self._markdown
+            yield Static(
+                _build_syntax_highlighted_diff(self._path, self._diff_text),
+                classes="tool-diff-body",
+            )
 
 
 class ToolCard(Static):
     """Single card representing a tool call and its eventual result."""
+
+    DEFAULT_CSS = """
+    ToolCard > .tool-message-result-row {
+        height: auto;
+    }
+    """
 
     def __init__(
         self,
@@ -1232,6 +1329,7 @@ class WorkerApp(App):
         self._local_rule_overrides = SessionRuleOverrides.empty()
         self._tool_collapsibles: list[Collapsible] = []
         self._active_tool_cards: dict[str, ToolCard] = {}
+        self._tool_call_names: dict[str, str] = {}
         self._input_price: float = 0.0  # per 1M tokens
         self._output_price: float = 0.0
         self._auto_approve_all: bool = False
@@ -2634,6 +2732,7 @@ class WorkerApp(App):
             self._session.thinking_level = resumed_info.thinking_level  # type: ignore[assignment]
 
         # Restore prior messages and display them
+        self._tool_call_names.clear()
         if prior_messages:
             self._session.messages.extend(prior_messages)
             for msg in prior_messages:
@@ -2642,6 +2741,7 @@ class WorkerApp(App):
                     content=msg.content,
                     reasoning=msg.reasoning or "",
                     attachments=msg.attachments,
+                    tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls] if msg.tool_calls else None,
                     tool_result=msg.tool_result.model_dump() if msg.tool_result is not None else None,
                 )
 
@@ -4220,6 +4320,8 @@ class WorkerApp(App):
         container = self.query_one("#chat-container", Vertical)
         container.remove_children()
         self._tool_collapsibles.clear()
+        self._active_tool_cards.clear()
+        self._tool_call_names.clear()
 
         for message in messages_payload.get("messages", []):
             role = str(message.get("role", ""))
@@ -4240,6 +4342,7 @@ class WorkerApp(App):
                 content=content,
                 reasoning=reasoning,
                 attachments=attachments or None,
+                tool_calls=message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else None,
                 tool_result=message.get("tool_result") if isinstance(message.get("tool_result"), dict) else None,
             )
 
@@ -4313,6 +4416,7 @@ class WorkerApp(App):
         container.remove_children()
         self._tool_collapsibles.clear()
         self._active_tool_cards.clear()
+        self._tool_call_names.clear()
 
         # Update session
         self._session.session_id = session_id
@@ -4329,6 +4433,7 @@ class WorkerApp(App):
                 content=msg.content,
                 reasoning=msg.reasoning or "",
                 attachments=msg.attachments,
+                tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls] if msg.tool_calls else None,
                 tool_result=msg.tool_result.model_dump() if msg.tool_result is not None else None,
             )
 
@@ -5400,6 +5505,9 @@ class WorkerApp(App):
         container.mount(collapsible)
         self._tool_collapsibles.append(collapsible)
         self._active_tool_cards[call_id] = widget
+        normalized_title = title[2:].strip() if title.startswith("⚙ ") else title.strip()
+        tool_name = normalized_title.split(" ", 1)[0] if normalized_title else "tool"
+        self._tool_call_names[call_id] = tool_name or "tool"
         self._scroll_to_bottom()
         return widget
 
@@ -5452,6 +5560,7 @@ class WorkerApp(App):
         content: str,
         reasoning: str = "",
         attachments: list[ImageAttachment] | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
         tool_result: dict[str, Any] | None = None,
     ) -> None:
         rendered = self._render_user_submission(content, attachments) if role == Role.USER.value else content
@@ -5462,12 +5571,30 @@ class WorkerApp(App):
                 self._add_reasoning_block(reasoning)
             if rendered:
                 self._add_message(rendered, role="assistant")
+            if tool_calls:
+                for tool_call in tool_calls:
+                    if not isinstance(tool_call, dict):
+                        continue
+                    tool_name = str(tool_call.get("name", "") or "tool").strip() or "tool"
+                    tool_args = tool_call.get("arguments")
+                    if not isinstance(tool_args, dict):
+                        tool_args = {}
+                    tool_call_id = str(tool_call.get("id", "") or uuid.uuid4())
+                    tool_display = format_tool_call_display(tool_name, tool_args)
+                    self._tool_call_names[tool_call_id] = tool_name
+                    self._start_tool_card(
+                        tool_call_id,
+                        title=tool_display.title,
+                        body=tool_display.body,
+                    )
         elif role == Role.SYSTEM.value and rendered:
             self._add_message("📋 [Restored session]", role="tool")
         elif role == Role.TOOL.value:
             if tool_result:
+                tool_call_id = str(tool_result.get("tool_call_id", "") or "")
+                matched_tool_name = self._tool_call_names.get(tool_call_id, "tool")
                 result_display = format_tool_result_display(
-                    tool_name="tool",
+                    tool_name=matched_tool_name,
                     content=str(tool_result.get("content", "") or content),
                     is_error=bool(tool_result.get("is_error", False)),
                     display=tool_result.get("display") if isinstance(tool_result.get("display"), dict) else None,

@@ -121,7 +121,7 @@ For now, the practical guidance is:
 Once the VS Code ACP extension adds generic custom command registration or built-in Artel detection, the Artel side of the setup should still be the same command:
 
 ```bash
-worker acp
+artel acp
 ```
 
 ## Notes and limitations
