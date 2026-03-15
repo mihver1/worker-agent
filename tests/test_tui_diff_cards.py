@@ -58,3 +58,13 @@ async def test_diff_widget_renders_syntax_highlighted_body():
 
         assert isinstance(body.visual, RichVisual)
         assert isinstance(body.visual._renderable, Table)
+
+
+def test_highlight_diff_code_text_does_not_force_black_background():
+    from worker_tui.app import _highlight_diff_code_text, _resolve_diff_lexer
+
+    lexer = _resolve_diff_lexer("demo.py", "+def foo():\n")
+    text = _highlight_diff_code_text("def foo():", lexer)
+
+    assert text.spans
+    assert all(span.style.bgcolor is None for span in text.spans if span.style is not None)
