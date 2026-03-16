@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from textual.containers import VerticalScroll
 
 
 def test_rendered_write_tool_result_uses_diff_markdown():
@@ -10,7 +11,9 @@ def test_rendered_write_tool_result_uses_diff_markdown():
         tool_name="write",
         content="Created 1 lines to /tmp/demo.py",
         is_error=False,
-        display=build_file_diff_display(tool_name="write", path="demo.py", before="", after="print(1)\n"),
+        display=build_file_diff_display(
+            tool_name="write", path="demo.py", before="", after="print(1)\n"
+        ),
     )
 
     assert display.title == "demo.py"
@@ -42,7 +45,6 @@ def test_tool_card_set_result_accepts_status_variant():
 @pytest.mark.asyncio
 async def test_tool_card_composes_result_row_with_status_variant():
     from textual.app import App, ComposeResult
-
     from worker_tui.app import ToolCard
 
     class TestApp(App[None]):
@@ -69,9 +71,8 @@ async def test_tool_card_composes_result_row_with_status_variant():
 @pytest.mark.asyncio
 async def test_tool_card_result_row_stays_compact_inside_collapsible():
     from textual.app import App, ComposeResult
-    from textual.containers import Vertical, VerticalScroll
+    from textual.containers import Vertical
     from textual.widgets import Collapsible
-
     from worker_tui.app import ToolCard
 
     class TestApp(App[None]):
@@ -85,18 +86,18 @@ async def test_tool_card_result_row_stays_compact_inside_collapsible():
         """
 
         def compose(self) -> ComposeResult:
-            with VerticalScroll(id="chat-scroll"):
-                with Vertical(id="chat-container"):
-                    yield Collapsible(
-                        ToolCard(
-                            "⚙ ripgrep",
-                            "pattern='undo/rewind', path='tests', glob_pattern='*.py', max_results='80'",
-                            result_title="✓ ripgrep",
-                            result_status_badge="0 matches",
-                        ),
-                        title="⚙ ripgrep",
-                        collapsed=False,
-                    )
+            with VerticalScroll(id="chat-scroll"), Vertical(id="chat-container"):
+                yield Collapsible(
+                    ToolCard(
+                        "⚙ ripgrep",
+                        "pattern='undo/rewind', path='tests', "
+                        "glob_pattern='*.py', max_results='80'",
+                        result_title="✓ ripgrep",
+                        result_status_badge="0 matches",
+                    ),
+                    title="⚙ ripgrep",
+                    collapsed=False,
+                )
 
     app = TestApp()
 
@@ -107,3 +108,78 @@ async def test_tool_card_result_row_stays_compact_inside_collapsible():
 
         assert row.outer_size.height == 1
         assert card.outer_size.height <= 4
+
+
+@pytest.mark.asyncio
+async def test_tool_card_uses_scrollable_container_for_long_result_body():
+    from textual.app import App, ComposeResult
+    from worker_tui.app import ToolCard
+
+    class TestApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ToolCard(
+                "⚙ shell pwd",
+                result_title="✓ shell",
+                result_body="\n".join(f"line {index}" for index in range(40)),
+            )
+
+    app = TestApp()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = app.query_one(ToolCard)
+        scroll = card.query_one(".tool-card-scroll", VerticalScroll)
+
+        assert scroll is not None
+
+
+@pytest.mark.asyncio
+async def test_tool_card_block_result_preserves_newlines_in_scrollable_body():
+    from textual.app import App, ComposeResult
+    from textual.widgets import Static
+    from worker_tui.app import ToolCard
+
+    class TestApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ToolCard(
+                "⚙ read demo.py",
+                result_title="✓ read demo.py",
+                result_body="1|alpha\n2|beta\n3|gamma",
+                result_kind="block",
+            )
+
+    app = TestApp()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        body = app.query_one(".tool-message-body", Static)
+        scroll = app.query_one(".tool-card-scroll", VerticalScroll)
+
+        assert scroll is not None
+        assert str(body.render()) == "1|alpha\n2|beta\n3|gamma"
+
+
+@pytest.mark.asyncio
+async def test_tool_card_body_treats_rich_text_repr_as_plain_text():
+    from textual.app import App, ComposeResult
+    from textual.widgets import Static
+    from worker_tui.app import ToolCard, _highlight_diff_code_text, _resolve_diff_lexer
+
+    lexer = _resolve_diff_lexer("demo.py", "+def foo():\n")
+    highlighted_repr = repr(_highlight_diff_code_text("def foo():", lexer))
+
+    class TestApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ToolCard(
+                "⚙ read demo.py",
+                result_title="✓ read demo.py",
+                result_body=highlighted_repr,
+            )
+
+    app = TestApp()
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        body = app.query_one(".tool-message-body", Static)
+
+        assert body is not None

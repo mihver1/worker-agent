@@ -8,6 +8,8 @@ from typing import Any
 
 _MAX_PREVIEW_LINES = 120
 _MAX_INLINE_CHARS = 160
+_MAX_BLOCK_CHARS = 12_000
+_BLOCK_PRESERVING_TOOLS = {"read", "bash", "grep", "ripgrep", "ag"}
 
 
 @dataclass(slots=True)
@@ -48,6 +50,22 @@ def _block_stats(label: str, text: str) -> str:
     lines = _line_count(text)
     chars = len(text)
     return f"{label}: {lines} line(s), {chars} char(s)"
+
+
+def _preserve_block(text: Any, *, limit: int = _MAX_BLOCK_CHARS) -> str:
+    normalized = str(text or "")
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: max(limit - len("\n… (truncated)"), 0)].rstrip() + "\n… (truncated)"
+
+
+def _tool_result_kind(tool_name: str, content: str) -> str:
+    normalized_tool = str(tool_name or "").strip().lower()
+    if normalized_tool in _BLOCK_PRESERVING_TOOLS:
+        return "block"
+    if "\n" in str(content or ""):
+        return "block"
+    return "text"
 
 
 def format_tool_call_display(tool_name: str, args: dict[str, Any]) -> ToolCallDisplay:
@@ -188,12 +206,13 @@ def format_tool_result_display(
     if path:
         title_parts.append(path)
     title = " ".join(part for part in title_parts if part).strip()
-    body = _inline(content, limit=400)
+    kind = _tool_result_kind(tool_name, content)
+    body = _preserve_block(content) if kind == "block" else _inline(content, limit=400)
     return ToolResultDisplay(
         title=title,
         body=body,
         markdown=False,
-        kind="text",
+        kind=kind,
         status_variant="error" if is_error else "success",
     )
 

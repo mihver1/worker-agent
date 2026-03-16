@@ -21,31 +21,33 @@ from pathlib import Path
 from types import MethodType
 from typing import Any
 
+import worker_core.cmux as cmux
 from pygments import lex
 from pygments.lexers import TextLexer, get_lexer_for_filename, guess_lexer, guess_lexer_for_filename
 from pygments.styles import get_style_by_name
 from pygments.util import ClassNotFound
-import worker_core.cmux as cmux
 from rich.markdown import Markdown
 from rich.style import Style
 from rich.table import Table
 from rich.text import Text
 from textual import events, work
-from textual.timer import Timer
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.timer import Timer
 from textual.widgets import (
     Button,
     Collapsible,
     Footer,
     Header,
     Input,
-    Markdown as MarkdownWidget,
     OptionList,
     Static,
     TextArea,
+)
+from textual.widgets import (
+    Markdown as MarkdownWidget,
 )
 from textual.widgets.option_list import Option
 from worker_ai.attachments import is_supported_image_path, normalize_image_attachment
@@ -72,6 +74,14 @@ from worker_core.extensions import (
     load_tui_extensions_async,
     reload_tui_extensions_async,
 )
+from worker_core.git_surface import (
+    render_git_diff,
+    render_git_help,
+    render_git_status,
+    restore_all,
+    restore_path,
+    restore_paths,
+)
 from worker_core.prompts import load_prompts, render_prompt
 from worker_core.provider_resolver import (
     get_effective_model_info,
@@ -79,14 +89,11 @@ from worker_core.provider_resolver import (
     get_provider_config,
     get_provider_env_vars,
 )
-from worker_core.git_surface import render_git_diff, render_git_help, render_git_status, restore_all, restore_path, restore_paths
-from worker_core.session_rewind import collect_last_ai_changed_paths
 from worker_core.rules import (
     SessionRuleOverrides,
     add_rule,
     clear_session_rule_overrides,
     delete_rule,
-    deserialize_session_rule_overrides,
     effective_rule_state,
     get_rule,
     list_rules,
@@ -95,6 +102,7 @@ from worker_core.rules import (
     set_rule_enabled_for_session,
     update_rule,
 )
+from worker_core.session_rewind import collect_last_ai_changed_paths
 from worker_core.sessions import SessionStore
 from worker_core.skills import inject_skill, load_skills
 from worker_core.tool_display import format_tool_call_display, format_tool_result_display
@@ -103,7 +111,6 @@ from worker_core.tools.builtins import create_builtin_tools
 from worker_tui.credential_forwarding import collect_forward_credentials
 from worker_tui.local_server import restart_managed_local_server
 from worker_tui.remote_control import RemoteControlClient
-
 
 _RU_QWERTY_KEY_ALIASES: dict[str, str] = {
     "q": "й",
@@ -231,13 +238,18 @@ def _rich_style_for_token(theme_name: str, token_type: Any) -> Style | None:
 
 def _highlight_diff_code_text(code: str, lexer: Any) -> Text:
     highlighted = Text()
+    source = code or " "
     try:
-        for token_type, value in lex(code or " ", lexer):
+        for token_type, value in lex(source, lexer):
             if not value:
                 continue
+            if value.endswith("\n"):
+                value = value[:-1]
+                if not value:
+                    continue
             highlighted.append(value, style=_rich_style_for_token(_DIFF_PYGMENTS_STYLE, token_type))
     except Exception:
-        highlighted = Text(code or " ")
+        highlighted = Text(source.rstrip("\n") or " ")
     return highlighted if highlighted.plain else Text(" ")
 
 
@@ -447,6 +459,7 @@ def format_provider_setup_entries(entries: list[ProviderSetupEntry]) -> str:
     lines.append("Use /models to browse models after a provider is configured.")
     return "\n".join(lines)
 
+
 # ── Widgets ───────────────────────────────────────────────────────
 
 
@@ -459,6 +472,7 @@ class SlashCommandSuggestion:
     completion: str = ""
     search_text: str = ""
     current: bool = False
+
 
 @dataclass(slots=True)
 class PendingPermissionRequest:
@@ -508,7 +522,9 @@ BUILTIN_COMMAND_SUGGESTIONS: tuple[SlashCommandSuggestion, ...] = (
     SlashCommandSuggestion("/delegates", "show orchestrated delegated runs in the current window"),
     SlashCommandSuggestion("/agents", "legacy alias for /delegates"),
     SlashCommandSuggestion("/mcp", "show MCP config sources, connections, and errors"),
-    SlashCommandSuggestion("/schedules", "inspect and control scheduled tasks on the active server"),
+    SlashCommandSuggestion(
+        "/schedules", "inspect and control scheduled tasks on the active server"
+    ),
     SlashCommandSuggestion("/wt", "manage git worktrees for the current repository"),
     SlashCommandSuggestion("/tasks", "show the shared task board"),
     SlashCommandSuggestion("/task-add", "add a task to the shared task board"),
@@ -796,17 +812,30 @@ class MessageWidget(Static):
 class DiffWidget(Static):
     """Compact diff widget with stat header and diff body."""
 
-    def __init__(self, path: str, stats: str, diff_text: str, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        path: str,
+        stats: str,
+        diff_text: str,
+        *,
+        show_header: bool = True,
+        show_stats: bool = True,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._path = path
         self._stats = stats
         self._diff_text = diff_text
-        self.add_class("tool-message")
+        self._show_header = show_header
+        self._show_stats = show_stats
+        if self._show_header:
+            self.add_class("tool-message")
 
     def compose(self) -> ComposeResult:
-        yield Static(self._path, classes="tool-message-title")
-        if self._stats:
-            yield Static(self._stats, classes="tool-diff-stats")
+        if self._show_header:
+            yield Static(self._path, classes="tool-message-title", markup=False)
+        if self._show_stats and self._stats:
+            yield Static(self._stats, classes="tool-diff-stats", markup=False)
         if self._diff_text:
             yield Static(
                 _build_syntax_highlighted_diff(self._path, self._diff_text),
@@ -818,8 +847,26 @@ class ToolCard(Static):
     """Single card representing a tool call and its eventual result."""
 
     DEFAULT_CSS = """
+    ToolCard {
+        height: auto;
+    }
     ToolCard > .tool-message-result-row {
         height: auto;
+    }
+    .tool-card-scroll {
+        height: auto;
+        max-height: 16;
+        margin-top: 1;
+    }
+    .tool-card-scroll > Markdown {
+        background: transparent;
+        margin: 0;
+        padding: 0;
+    }
+    .tool-card-scroll > .tool-message-body,
+    .tool-card-scroll > DiffWidget,
+    .tool-card-scroll > .tool-diff-body {
+        margin-top: 0;
     }
     """
 
@@ -870,31 +917,54 @@ class ToolCard(Static):
         self.refresh(layout=True, recompose=True)
 
     def compose(self) -> ComposeResult:
-        yield Static(self._call_title, classes="tool-message-title")
+        yield Static(self._call_title, classes="tool-message-title", markup=False)
         if self._call_body:
-            yield Static(self._call_body, classes="tool-message-body")
+            with VerticalScroll(classes="tool-card-scroll"):
+                yield Static(self._call_body, classes="tool-message-body", markup=False)
         if self._result_title or self._result_status_badge:
             with Horizontal(classes="tool-message-result-row"):
                 if self._result_title:
-                    yield Static(self._result_title, classes="tool-message-result-title")
+                    yield Static(
+                        self._result_title,
+                        classes="tool-message-result-title",
+                        markup=False,
+                    )
                 if self._result_status_badge:
                     badge_classes = "tool-message-badge"
                     if self._result_status_variant == "success":
                         badge_classes += " tool-message-badge-success"
                     elif self._result_status_variant == "error":
                         badge_classes += " tool-message-badge-error"
-                    yield Static(self._result_status_badge, classes=badge_classes)
+                    yield Static(
+                        self._result_status_badge,
+                        classes=badge_classes,
+                        markup=False,
+                    )
         if self._result_kind == "file_diff":
-            yield DiffWidget(
-                str(self._result_title or self._result_display.get("path", "") if isinstance(self._result_display, dict) else self._result_title),
-                self._result_status_badge,
-                self._result_body,
-            )
+            with VerticalScroll(classes="tool-card-scroll"):
+                yield DiffWidget(
+                    str(
+                        self._result_title or self._result_display.get("path", "")
+                        if isinstance(self._result_display, dict)
+                        else self._result_title
+                    ),
+                    self._result_status_badge,
+                    self._result_body,
+                    show_header=False,
+                    show_stats=False,
+                )
         elif self._result_body:
-            if self._result_markdown:
-                yield MarkdownWidget(self._result_body)
-            else:
-                yield Static(self._result_body, classes="tool-message-body")
+            with VerticalScroll(classes="tool-card-scroll"):
+                if self._result_markdown:
+                    yield MarkdownWidget(self._result_body)
+                else:
+                    preserve_whitespace = self._result_kind == "block"
+                    yield Static(
+                        self._result_body,
+                        classes="tool-message-body",
+                        markup=False,
+                        expand=not preserve_whitespace,
+                    )
 
 
 class StatusFooter(Static):
@@ -943,7 +1013,7 @@ class StatusFooter(Static):
         cwd = self._cwd or os.getcwd()
         home = os.path.expanduser("~")
         if cwd.startswith(home):
-            cwd = "~" + cwd[len(home):]
+            cwd = "~" + cwd[len(home) :]
         parts.append(cwd)
         if self._in_cmux:
             parts.append("cmux")
@@ -959,8 +1029,7 @@ class StatusFooter(Static):
         self._total_input += input_tokens
         self._total_output += output_tokens
         self._total_cost += (
-            input_tokens * input_price / 1_000_000
-            + output_tokens * output_price / 1_000_000
+            input_tokens * input_price / 1_000_000 + output_tokens * output_price / 1_000_000
         )
         self.refresh()
 
@@ -1241,7 +1310,11 @@ class RuleEditorScreen(ModalScreen[dict[str, Any] | None]):
             yield Static(self._title, id="rule-editor-title")
             yield Static("Set scope, enter rule text, then save.", id="rule-editor-help")
             yield Input(value=self._scope, placeholder="project or global", id="rule-editor-scope")
-            yield Input(value="true" if self._enabled else "false", placeholder="true or false", id="rule-editor-enabled")
+            yield Input(
+                value="true" if self._enabled else "false",
+                placeholder="true or false",
+                id="rule-editor-enabled",
+            )
             yield TextArea(self._text, id="rule-editor-text")
             with Horizontal(id="rule-editor-buttons"):
                 yield Button("Save", id="btn-save-rule", variant="primary")
@@ -1396,7 +1469,9 @@ class WorkerApp(App):
         yield Header()
         with Horizontal(id="app-body"):
             with Vertical(id="main-content"):
-                yield PermissionPanel(self._resolve_permission_panel_decision, id="permission-panel")
+                yield PermissionPanel(
+                    self._resolve_permission_panel_decision, id="permission-panel"
+                )
                 with VerticalScroll(id="chat-scroll"):
                     yield Vertical(id="chat-container")
                 yield OptionList(id="command-suggestions", compact=True)
@@ -1472,7 +1547,9 @@ class WorkerApp(App):
                 if event_type == "completed":
                     task = str(run.get("task", "")).strip()
                     preview = str(run.get("result_preview", "")).strip()
-                    message = f"✅ Delegation completed: {task}" if task else "✅ Delegation completed"
+                    message = (
+                        f"✅ Delegation completed: {task}" if task else "✅ Delegation completed"
+                    )
                     if preview:
                         message += f"\n{preview}"
                     self._add_message(message, role="tool")
@@ -1491,10 +1568,8 @@ class WorkerApp(App):
         return self.query_one("#board-sidebar", BoardSidebar)
 
     def _set_board_status(self, text: str) -> None:
-        try:
+        with suppress(Exception):
             self._board_sidebar().set_status(text)
-        except Exception:
-            pass
 
     def _board_poll_interval_seconds(self) -> float:
         return 1.0 if self._sidebar_visible else 3.0
@@ -1510,8 +1585,12 @@ class WorkerApp(App):
             project_dir = self._board_project_dir()
             if self.remote_url:
                 try:
-                    tasks_payload = await self._remote_control().get_session_tasks(self._remote_session_id)
-                    notes_payload = await self._remote_control().get_session_notes(self._remote_session_id)
+                    tasks_payload = await self._remote_control().get_session_tasks(
+                        self._remote_session_id
+                    )
+                    notes_payload = await self._remote_control().get_session_notes(
+                        self._remote_session_id
+                    )
                 except Exception:
                     return
                 tasks = str(tasks_payload.get("content", ""))
@@ -1529,8 +1608,12 @@ class WorkerApp(App):
         project_dir = self._board_project_dir()
         if self.remote_url:
             try:
-                tasks_payload = await self._remote_control().get_session_tasks(self._remote_session_id)
-                notes_payload = await self._remote_control().get_session_notes(self._remote_session_id)
+                tasks_payload = await self._remote_control().get_session_tasks(
+                    self._remote_session_id
+                )
+                notes_payload = await self._remote_control().get_session_notes(
+                    self._remote_session_id
+                )
             except Exception:
                 tasks_payload = {}
                 notes_payload = {}
@@ -1552,7 +1635,10 @@ class WorkerApp(App):
             self._last_loaded_tasks_text = tasks
             self._last_loaded_notes_text = notes
             sidebar.set_visible(self._sidebar_visible)
-            sidebar.set_status(f"Board files: {tasks_path(project_dir).name}, {operator_notes_path(project_dir).name}")
+            sidebar.set_status(
+                "Board files: "
+                f"{tasks_path(project_dir).name}, {operator_notes_path(project_dir).name}"
+            )
         finally:
             self._suspend_board_editor_events = False
 
@@ -1607,14 +1693,18 @@ class WorkerApp(App):
             if self.remote_url:
                 await self._remote_control().put_session_notes(self._remote_session_id, content)
             else:
-                await write_project_board_file(operator_notes_path(self._board_project_dir()), content)
+                await write_project_board_file(
+                    operator_notes_path(self._board_project_dir()), content
+                )
         except Exception as exc:
             self._set_board_status(f"Failed to save operator notes: {exc}")
             return
         self._set_board_status("Operator notes saved")
 
     def _handle_board_tool_event(self, kind: str, payload: dict[str, Any]) -> None:
-        self.run_worker(self._refresh_board_after_tool_event, kind, payload, exclusive=False, thread=False)
+        self.run_worker(
+            self._refresh_board_after_tool_event, kind, payload, exclusive=False, thread=False
+        )
 
     async def _refresh_board_after_tool_event(self, kind: str, payload: dict[str, Any]) -> None:
         await self._load_board_state()
@@ -1685,12 +1775,10 @@ class WorkerApp(App):
         self._composer().load_text("")
 
     def _sync_pending_attachments_bar(self) -> None:
-        try:
+        with suppress(Exception):
             self.query_one("#pending-attachments", PendingAttachmentsBar).set_attachments(
                 self._pending_attachments
             )
-        except Exception:
-            pass
 
     def _consume_pending_attachments(self) -> list[ImageAttachment]:
         attachments = list(self._pending_attachments)
@@ -1698,7 +1786,9 @@ class WorkerApp(App):
         self._sync_pending_attachments_bar()
         return attachments
 
-    def _format_attachment_summary(self, attachment: ImageAttachment, *, index: int | None = None) -> str:
+    def _format_attachment_summary(
+        self, attachment: ImageAttachment, *, index: int | None = None
+    ) -> str:
         name = attachment.name or Path(attachment.path).name
         prefix = f"[{index}] " if index is not None else ""
         size = ""
@@ -1719,14 +1809,18 @@ class WorkerApp(App):
         if not self._pending_attachments:
             return ""
         return "\n".join(
-            self._format_attachment_summary(attachment)
-            for attachment in self._pending_attachments
+            self._format_attachment_summary(attachment) for attachment in self._pending_attachments
         )
 
-    def _render_user_submission(self, text: str, attachments: list[ImageAttachment] | None = None) -> str:
-        prefix = self._pending_attachment_label() if attachments is None else "\n".join(
-            self._format_attachment_summary(attachment)
-            for attachment in attachments
+    def _render_user_submission(
+        self, text: str, attachments: list[ImageAttachment] | None = None
+    ) -> str:
+        prefix = (
+            self._pending_attachment_label()
+            if attachments is None
+            else "\n".join(
+                self._format_attachment_summary(attachment) for attachment in attachments
+            )
         )
         if prefix and text:
             return f"{prefix}\n{text}"
@@ -1775,7 +1869,11 @@ class WorkerApp(App):
                 resolved = str(Path(candidate).expanduser().resolve())
             except Exception:
                 continue
-            if Path(resolved).exists() and Path(resolved).is_file() and is_supported_image_path(resolved):
+            if (
+                Path(resolved).exists()
+                and Path(resolved).is_file()
+                and is_supported_image_path(resolved)
+            ):
                 paths.append(resolved)
         return paths
 
@@ -1828,7 +1926,8 @@ class WorkerApp(App):
             except Exception:
                 continue
         raise RuntimeError(
-            "Clipboard image paste is unavailable on this system. Supported helpers: pngpaste, wl-paste, xclip, powershell."
+            "Clipboard image paste is unavailable on this system. Supported "
+            "helpers: pngpaste, wl-paste, xclip, powershell."
         )
 
     def _remote_control(self) -> RemoteControlClient:
@@ -1901,6 +2000,7 @@ class WorkerApp(App):
                         return
         await self._sync_remote_session_state()
         await self._sync_remote_extension_commands()
+
     def _set_remote_extension_commands(self, commands: list[Any]) -> None:
         normalized: set[str] = set()
         for command in commands:
@@ -1960,9 +2060,7 @@ class WorkerApp(App):
                 imported = result.get("imported", [])
                 if imported:
                     providers = ", ".join(
-                        item.get("provider", "")
-                        for item in imported
-                        if item.get("provider")
+                        item.get("provider", "") for item in imported if item.get("provider")
                     )
                     if providers:
                         self._add_message(
@@ -2160,7 +2258,9 @@ class WorkerApp(App):
                     for model in provider.models:
                         ref = f"{provider_id}/{model.id}"
                         refs.append(ref)
-                        ctx = f", {model.context_window // 1000}k ctx" if model.context_window else ""
+                        ctx = (
+                            f", {model.context_window // 1000}k ctx" if model.context_window else ""
+                        )
                         descriptions[ref] = f"{provider.name} — {model.name}{ctx}"
             self._model_autocomplete_refs = sorted(set(refs))
             self._model_autocomplete_descriptions = descriptions
@@ -2195,7 +2295,9 @@ class WorkerApp(App):
                             str(index),
                             description,
                             completion=f"/resume {index}",
-                            search_text=f"{index} {session_id} {title} {model} {project_dir}".lower(),
+                            search_text=(
+                                f"{index} {session_id} {title} {model} {project_dir}".lower()
+                            ),
                         )
                     )
                     suggestions.append(
@@ -2203,7 +2305,9 @@ class WorkerApp(App):
                             session_id,
                             description,
                             completion=f"/resume {session_id}",
-                            search_text=f"{session_id} {index} {title} {model} {project_dir}".lower(),
+                            search_text=(
+                                f"{session_id} {index} {title} {model} {project_dir}".lower()
+                            ),
                         )
                     )
             elif self._store is not None:
@@ -2224,7 +2328,10 @@ class WorkerApp(App):
                             str(index),
                             description,
                             completion=f"/resume {index}",
-                            search_text=f"{index} {session.id} {title} {session.model} {project_dir}".lower(),
+                            search_text=(
+                                f"{index} {session.id} {title} "
+                                f"{session.model} {project_dir}".lower()
+                            ),
                         )
                     )
                     suggestions.append(
@@ -2232,7 +2339,10 @@ class WorkerApp(App):
                             session.id,
                             description,
                             completion=f"/resume {session.id}",
-                            search_text=f"{session.id} {index} {title} {session.model} {project_dir}".lower(),
+                            search_text=(
+                                f"{session.id} {index} {title} "
+                                f"{session.model} {project_dir}".lower()
+                            ),
                         )
                     )
             deduped: list[SlashCommandSuggestion] = []
@@ -2397,7 +2507,12 @@ class WorkerApp(App):
             ranked.sort(
                 key=lambda suggestion: (
                     0 if suggestion.value.isdigit() else 1,
-                    0 if (suggestion.value.lower().startswith(lowered) or (suggestion.search_text or "").startswith(lowered)) else 1,
+                    0
+                    if (
+                        suggestion.value.lower().startswith(lowered)
+                        or (suggestion.search_text or "").startswith(lowered)
+                    )
+                    else 1,
                     suggestion.value.lower(),
                 )
             )
@@ -2411,7 +2526,10 @@ class WorkerApp(App):
                     "change project directory",
                     completion=f"{cmd} {completion_path}",
                     search_text=display_path.lower(),
-                    current=(os.path.abspath(os.path.expanduser(display_path)) == os.path.abspath(os.path.expanduser(current_project))),
+                    current=(
+                        os.path.abspath(os.path.expanduser(display_path))
+                        == os.path.abspath(os.path.expanduser(current_project))
+                    ),
                 )
                 for display_path, completion_path in self._project_path_suggestions(arg)
             ]
@@ -2443,7 +2561,12 @@ class WorkerApp(App):
             ]
             ranked.sort(
                 key=lambda suggestion: (
-                    0 if (suggestion.value.startswith(arg) or (suggestion.search_text or "").startswith(lowered)) else 1,
+                    0
+                    if (
+                        suggestion.value.startswith(arg)
+                        or (suggestion.search_text or "").startswith(lowered)
+                    )
+                    else 1,
                     int(suggestion.value) if suggestion.value.isdigit() else 10**9,
                 )
             )
@@ -2519,7 +2642,9 @@ class WorkerApp(App):
                     ref,
                     self._model_autocomplete_descriptions.get(ref, "switch model"),
                     completion=f"/model {ref}",
-                    search_text=(ref + " " + self._model_autocomplete_descriptions.get(ref, "")).lower(),
+                    search_text=(
+                        ref + " " + self._model_autocomplete_descriptions.get(ref, "")
+                    ).lower(),
                     current=self._is_current_model(ref),
                 )
                 for ref in model_matches
@@ -2550,14 +2675,10 @@ class WorkerApp(App):
 
         if self._session:
             for name in sorted(self._session.hooks.commands):
-                suggestions.append(
-                    SlashCommandSuggestion(f"/{name}", "extension command")
-                )
+                suggestions.append(SlashCommandSuggestion(f"/{name}", "extension command"))
         elif self.remote_url:
             for name in sorted(self._remote_extension_commands):
-                suggestions.append(
-                    SlashCommandSuggestion(f"/{name}", "remote extension command")
-                )
+                suggestions.append(SlashCommandSuggestion(f"/{name}", "remote extension command"))
 
         deduped: list[SlashCommandSuggestion] = []
         seen: set[str] = set()
@@ -2696,8 +2817,6 @@ class WorkerApp(App):
     async def _init_local_session(self) -> None:
         from worker_core.cli import _resolve_api_key
 
-
-
         config = load_config(os.getcwd())
         provider_name, model_id = resolve_model(config)
         project_dir = os.getcwd()
@@ -2773,8 +2892,12 @@ class WorkerApp(App):
                     content=msg.content,
                     reasoning=msg.reasoning or "",
                     attachments=msg.attachments,
-                    tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls] if msg.tool_calls else None,
-                    tool_result=msg.tool_result.model_dump() if msg.tool_result is not None else None,
+                    tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls]
+                    if msg.tool_calls
+                    else None,
+                    tool_result=msg.tool_result.model_dump()
+                    if msg.tool_result is not None
+                    else None,
                 )
 
         self._provider_model = f"{provider_name}/{model_id}"
@@ -2817,7 +2940,9 @@ class WorkerApp(App):
         if text.startswith("!!"):
             if attachments:
                 self._pending_attachments = attachments + self._pending_attachments
-                self._add_message("Image attachments are only supported for normal chat messages.", role="error")
+                self._add_message(
+                    "Image attachments are only supported for normal chat messages.", role="error"
+                )
                 return
             cmd = text[2:].strip()
             if cmd:
@@ -2830,7 +2955,9 @@ class WorkerApp(App):
         if text.startswith("!"):
             if attachments:
                 self._pending_attachments = attachments + self._pending_attachments
-                self._add_message("Image attachments are only supported for normal chat messages.", role="error")
+                self._add_message(
+                    "Image attachments are only supported for normal chat messages.", role="error"
+                )
                 return
             cmd = text[1:].strip()
             if cmd:
@@ -2850,7 +2977,9 @@ class WorkerApp(App):
         if self._run_busy:
             if attachments:
                 self._pending_attachments = attachments + self._pending_attachments
-                self._add_message("Image attachments are not supported for steering messages.", role="error")
+                self._add_message(
+                    "Image attachments are not supported for steering messages.", role="error"
+                )
                 return
             self._add_message(text, role="user")
             if self.remote_url:
@@ -3129,7 +3258,9 @@ class WorkerApp(App):
             self._add_message("Current model does not support image input.", role="error")
             return
         self._queue_attachment(attachment)
-        self._add_message(f"Attached image: {attachment.name or Path(attachment.path).name}", role="tool")
+        self._add_message(
+            f"Attached image: {attachment.name or Path(attachment.path).name}", role="tool"
+        )
 
     async def _cmd_image_paste(self) -> None:
         if not await self._model_supports_vision():
@@ -3141,7 +3272,10 @@ class WorkerApp(App):
             self._add_message(str(exc), role="error")
             return
         self._queue_attachment(attachment)
-        self._add_message(f"Attached image from clipboard: {attachment.name or Path(attachment.path).name}", role="tool")
+        self._add_message(
+            f"Attached image from clipboard: {attachment.name or Path(attachment.path).name}",
+            role="tool",
+        )
 
     def _cmd_image_clear(self) -> None:
         count = self._clear_pending_attachments()
@@ -3233,7 +3367,11 @@ class WorkerApp(App):
                     had_tool_calls = True
                     need_new_reasoning_block = True
                     tool_display = format_tool_call_display(event.tool_name, event.tool_args)
-                    self._start_tool_card(event.tool_call_id or str(uuid.uuid4()), title=tool_display.title, body=tool_display.body)
+                    self._start_tool_card(
+                        event.tool_call_id or str(uuid.uuid4()),
+                        title=tool_display.title,
+                        body=tool_display.body,
+                    )
                     self._set_run_activity(f"tool: {event.tool_name}", busy=True)
                     await cmux.set_status(
                         "state",
@@ -3291,7 +3429,9 @@ class WorkerApp(App):
             self._scroll_to_bottom()
 
     @work(exclusive=True, thread=False)
-    async def _run_remote(self, text: str, attachments: list[ImageAttachment] | None = None) -> None:
+    async def _run_remote(
+        self, text: str, attachments: list[ImageAttachment] | None = None
+    ) -> None:
         """Send a query to the remote server via WebSocket."""
         import websockets
 
@@ -3306,7 +3446,9 @@ class WorkerApp(App):
                 return
 
         try:
-            await self._ws.send(json.dumps(self._remote_message_payload(text, attachments=attachments)))
+            await self._ws.send(
+                json.dumps(self._remote_message_payload(text, attachments=attachments))
+            )
         except Exception as e:
             self._add_message(f"Connection error: {e}", role="error")
             self._ws = None
@@ -3344,7 +3486,11 @@ class WorkerApp(App):
                         tool_name,
                         tool_args if isinstance(tool_args, dict) else {},
                     )
-                    self._start_tool_card(str(msg.get("call_id", "") or uuid.uuid4()), title=tool_display.title, body=tool_display.body)
+                    self._start_tool_card(
+                        str(msg.get("call_id", "") or uuid.uuid4()),
+                        title=tool_display.title,
+                        body=tool_display.body,
+                    )
                     self._set_run_activity(f"tool: {tool_name}", busy=True)
                 elif msg_type == "tool_result":
                     output = str(msg.get("output", "") or "")
@@ -3352,14 +3498,18 @@ class WorkerApp(App):
                         tool_name=str(msg.get("tool", "") or "tool"),
                         content=output,
                         is_error=bool(msg.get("is_error", False)),
-                        display=msg.get("display") if isinstance(msg.get("display"), dict) else None,
+                        display=msg.get("display")
+                        if isinstance(msg.get("display"), dict)
+                        else None,
                     )
                     self._finish_tool_card(
                         str(msg.get("call_id", "") or uuid.uuid4()),
                         title=result_display.title,
                         body=result_display.body,
                         markdown=result_display.markdown,
-                        display=msg.get("display") if isinstance(msg.get("display"), dict) else None,
+                        display=msg.get("display")
+                        if isinstance(msg.get("display"), dict)
+                        else None,
                         kind=result_display.kind,
                         status_badge=result_display.status_badge,
                         status_variant=result_display.status_variant,
@@ -3377,14 +3527,19 @@ class WorkerApp(App):
                     if isinstance(payload, dict) and event_name:
                         await self._refresh_board_after_tool_event(event_name, payload)
                 elif msg_type == "status":
-                    state_label = str(msg.get("state", "")).strip() or str(msg.get("label", "")).strip()
-                    self._set_run_activity(state_label or "working", busy=bool(msg.get("busy", True)))
+                    state_label = (
+                        str(msg.get("state", "")).strip() or str(msg.get("label", "")).strip()
+                    )
+                    self._set_run_activity(
+                        state_label or "working", busy=bool(msg.get("busy", True))
+                    )
                 elif msg_type == "error":
                     error_text = str(msg.get("error", "Unknown error"))
                     self._add_message(error_text, role="error")
                     if "Unknown type: steer" in error_text:
                         self._add_message(
-                            "Remote server does not support steering yet. Run /server-restart to reload the local managed server.",
+                            "Remote server does not support steering yet. Run "
+                            "/server-restart to reload the local managed server.",
                             role="tool",
                         )
                     break
@@ -3464,8 +3619,6 @@ class WorkerApp(App):
             return
         from worker_core.cli import _resolve_api_key
 
-
-
         config = load_config(os.getcwd())
         catalog = await get_effective_provider_catalog(config)
         lines: list[str] = []
@@ -3512,7 +3665,6 @@ class WorkerApp(App):
             self._add_message(format_provider_setup_entries(entries), role="tool")
             return
         from worker_core.cli import _resolve_api_key
-
 
         config = load_config(os.getcwd())
         entries = await collect_provider_setup_entries(config, _resolve_api_key)
@@ -3640,6 +3792,7 @@ class WorkerApp(App):
             await self._run_remote_connect(provider_name)
             return
         from worker_ai.oauth import get_oauth_provider, list_oauth_provider_names
+
         config = load_config(os.getcwd())
 
         oauth = get_oauth_provider(provider_name, config=config)
@@ -3837,9 +3990,7 @@ class WorkerApp(App):
                     if code and not callback_future.done():
                         callback_future.set_result({"code": code, "state": state})
                     elif not callback_future.done():
-                        callback_future.set_exception(
-                            RuntimeError("Missing authorization code.")
-                        )
+                        callback_future.set_exception(RuntimeError("Missing authorization code."))
                 body = (
                     "<html><body><h1>Authorized!</h1>"
                     "<p>You can close this tab and return to Artel.</p>"
@@ -3908,8 +4059,12 @@ class WorkerApp(App):
     async def _cmd_rules(self) -> None:
         if self.remote_url:
             try:
-                payload = await self._remote_control().list_rules(project_dir=self._current_rules_project_dir())
-                overrides_payload = await self._remote_control().get_session_rule_overrides(self._remote_session_id)
+                payload = await self._remote_control().list_rules(
+                    project_dir=self._current_rules_project_dir()
+                )
+                overrides_payload = await self._remote_control().get_session_rule_overrides(
+                    self._remote_session_id
+                )
             except Exception as exc:
                 self._add_message(f"Failed to load remote rules: {exc}", role="error")
                 return
@@ -3935,9 +4090,11 @@ class WorkerApp(App):
                 else:
                     override = "-"
                     effective = persisted
-                order = int(rule.get('order', 0) or 0)
+                order = int(rule.get("order", 0) or 0)
                 lines.append(
-                    f"  {order}. {rule_id} [{rule.get('scope', '')}] persisted={persisted} session={override} effective={effective} {rule.get('text', '')}"
+                    f"  {order}. {rule_id} [{rule.get('scope', '')}] "
+                    f"persisted={persisted} session={override} "
+                    f"effective={effective} {rule.get('text', '')}"
                 )
             self._add_message("\n".join(lines), role="tool")
             return
@@ -3959,7 +4116,9 @@ class WorkerApp(App):
                 override = "-"
                 effective_label = effective
             lines.append(
-                f"  {rule.order}. {rule.id} [{rule.scope}] persisted={persisted} session={override} effective={effective_label} {rule.text}"
+                f"  {rule.order}. {rule.id} [{rule.scope}] "
+                f"persisted={persisted} session={override} "
+                f"effective={effective_label} {rule.text}"
             )
         self._add_message("\n".join(lines), role="tool")
 
@@ -3982,7 +4141,9 @@ class WorkerApp(App):
                 return
             if self.remote_url:
                 try:
-                    payload = await self._remote_control().delete_rule(rest, project_dir=self._current_rules_project_dir())
+                    payload = await self._remote_control().delete_rule(
+                        rest, project_dir=self._current_rules_project_dir()
+                    )
                 except Exception as exc:
                     self._add_message(f"Failed to delete rule: {exc}", role="error")
                     return
@@ -4048,7 +4209,10 @@ class WorkerApp(App):
             persist_action = persist_parts[0].strip().lower() if persist_parts else ""
             persist_rule_id = persist_parts[1].strip() if len(persist_parts) > 1 else ""
             if persist_action not in {"enable", "disable"} or not persist_rule_id:
-                self._add_message("Usage: /rule persist enable <rule-id> | /rule persist disable <rule-id>", role="error")
+                self._add_message(
+                    "Usage: /rule persist enable <rule-id> | /rule persist disable <rule-id>",
+                    role="error",
+                )
                 return
             try:
                 if self.remote_url:
@@ -4071,7 +4235,8 @@ class WorkerApp(App):
                 self._add_message(f"Failed to update persisted rule state: {exc}", role="error")
                 return
             self._add_message(
-                f"Persistently {'enabled' if persist_action == 'enable' else 'disabled'} rule {rule_id}.",
+                f"Persistently {'enabled' if persist_action == 'enable' else 'disabled'} "
+                f"rule {rule_id}.",
                 role="tool",
             )
             return
@@ -4155,12 +4320,17 @@ class WorkerApp(App):
                     self._session.rule_overrides = self._local_rule_overrides
                     self._session.refresh_system_prompt()
             self._add_message(
-                "Reset all session rule overrides." if rest == "all" else f"Reset session override for rule {rest}.",
+                "Reset all session rule overrides."
+                if rest == "all"
+                else f"Reset session override for rule {rest}.",
                 role="tool",
             )
             return
         self._add_message(
-            "Usage: /rule add | /rule edit <id> | /rule delete <id> | /rule enable <id> | /rule disable <id> | /rule persist enable <id> | /rule persist disable <id> | /rule move <id> up|down|to <n> | /rule reset <id|all>",
+            "Usage: /rule add | /rule edit <id> | /rule delete <id> | "
+            "/rule enable <id> | /rule disable <id> | "
+            "/rule persist enable <id> | /rule persist disable <id> | "
+            "/rule move <id> up|down|to <n> | /rule reset <id|all>",
             role="tool",
         )
 
@@ -4175,7 +4345,9 @@ class WorkerApp(App):
         if rule_id:
             if self.remote_url:
                 try:
-                    payload = await self._remote_control().list_rules(project_dir=self._current_rules_project_dir())
+                    payload = await self._remote_control().list_rules(
+                        project_dir=self._current_rules_project_dir()
+                    )
                 except Exception as exc:
                     self._add_message(f"Failed to load remote rules: {exc}", role="error")
                     return
@@ -4191,9 +4363,23 @@ class WorkerApp(App):
         payload = await self.push_screen_wait(
             RuleEditorScreen(
                 title="Edit rule" if existing is not None else "Add rule",
-                text=(existing.get("text", "") if isinstance(existing, dict) else existing.text) if existing is not None else "",
-                scope=(existing.get("scope", "project") if isinstance(existing, dict) else existing.scope) if existing is not None else "project",
-                enabled=(bool(existing.get("enabled", True)) if isinstance(existing, dict) else existing.enabled) if existing is not None else True,
+                text=(existing.get("text", "") if isinstance(existing, dict) else existing.text)
+                if existing is not None
+                else "",
+                scope=(
+                    existing.get("scope", "project")
+                    if isinstance(existing, dict)
+                    else existing.scope
+                )
+                if existing is not None
+                else "project",
+                enabled=(
+                    bool(existing.get("enabled", True))
+                    if isinstance(existing, dict)
+                    else existing.enabled
+                )
+                if existing is not None
+                else True,
             )
         )
         if not payload:
@@ -4211,7 +4397,9 @@ class WorkerApp(App):
                     rule_id_value = str(response.get("rule", {}).get("id", ""))
                     self._add_message(f"Added rule {rule_id_value}.", role="tool")
                 else:
-                    existing_id = str(existing.get("id", "")) if isinstance(existing, dict) else existing.id
+                    existing_id = (
+                        str(existing.get("id", "")) if isinstance(existing, dict) else existing.id
+                    )
                     response = await self._remote_control().edit_rule(
                         existing_id,
                         project_dir=self._current_rules_project_dir(),
@@ -4299,6 +4487,7 @@ class WorkerApp(App):
             self._add_message("Operator notes are empty.", role="tool")
             return
         self._add_message(render_numbered_text(content), role="tool")
+
     async def _cmd_resume_remote(self, arg: str) -> None:
         """List or resume server-backed remote sessions."""
         if arg and not arg.isdigit():
@@ -4377,8 +4566,12 @@ class WorkerApp(App):
                 content=content,
                 reasoning=reasoning,
                 attachments=attachments or None,
-                tool_calls=message.get("tool_calls") if isinstance(message.get("tool_calls"), list) else None,
-                tool_result=message.get("tool_result") if isinstance(message.get("tool_result"), dict) else None,
+                tool_calls=message.get("tool_calls")
+                if isinstance(message.get("tool_calls"), list)
+                else None,
+                tool_result=message.get("tool_result")
+                if isinstance(message.get("tool_result"), dict)
+                else None,
             )
 
         title = str(session.get("title", "")).strip() or session_id[:8]
@@ -4425,7 +4618,7 @@ class WorkerApp(App):
             title = s.title or "(untitled)"
             proj = s.project_dir
             if proj and proj.startswith(home):
-                proj = "~" + proj[len(home):]
+                proj = "~" + proj[len(home) :]
             proj_label = f" @ {proj}" if proj else ""
             lines.append(f"  {i}. [{s.updated_at}] {title} ({s.model}){proj_label}")
         lines.append("\nType /resume <number> to load a session.")
@@ -4468,7 +4661,9 @@ class WorkerApp(App):
                 content=msg.content,
                 reasoning=msg.reasoning or "",
                 attachments=msg.attachments,
-                tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls] if msg.tool_calls else None,
+                tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls]
+                if msg.tool_calls
+                else None,
                 tool_result=msg.tool_result.model_dump() if msg.tool_result is not None else None,
             )
 
@@ -4590,9 +4785,7 @@ class WorkerApp(App):
             else:
                 label = f"Forked session at message {idx}."
             suffix = (
-                f" New session ID: {new_session[:8]}… Use /resume to switch."
-                if new_session
-                else ""
+                f" New session ID: {new_session[:8]}… Use /resume to switch." if new_session else ""
             )
             self._add_message(f"{label}{suffix}", role="tool")
             return
@@ -4706,17 +4899,20 @@ class WorkerApp(App):
         if not skill:
             available = ", ".join(sorted(self._skills)) or "none"
             self._add_message(
-                f"Skill '{name}' not found. Available: {available}", role="error",
+                f"Skill '{name}' not found. Available: {available}",
+                role="error",
             )
             return
 
         # Inject into system prompt
         self._session.system_prompt = inject_skill(
-            self._session.system_prompt, skill,
+            self._session.system_prompt,
+            skill,
         )
         self._session.messages[0].content = self._session.system_prompt
         self._add_message(
-            f"Skill '{name}' loaded into session.", role="tool",
+            f"Skill '{name}' loaded into session.",
+            role="tool",
         )
 
     # ── Thinking command ──────────────────────────────────────────
@@ -4790,7 +4986,6 @@ class WorkerApp(App):
         """Switch or list themes."""
         from worker_tui.themes import load_themes
 
-
         themes = load_themes(os.getcwd())
 
         if not name:
@@ -4806,7 +5001,8 @@ class WorkerApp(App):
         if name not in themes:
             available = ", ".join(sorted(themes))
             self._add_message(
-                f"Unknown theme '{name}'. Available: {available}", role="error",
+                f"Unknown theme '{name}'. Available: {available}",
+                role="error",
             )
             return
 
@@ -4833,6 +5029,7 @@ class WorkerApp(App):
 
         from worker_ai.models import Message, Role
         from worker_core.export import export_html
+
         if self.remote_url:
             try:
                 session_payload = await self._remote_control().get_session(self._remote_session_id)
@@ -4854,10 +5051,7 @@ class WorkerApp(App):
                 self._add_message("No active session.", role="error")
                 return
             model = self._session.model
-            messages = [
-                m for m in self._session.messages
-                if m.role in (Role.USER, Role.ASSISTANT)
-            ]
+            messages = [m for m in self._session.messages if m.role in (Role.USER, Role.ASSISTANT)]
         if not messages:
             self._add_message("Nothing to export.", role="error")
             return
@@ -4881,6 +5075,7 @@ class WorkerApp(App):
     async def _cmd_reload(self) -> None:
         """Hot-reload extensions, prompts, and skills."""
         from worker_core.extensions import reload_extensions_async
+
         config = load_config(os.getcwd())
         context = ExtensionContext(project_dir=os.getcwd(), runtime="tui", config=config)
         if self.remote_url:
@@ -5039,7 +5234,9 @@ class WorkerApp(App):
             sid = self._remote_session_id
             try:
                 if not command or command in {"list", "ls"}:
-                    payload = await self._remote_control().request("GET", f"/api/sessions/{sid}/delegates")
+                    payload = await self._remote_control().request(
+                        "GET", f"/api/sessions/{sid}/delegates"
+                    )
                     delegates = payload.get("delegates", [])
                     if delegates:
                         counts: dict[str, int] = {}
@@ -5047,16 +5244,26 @@ class WorkerApp(App):
                             status = str(item.get("status", ""))
                             counts[status] = counts.get(status, 0) + 1
                         summary = ", ".join(f"{name}={counts[name]}" for name in sorted(counts))
-                        output = f"Orchestration runs: {len(delegates)} total ({summary})\n" + "\n".join(
-                            f"- {item['id']} [{item['status']}] ({item['mode']}) {item['task']}" + (f" — {item.get('latest_update', '')}" if item.get('latest_update') else "")
-                            for item in delegates
+                        output = (
+                            f"Orchestration runs: {len(delegates)} total ({summary})\n"
+                            + "\n".join(
+                                f"- {item['id']} [{item['status']}] ({item['mode']}) {item['task']}"
+                                + (
+                                    f" — {item.get('latest_update', '')}"
+                                    if item.get("latest_update")
+                                    else ""
+                                )
+                                for item in delegates
+                            )
                         )
                     else:
                         output = "No orchestration runs found."
                 else:
                     parts = shlex.split(command)
                     if parts[0] == "show" and len(parts) == 2:
-                        payload = await self._remote_control().request("GET", f"/api/sessions/{sid}/delegates/{parts[1]}")
+                        payload = await self._remote_control().request(
+                            "GET", f"/api/sessions/{sid}/delegates/{parts[1]}"
+                        )
                         delegate = payload.get("delegate", {})
                         output = "Orchestration run:\n" + "\n".join(
                             [
@@ -5075,7 +5282,9 @@ class WorkerApp(App):
                         if delegate.get("error"):
                             output += f"\n\nError:\n{delegate['error']}"
                     elif parts[0] == "tail" and len(parts) == 2:
-                        payload = await self._remote_control().request("GET", f"/api/sessions/{sid}/delegates/{parts[1]}")
+                        payload = await self._remote_control().request(
+                            "GET", f"/api/sessions/{sid}/delegates/{parts[1]}"
+                        )
                         delegate = payload.get("delegate", {})
                         events = delegate.get("events", []) or []
                         lines = [f"Tail for orchestration run {parts[1]}:"]
@@ -5085,10 +5294,24 @@ class WorkerApp(App):
                             lines.append(f"Latest: {delegate['latest_update']}")
                         output = "\n".join(lines)
                     elif parts[0] == "cancel" and len(parts) == 2:
-                        payload = await self._remote_control().request("POST", f"/api/sessions/{sid}/delegates/{parts[1]}/cancel", json_data={})
-                        output = f"Cancelled orchestration run: {parts[1]}" if payload.get("cancelled") else f"Failed to cancel orchestration run: {parts[1]}"
+                        payload = await self._remote_control().request(
+                            "POST", f"/api/sessions/{sid}/delegates/{parts[1]}/cancel", json_data={}
+                        )
+                        output = (
+                            f"Cancelled orchestration run: {parts[1]}"
+                            if payload.get("cancelled")
+                            else f"Failed to cancel orchestration run: {parts[1]}"
+                        )
                     else:
-                        output = "Usage:\n  /delegates\n  /delegates list\n  /delegates show <run_id>\n  /delegates tail <run_id>\n  /delegates cancel <run_id>\n\nAlias: /agents"
+                        output = (
+                            "Usage:\n"
+                            "  /delegates\n"
+                            "  /delegates list\n"
+                            "  /delegates show <run_id>\n"
+                            "  /delegates tail <run_id>\n"
+                            "  /delegates cancel <run_id>\n\n"
+                            "Alias: /agents"
+                        )
             except Exception as exc:
                 self._add_message(f"agents error: {exc}", role="error")
                 return
@@ -5114,7 +5337,9 @@ class WorkerApp(App):
         if parts[0] == "show" and len(parts) == 2:
             run = registry.get_session_run(session_id, parts[1])
             if run is None:
-                self._add_message(f"delegates error: Unknown orchestration run: {parts[1]}", role="error")
+                self._add_message(
+                    f"delegates error: Unknown orchestration run: {parts[1]}", role="error"
+                )
                 return
             rendered = format_run_detail(run)
             if rendered.startswith("Delegate:"):
@@ -5124,7 +5349,9 @@ class WorkerApp(App):
         if parts[0] == "tail" and len(parts) == 2:
             run = registry.get_session_run(session_id, parts[1])
             if run is None:
-                self._add_message(f"delegates error: Unknown orchestration run: {parts[1]}", role="error")
+                self._add_message(
+                    f"delegates error: Unknown orchestration run: {parts[1]}", role="error"
+                )
                 return
             lines = [f"Tail for orchestration run {parts[1]}:"]
             lines.extend(f"- {item}" for item in run.events[-10:])
@@ -5136,7 +5363,9 @@ class WorkerApp(App):
         if parts[0] == "cancel" and len(parts) == 2:
             run = registry.get_session_run(session_id, parts[1])
             if run is None:
-                self._add_message(f"delegates error: Unknown orchestration run: {parts[1]}", role="error")
+                self._add_message(
+                    f"delegates error: Unknown orchestration run: {parts[1]}", role="error"
+                )
                 return
             registry.cancel(run.id)
             rendered = format_run_detail(run)
@@ -5145,7 +5374,13 @@ class WorkerApp(App):
             self._add_message(rendered, role="tool")
             return
         self._add_message(
-            "Usage:\n  /delegates\n  /delegates list\n  /delegates show <run_id>\n  /delegates tail <run_id>\n  /delegates cancel <run_id>\n\nAlias: /agents",
+            "Usage:\n"
+            "  /delegates\n"
+            "  /delegates list\n"
+            "  /delegates show <run_id>\n"
+            "  /delegates tail <run_id>\n"
+            "  /delegates cancel <run_id>\n\n"
+            "Alias: /agents",
             role="tool",
         )
 
@@ -5166,7 +5401,9 @@ class WorkerApp(App):
                     output = "No scheduled tasks configured."
                 else:
                     lines = [
-                        f"Scheduled tasks: {payload.get('count', len(schedules))} total; next={payload.get('next_run_at', '') or '-'}"
+                        "Scheduled tasks: "
+                        f"{payload.get('count', len(schedules))} total; "
+                        f"next={payload.get('next_run_at', '') or '-'}"
                     ]
                     for item in schedules:
                         schedule = item.get("schedule", {})
@@ -5177,8 +5414,10 @@ class WorkerApp(App):
                             else str(schedule.get("cron", ""))
                         )
                         lines.append(
-                            f"- {schedule.get('id', '')} [{'enabled' if schedule.get('enabled') else 'disabled'}] "
-                            f"{schedule.get('kind', '')}={trigger} status={state.get('last_status', 'idle')} "
+                            f"- {schedule.get('id', '')} "
+                            f"[{'enabled' if schedule.get('enabled') else 'disabled'}] "
+                            f"{schedule.get('kind', '')}={trigger} "
+                            f"status={state.get('last_status', 'idle')} "
                             f"next={state.get('next_run_at', '') or '-'}"
                         )
                     output = "\n".join(lines)
@@ -5189,7 +5428,10 @@ class WorkerApp(App):
                     output = f"Reloaded schedules: {payload.get('count', 0)} configured"
                 elif parts[0] == "run" and len(parts) == 2:
                     payload = await self._remote_control().run_schedule(parts[1])
-                    output = f"Triggered schedule: {parts[1]}\nnext={payload.get('next_run_at', '') or '-'}"
+                    output = (
+                        f"Triggered schedule: {parts[1]}\n"
+                        f"next={payload.get('next_run_at', '') or '-'}"
+                    )
                 elif parts[0] == "show" and len(parts) == 2:
                     payload = await self._remote_control().list_schedules()
                     found = None
@@ -5203,7 +5445,14 @@ class WorkerApp(App):
                     else:
                         output = json.dumps(found, indent=2, sort_keys=True)
                 else:
-                    output = "Usage:\n  /schedules\n  /schedules list\n  /schedules show <id>\n  /schedules run <id>\n  /schedules reload"
+                    output = (
+                        "Usage:\n"
+                        "  /schedules\n"
+                        "  /schedules list\n"
+                        "  /schedules show <id>\n"
+                        "  /schedules run <id>\n"
+                        "  /schedules reload"
+                    )
         except Exception as exc:
             self._add_message(f"schedules error: {exc}", role="error")
             return
@@ -5215,7 +5464,9 @@ class WorkerApp(App):
             action = arg.strip().lower()
             try:
                 if action == "reload":
-                    payload = await self._remote_control().request("POST", "/api/mcp/reload", json_data={})
+                    payload = await self._remote_control().request(
+                        "POST", "/api/mcp/reload", json_data={}
+                    )
                 else:
                     payload = await self._remote_control().request("GET", "/api/mcp")
             except Exception as exc:
@@ -5226,12 +5477,14 @@ class WorkerApp(App):
             return
 
         try:
-            from worker_core.mcp_runtime import McpRuntimeManager
-            from worker_core.extensions import ExtensionContext
             from worker_core.config import load_config
+            from worker_core.extensions import ExtensionContext
+            from worker_core.mcp_runtime import McpRuntimeManager
 
             runtime = McpRuntimeManager()
-            context = ExtensionContext(project_dir=os.getcwd(), runtime="local", config=load_config(os.getcwd()))
+            context = ExtensionContext(
+                project_dir=os.getcwd(), runtime="local", config=load_config(os.getcwd())
+            )
             await runtime.load(context)
             if arg.strip().lower() == "reload":
                 await runtime.reload()
@@ -5242,16 +5495,12 @@ class WorkerApp(App):
             self._add_message(f"mcp error: {exc}", role="error")
 
     async def _cmd_git(self, cmd: str, arg: str) -> None:
-        subcmd = cmd
         subarg = arg.strip()
         if cmd == "/status":
-            subcmd = "/git"
             subarg = "status"
         elif cmd == "/diff":
-            subcmd = "/git"
             subarg = f"diff {subarg}".strip()
         elif cmd == "/rollback":
-            subcmd = "/git"
             subarg = f"rollback {subarg}".strip()
 
         parts = subarg.split(maxsplit=1) if subarg else []
@@ -5264,35 +5513,56 @@ class WorkerApp(App):
                     if action == "help":
                         self._add_message(render_git_help(), role="tool")
                         return
-                    payload = await self._remote_control().run_bash(self._remote_session_id, "git status --short --branch")
+                    payload = await self._remote_control().run_bash(
+                        self._remote_session_id, "git status --short --branch"
+                    )
                     output = str(payload.get("output", "") or "")
                     rendered = "Git status: clean working tree." if not output.strip() else output
-                    self._add_message(rendered if rendered.startswith("Git status") else f"Git status\n\n{rendered}", role="tool")
+                    self._add_message(
+                        rendered
+                        if rendered.startswith("Git status")
+                        else f"Git status\n\n{rendered}",
+                        role="tool",
+                    )
                     return
                 if action == "diff":
                     command = f"git diff -- {rest}" if rest else "git diff"
-                    payload = await self._remote_control().run_bash(self._remote_session_id, command)
+                    payload = await self._remote_control().run_bash(
+                        self._remote_session_id, command
+                    )
                     output = str(payload.get("output", "") or "")
                     target = rest or "working tree"
-                    rendered = f"No unstaged diff for {target}." if not output.strip() else f"Git diff: {target}\n\n```diff\n{output}\n```"
+                    rendered = (
+                        f"No unstaged diff for {target}."
+                        if not output.strip()
+                        else f"Git diff: {target}\n\n```diff\n{output}\n```"
+                    )
                     self._add_message(rendered, role="tool")
                     return
                 if action == "rollback":
                     if rest == "--all":
-                        payload = await self._remote_control().run_bash(self._remote_session_id, "git restore .")
+                        payload = await self._remote_control().run_bash(
+                            self._remote_session_id, "git restore ."
+                        )
                         if int(payload.get("exit_code", 0)) == 0:
                             self._add_message("Restored all unstaged changes.", role="tool")
                         else:
-                            self._add_message(str(payload.get("output", "") or "git restore failed"), role="error")
+                            self._add_message(
+                                str(payload.get("output", "") or "git restore failed"), role="error"
+                            )
                         return
                     if not rest:
                         self._add_message("Usage: /rollback <path> | /rollback --all", role="error")
                         return
-                    payload = await self._remote_control().run_bash(self._remote_session_id, f"git restore -- {rest}")
+                    payload = await self._remote_control().run_bash(
+                        self._remote_session_id, f"git restore -- {rest}"
+                    )
                     if int(payload.get("exit_code", 0)) == 0:
                         self._add_message(f"Restored: {rest}", role="tool")
                     else:
-                        self._add_message(str(payload.get("output", "") or "git restore failed"), role="error")
+                        self._add_message(
+                            str(payload.get("output", "") or "git restore failed"), role="error"
+                        )
                     return
                 self._add_message(render_git_help(), role="tool")
             except Exception as exc:
@@ -5311,7 +5581,11 @@ class WorkerApp(App):
                 self._add_message(restore_all(cwd=cwd), role="tool")
                 return
             message = restore_path(cwd=cwd, pathspec=rest)
-            role = "error" if message.startswith("Usage:") or message.startswith("git restore failed:") else "tool"
+            role = (
+                "error"
+                if message.startswith("Usage:") or message.startswith("git restore failed:")
+                else "tool"
+            )
             self._add_message(message, role=role)
             return
         self._add_message(render_git_help(), role="tool")
@@ -5323,7 +5597,9 @@ class WorkerApp(App):
             except Exception as exc:
                 self._add_message(f"Undo failed: {exc}", role="error")
                 return
-            messages = payload.get("messages", []) if isinstance(payload.get("messages", []), list) else []
+            messages = (
+                payload.get("messages", []) if isinstance(payload.get("messages", []), list) else []
+            )
             paths = collect_last_ai_changed_paths(messages)
             if not paths:
                 self._add_message("No recent AI file edits found to undo.", role="tool")
@@ -5335,9 +5611,14 @@ class WorkerApp(App):
                 self._add_message(f"Undo failed: {exc}", role="error")
                 return
             if int(payload.get("exit_code", 0)) != 0:
-                self._add_message(str(payload.get("output", "") or "git restore failed"), role="error")
+                self._add_message(
+                    str(payload.get("output", "") or "git restore failed"), role="error"
+                )
                 return
-            self._add_message(f"Undid latest AI file changes:\n" + "\n".join(f"- {path}" for path in paths), role="tool")
+            self._add_message(
+                "Undid latest AI file changes:\n" + "\n".join(f"- {path}" for path in paths),
+                role="tool",
+            )
             return
 
         if not self._session:
@@ -5349,7 +5630,12 @@ class WorkerApp(App):
             return
         message = restore_paths(cwd=os.getcwd(), paths=paths)
         role = "error" if message.startswith("git restore failed:") else "tool"
-        self._add_message(message if role == "error" else f"Undid latest AI file changes:\n" + "\n".join(f"- {path}" for path in paths), role=role)
+        self._add_message(
+            message
+            if role == "error"
+            else "Undid latest AI file changes:\n" + "\n".join(f"- {path}" for path in paths),
+            role=role,
+        )
 
     async def _cmd_rewind(self, arg: str) -> None:
         if not arg.isdigit():
@@ -5358,7 +5644,9 @@ class WorkerApp(App):
         idx = int(arg)
         if self.remote_url:
             try:
-                payload = await self._remote_control().fork_session(self._remote_session_id, message_index=idx)
+                payload = await self._remote_control().fork_session(
+                    self._remote_session_id, message_index=idx
+                )
             except Exception as exc:
                 self._add_message(f"Rewind failed: {exc}", role="error")
                 return
@@ -5500,10 +5788,14 @@ class WorkerApp(App):
             return True
         # cmux: notify user that permission is needed
         await cmux.set_status(
-            "state", f"permission: {tool_name}", icon="lock", color="#fab387",
+            "state",
+            f"permission: {tool_name}",
+            icon="lock",
+            color="#fab387",
         )
         await cmux.notify(
-            "Artel", subtitle=f"Permission required: {tool_name}",
+            "Artel",
+            subtitle=f"Permission required: {tool_name}",
         )
         result = await self._request_permission_decision(tool_name, args)
         if result == "all":
@@ -5598,7 +5890,11 @@ class WorkerApp(App):
         tool_calls: list[dict[str, Any]] | None = None,
         tool_result: dict[str, Any] | None = None,
     ) -> None:
-        rendered = self._render_user_submission(content, attachments) if role == Role.USER.value else content
+        rendered = (
+            self._render_user_submission(content, attachments)
+            if role == Role.USER.value
+            else content
+        )
         if role == Role.USER.value:
             self._add_message(rendered, role="user")
         elif role == Role.ASSISTANT.value:
@@ -5632,14 +5928,18 @@ class WorkerApp(App):
                     tool_name=matched_tool_name,
                     content=str(tool_result.get("content", "") or content),
                     is_error=bool(tool_result.get("is_error", False)),
-                    display=tool_result.get("display") if isinstance(tool_result.get("display"), dict) else None,
+                    display=tool_result.get("display")
+                    if isinstance(tool_result.get("display"), dict)
+                    else None,
                 )
                 self._finish_tool_card(
                     str(tool_result.get("tool_call_id", "") or uuid.uuid4()),
                     title=result_display.title,
                     body=result_display.body,
                     markdown=result_display.markdown,
-                    display=tool_result.get("display") if isinstance(tool_result.get("display"), dict) else None,
+                    display=tool_result.get("display")
+                    if isinstance(tool_result.get("display"), dict)
+                    else None,
                     kind=result_display.kind,
                     status_badge=result_display.status_badge,
                     status_variant=result_display.status_variant,

@@ -60,6 +60,33 @@ async def test_diff_widget_renders_syntax_highlighted_body():
         assert isinstance(body.visual._renderable, Table)
 
 
+@pytest.mark.asyncio
+async def test_tool_card_file_diff_renders_inside_scrollable_container():
+    from textual.app import App, ComposeResult
+    from worker_tui.app import ToolCard
+
+    class TestApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ToolCard(
+                "⚙ write demo.py",
+                result_title="demo.py",
+                result_body="@@ -0,0 +1 @@\n+print(1)\n",
+                result_kind="file_diff",
+                result_status_badge="+1  -0",
+                result_status_variant="success",
+            )
+
+    app = TestApp()
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause()
+        card = app.query_one(ToolCard)
+
+        assert card.query_one(".tool-card-scroll") is not None
+        assert len(list(card.query(".tool-message-title").results())) == 1
+        assert len(list(card.query(".tool-diff-stats").results())) == 0
+
+
 def test_highlight_diff_code_text_does_not_force_black_background():
     from worker_tui.app import _highlight_diff_code_text, _resolve_diff_lexer
 
@@ -67,4 +94,5 @@ def test_highlight_diff_code_text_does_not_force_black_background():
     text = _highlight_diff_code_text("def foo():", lexer)
 
     assert text.spans
+    assert text.plain == "def foo():"
     assert all(span.style.bgcolor is None for span in text.spans if span.style is not None)

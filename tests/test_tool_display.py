@@ -64,3 +64,32 @@ def test_format_tool_call_display_compacts_lsp_call():
     assert "line=12" in display.body
     assert "column=5" in display.body
     assert "max_results=8" in display.body
+
+
+def test_format_tool_result_display_preserves_multiline_read_output():
+    display = format_tool_result_display(
+        tool_name="read",
+        content="1|first line\n2|second line\n3|third line",
+        is_error=False,
+    )
+
+    assert display.kind == "block"
+    assert display.markdown is False
+    assert display.body.splitlines() == [
+        "1|first line",
+        "2|second line",
+        "3|third line",
+    ]
+
+
+def test_format_tool_result_display_preserves_multiline_bash_output():
+    display = format_tool_result_display(
+        tool_name="bash",
+        content="$ pwd\n/tmp/project\nSTDERR:\nwarning",
+        is_error=False,
+    )
+
+    assert display.kind == "block"
+    assert "$ pwd" in display.body
+    assert "STDERR:" in display.body
+    assert "\n/tmp/project\n" in display.body
