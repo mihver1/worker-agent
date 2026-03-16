@@ -58,7 +58,9 @@ class TestBedrockProviderRuntime:
                     role=Role.USER,
                     content="Look",
                     attachments=[
-                        ImageAttachment(path=str(image_path), mime_type="image/png", name="shot.png")
+                        ImageAttachment(
+                            path=str(image_path), mime_type="image/png", name="shot.png"
+                        )
                     ],
                 )
             ]
@@ -103,9 +105,7 @@ class TestBedrockProviderRuntime:
                     {
                         "contentBlockDelta": {
                             "contentBlockIndex": 1,
-                            "delta": {
-                                "toolUse": {"input": '{"path":"/tmp/notes.txt"}'}
-                            },
+                            "delta": {"toolUse": {"input": '{"path":"/tmp/notes.txt"}'}},
                         }
                     },
                     {"contentBlockStop": {"contentBlockIndex": 1}},

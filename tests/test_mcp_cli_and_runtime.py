@@ -10,7 +10,13 @@ import pytest
 
 
 def _server_script() -> str:
-    return str(Path(__file__).resolve().parents[2] / "worker-ext-mcp" / "tests" / "fixtures" / "dummy_mcp_server.py")
+    return str(
+        Path(__file__).resolve().parents[2]
+        / "worker-ext-mcp"
+        / "tests"
+        / "fixtures"
+        / "dummy_mcp_server.py"
+    )
 
 
 def _free_tcp_port() -> int:
@@ -34,8 +40,8 @@ async def _wait_for_port(port: int, *, host: str = "127.0.0.1", timeout: float =
 
 
 def test_mcp_cli_show_and_set_and_remove(tmp_path, monkeypatch):
-    from click.testing import CliRunner
     import worker_core.config as cfg_mod
+    from click.testing import CliRunner
     from worker_core import cli as cli_mod
 
     global_dir = tmp_path / "global"
@@ -50,7 +56,21 @@ def test_mcp_cli_show_and_set_and_remove(tmp_path, monkeypatch):
     runner = CliRunner()
     result = runner.invoke(
         cli_mod.cli,
-        ["mcp", "set", "demo", "--scope", "global", "--transport", "stdio", "--command", "python3", "--arg", "server.py", "--tool-prefix", "demo__"],
+        [
+            "mcp",
+            "set",
+            "demo",
+            "--scope",
+            "global",
+            "--transport",
+            "stdio",
+            "--command",
+            "python3",
+            "--arg",
+            "server.py",
+            "--tool-prefix",
+            "demo__",
+        ],
     )
     assert result.exit_code == 0
 
@@ -71,9 +91,9 @@ def test_mcp_cli_show_and_set_and_remove(tmp_path, monkeypatch):
 async def test_mcp_runtime_loads_streamable_http_server_from_merged_store(tmp_path, monkeypatch):
     mcp = pytest.importorskip("mcp")
     del mcp
+    from worker_core.config import WorkerConfig
     from worker_core.extensions import ExtensionContext
     from worker_core.mcp_runtime import McpRuntimeManager
-    from worker_core.config import WorkerConfig
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -148,7 +168,7 @@ async def test_mcp_runtime_loads_streamable_http_server_from_merged_store(tmp_pa
 async def test_mcp_runtime_status_payload_marks_disabled_and_timeout(tmp_path):
     from worker_core.config import WorkerConfig
     from worker_core.extensions import ExtensionContext
-    from worker_core.mcp import MCPRegistry, MCPConfig, MCPServerConfig
+    from worker_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
     from worker_core.mcp_runtime import McpRuntimeManager
 
     project_dir = tmp_path / "project"
@@ -160,8 +180,12 @@ async def test_mcp_runtime_status_payload_marks_disabled_and_timeout(tmp_path):
         str(project_dir),
         MCPConfig(
             servers=[
-                MCPServerConfig(name="disabled-demo", enabled=False, transport="stdio", command="python3"),
-                MCPServerConfig(name="timeout-demo", transport="streamable_http", url="https://example.test/mcp"),
+                MCPServerConfig(
+                    name="disabled-demo", enabled=False, transport="stdio", command="python3"
+                ),
+                MCPServerConfig(
+                    name="timeout-demo", transport="streamable_http", url="https://example.test/mcp"
+                ),
             ]
         ),
     )
@@ -169,10 +193,14 @@ async def test_mcp_runtime_status_payload_marks_disabled_and_timeout(tmp_path):
     runtime = McpRuntimeManager()
 
     async def _fake_connect(name, config):
-        raise httpx.ReadTimeout("timed out", request=httpx.Request("GET", config.url or "https://example.test"))
+        raise httpx.ReadTimeout(
+            "timed out", request=httpx.Request("GET", config.url or "https://example.test")
+        )
 
     runtime._connect_server = _fake_connect  # type: ignore[method-assign]
-    await runtime.load(ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig()))
+    await runtime.load(
+        ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig())
+    )
 
     payload = runtime.status_payload()
     by_name = {item["name"]: item for item in payload["servers"]}
@@ -186,7 +214,7 @@ async def test_mcp_runtime_status_payload_marks_disabled_and_timeout(tmp_path):
 async def test_mcp_runtime_status_payload_marks_needs_auth(tmp_path):
     from worker_core.config import WorkerConfig
     from worker_core.extensions import ExtensionContext
-    from worker_core.mcp import MCPRegistry, MCPConfig, MCPServerConfig
+    from worker_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
     from worker_core.mcp_runtime import McpRuntimeManager
 
     project_dir = tmp_path / "project"
@@ -198,7 +226,9 @@ async def test_mcp_runtime_status_payload_marks_needs_auth(tmp_path):
         str(project_dir),
         MCPConfig(
             servers=[
-                MCPServerConfig(name="auth-demo", transport="streamable_http", url="https://example.test/mcp"),
+                MCPServerConfig(
+                    name="auth-demo", transport="streamable_http", url="https://example.test/mcp"
+                ),
             ]
         ),
     )
@@ -209,7 +239,9 @@ async def test_mcp_runtime_status_payload_marks_needs_auth(tmp_path):
         raise RuntimeError("401 unauthorized")
 
     runtime._connect_server = _fake_connect  # type: ignore[method-assign]
-    await runtime.load(ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig()))
+    await runtime.load(
+        ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig())
+    )
 
     payload = runtime.status_payload()
     assert payload["servers"][0]["state"] == "needs_auth"

@@ -35,7 +35,9 @@ def test_schedule_cli_run_uses_managed_local_server_when_remote_not_provided(mon
         async def run_schedule(self, schedule_id: str):
             return {"schedule_id": schedule_id, "ok": True}
 
-    monkeypatch.setattr("worker_tui.local_server.ensure_managed_local_server", fake_ensure_managed_local_server)
+    monkeypatch.setattr(
+        "worker_tui.local_server.ensure_managed_local_server", fake_ensure_managed_local_server
+    )
     monkeypatch.setattr("worker_core.control.RemoteWorkerControl", _FakeControl)
 
     runner = CliRunner()

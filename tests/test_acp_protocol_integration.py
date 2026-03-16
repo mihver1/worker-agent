@@ -79,7 +79,6 @@ async def _read_json_messages_until_with_auto_permissions(
     raise AssertionError(f"Timed out waiting for response id={response_id}; received={messages!r}")
 
 
-
 async def _start_acp_subprocess(
     *,
     cwd: str,
@@ -214,10 +213,13 @@ async def test_worker_acp_setters_emit_valid_session_update_notifications(tmp_pa
         thinking_messages = await _read_json_messages_until(proc, response_id=3)
         thinking_response = thinking_messages[-1]
         assert "error" not in thinking_response
-        assert _config_option_current_value(
-            thinking_response["result"]["configOptions"],
-            "thinking",
-        ) == "high"
+        assert (
+            _config_option_current_value(
+                thinking_response["result"]["configOptions"],
+                "thinking",
+            )
+            == "high"
+        )
         assert any(
             message.get("method") == "session/update"
             and message.get("params", {}).get("update", {}).get("sessionUpdate")
@@ -398,8 +400,7 @@ _providers.create_default_registry = _patched_create_default_registry
         tool_call_updates = [
             update
             for update in tool_updates
-            if update.get("sessionUpdate") == "tool_call"
-            and update.get("toolCallId")
+            if update.get("sessionUpdate") == "tool_call" and update.get("toolCallId")
         ]
         assert len(tool_call_updates) == 1
         assert tool_call_updates[0]["locations"] == [
@@ -579,10 +580,13 @@ async def test_worker_acp_lists_and_resumes_persisted_sessions_after_restart(tmp
             and update.get("content", {}).get("text") == "Restored assistant"
             for update in resume_updates
         )
-        assert _config_option_current_value(
-            resume_response["result"]["configOptions"],
-            "thinking",
-        ) == "off"
+        assert (
+            _config_option_current_value(
+                resume_response["result"]["configOptions"],
+                "thinking",
+            )
+            == "off"
+        )
     finally:
         await _terminate_process(second_proc)
 

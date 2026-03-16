@@ -84,9 +84,7 @@ def _extract_block_text(block: Any) -> str:
 
 def _prompt_to_text(prompt: list[Any]) -> str:
     parts = [
-        part.strip()
-        for part in (_extract_block_text(block) for block in prompt)
-        if part.strip()
+        part.strip() for part in (_extract_block_text(block) for block in prompt) if part.strip()
     ]
     return "\n\n".join(parts)
 
@@ -127,11 +125,7 @@ def _acp_usage_payload(usage: Any) -> Any:
     cached_read_tokens = int(getattr(usage, "cache_read_tokens", 0) or 0)
     cached_write_tokens = int(getattr(usage, "cache_write_tokens", 0) or 0)
     total_tokens = (
-        input_tokens
-        + output_tokens
-        + thought_tokens
-        + cached_read_tokens
-        + cached_write_tokens
+        input_tokens + output_tokens + thought_tokens + cached_read_tokens + cached_write_tokens
     )
     from acp.schema import Usage as AcpUsage
 
@@ -253,6 +247,7 @@ async def run_acp() -> None:
             if runtime is None:
                 runtime = _AcpSessionRuntime()
                 self._session_runtimes[session_id] = runtime
+
                 async def _callback(tool_name: str, args: dict[str, Any]) -> bool:
                     if runtime.allow_all:
                         return True
@@ -348,8 +343,7 @@ async def run_acp() -> None:
             session = await server_mod._serialize_session(state, session_id)
             model_state = await self._session_model_state(session_id)
             thinking_level = (
-                str(session.get("thinking_level", "")).strip()
-                or state.config.agent.thinking
+                str(session.get("thinking_level", "")).strip() or state.config.agent.thinking
             )
             return [
                 SessionConfigOption(
@@ -370,8 +364,7 @@ async def run_acp() -> None:
                                 value="code",
                                 name="Code",
                                 description=(
-                                    "Automatically approve protected tool calls "
-                                    "for this session."
+                                    "Automatically approve protected tool calls for this session."
                                 ),
                             ),
                         ],
@@ -654,6 +647,7 @@ async def run_acp() -> None:
 
             async with runtime.prompt_lock:
                 tracker = ToolCallTracker()
+
                 async def _request_permission(request: Any) -> Any:
                     kwargs = {
                         "session_id": request.session_id,
@@ -664,6 +658,7 @@ async def run_acp() -> None:
                     if isinstance(field_meta, dict):
                         kwargs.update(field_meta)
                     return await self._conn.request_permission(**kwargs)
+
                 broker = PermissionBroker(
                     session_id=session_id,
                     requester=_request_permission,
@@ -693,11 +688,14 @@ async def run_acp() -> None:
                             runtime.pending_tool_calls.append(
                                 (event.tool_call_id, event.tool_name, dict(event.tool_args))
                             )
-                            raw_locations = server_mod._tool_locations(
-                                event.tool_name,
-                                event.tool_args,
-                                cwd=session.project_dir,
-                            ) or []
+                            raw_locations = (
+                                server_mod._tool_locations(
+                                    event.tool_name,
+                                    event.tool_args,
+                                    cwd=session.project_dir,
+                                )
+                                or []
+                            )
                             locations = [
                                 ToolCallLocation(
                                     path=str(location["path"]),

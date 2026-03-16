@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import os
 import sys
@@ -147,6 +148,7 @@ def server_tray(project_dir: str) -> None:
 def connect(url: str, token: str, forward_credentials: str) -> None:
     """Connect TUI to a remote Artel server."""
     from worker_tui.app import run_tui
+
     run_tui(
         remote_url=url,
         auth_token=token,
@@ -249,11 +251,19 @@ def mcp_show(scope: str) -> None:
     registry = MCPRegistry()
     if scope == "global":
         config = registry.load_global_config()
-        click.echo(json.dumps({"servers": [asdict(server) for server in config.servers]}, indent=2, sort_keys=True))
+        click.echo(
+            json.dumps(
+                {"servers": [asdict(server) for server in config.servers]}, indent=2, sort_keys=True
+            )
+        )
         return
     if scope == "project":
         config = registry.load_project_config(os.getcwd())
-        click.echo(json.dumps({"servers": [asdict(server) for server in config.servers]}, indent=2, sort_keys=True))
+        click.echo(
+            json.dumps(
+                {"servers": [asdict(server) for server in config.servers]}, indent=2, sort_keys=True
+            )
+        )
         return
     loaded = registry.load_merged_config(os.getcwd())
     click.echo(
@@ -269,7 +279,9 @@ def mcp_show(scope: str) -> None:
 
 
 @mcp.command("status")
-@click.option("--json-output", "json_output", is_flag=True, help="Print structured MCP state payload")
+@click.option(
+    "--json-output", "json_output", is_flag=True, help="Print structured MCP state payload"
+)
 def mcp_status(json_output: bool) -> None:
     """Show current MCP runtime/config status."""
     from worker_core.config import load_config
@@ -279,7 +291,11 @@ def mcp_status(json_output: bool) -> None:
     runtime = McpRuntimeManager()
     try:
         asyncio.run(
-            runtime.load(ExtensionContext(project_dir=os.getcwd(), runtime="local", config=load_config(os.getcwd())))
+            runtime.load(
+                ExtensionContext(
+                    project_dir=os.getcwd(), runtime="local", config=load_config(os.getcwd())
+                )
+            )
         )
         if json_output:
             click.echo(json.dumps(runtime.status_payload(), indent=2, sort_keys=True))
@@ -287,14 +303,14 @@ def mcp_status(json_output: bool) -> None:
             click.echo(runtime.status_text())
     finally:
         if runtime.available:
-            try:
+            with contextlib.suppress(Exception):
                 asyncio.run(runtime.close())
-            except Exception:
-                pass
 
 
 @mcp.command("reload")
-@click.option("--json-output", "json_output", is_flag=True, help="Print structured MCP state payload")
+@click.option(
+    "--json-output", "json_output", is_flag=True, help="Print structured MCP state payload"
+)
 def mcp_reload(json_output: bool) -> None:
     """Reload MCP runtime and print status."""
     from worker_core.config import load_config
@@ -304,7 +320,11 @@ def mcp_reload(json_output: bool) -> None:
     runtime = McpRuntimeManager()
     try:
         asyncio.run(
-            runtime.load(ExtensionContext(project_dir=os.getcwd(), runtime="local", config=load_config(os.getcwd())))
+            runtime.load(
+                ExtensionContext(
+                    project_dir=os.getcwd(), runtime="local", config=load_config(os.getcwd())
+                )
+            )
         )
         asyncio.run(runtime.reload())
         if json_output:
@@ -313,10 +333,8 @@ def mcp_reload(json_output: bool) -> None:
             click.echo(runtime.status_text())
     finally:
         if runtime.available:
-            try:
+            with contextlib.suppress(Exception):
                 asyncio.run(runtime.close())
-            except Exception:
-                pass
 
 
 @mcp.command("set")
@@ -397,7 +415,8 @@ def schedule_list_command() -> None:
         trigger = f"every {record.every_seconds}s" if record.kind == "interval" else record.cron
         click.echo(
             f"{record.id} [{record.scope}] [{'enabled' if record.enabled else 'disabled'}] "
-            f"{record.kind}={trigger} prompt={target} mode={record.execution_mode}/{record.session_mode} "
+            f"{record.kind}={trigger} prompt={target} "
+            f"mode={record.execution_mode}/{record.session_mode} "
             f"run_missed={record.run_missed}"
         )
 
@@ -412,11 +431,18 @@ def schedule_list_command() -> None:
 @click.option("--prompt", default="", help="Inline prompt text")
 @click.option("--prompt-name", default="", help="Named prompt template")
 @click.option("--arg", default="", help="Prompt variables/input")
-@click.option("--project-dir", "target_project_dir", default="", help="Project directory for the run")
+@click.option(
+    "--project-dir", "target_project_dir", default="", help="Project directory for the run"
+)
 @click.option("--model", default="", help="Override model (provider/model-id)")
 @click.option("--session-mode", type=click.Choice(["reuse", "new"]), default="reuse")
 @click.option("--execution-mode", type=click.Choice(["readonly", "inherit"]), default="readonly")
-@click.option("--overlap", "overlap_policy", type=click.Choice(["skip", "allow", "cancel_previous"]), default="skip")
+@click.option(
+    "--overlap",
+    "overlap_policy",
+    type=click.Choice(["skip", "allow", "cancel_previous"]),
+    default="skip",
+)
 @click.option("--max-runtime", "max_runtime_seconds", type=int, default=0)
 @click.option("--run-missed", type=click.Choice(["none", "latest", "all"]), default="none")
 @click.option("--disabled", is_flag=True)
@@ -481,7 +507,12 @@ def schedule_add_command(
 @click.option("--model", default=None)
 @click.option("--session-mode", type=click.Choice(["reuse", "new"]), default=None)
 @click.option("--execution-mode", type=click.Choice(["readonly", "inherit"]), default=None)
-@click.option("--overlap", "overlap_policy", type=click.Choice(["skip", "allow", "cancel_previous"]), default=None)
+@click.option(
+    "--overlap",
+    "overlap_policy",
+    type=click.Choice(["skip", "allow", "cancel_previous"]),
+    default=None,
+)
 @click.option("--max-runtime", "max_runtime_seconds", type=int, default=None)
 @click.option("--run-missed", type=click.Choice(["none", "latest", "all"]), default=None)
 def schedule_edit_command(
@@ -590,7 +621,9 @@ def schedule_run_command(schedule_id: str, remote_url: str, token: str) -> None:
             handle = await ensure_managed_local_server(os.getcwd())
             resolved_remote_url = handle.remote_url
             resolved_token = handle.auth_token
-        return await RemoteWorkerControl(resolved_remote_url, resolved_token).run_schedule(schedule_id)
+        return await RemoteWorkerControl(resolved_remote_url, resolved_token).run_schedule(
+            schedule_id
+        )
 
     try:
         payload = asyncio.run(_run())
@@ -800,6 +833,7 @@ def login(provider: str) -> None:
     from worker_ai.provider_specs import get_provider_spec
 
     from worker_core.provider_resolver import get_provider_env_vars
+
     config = load_config(os.getcwd())
     oauth = get_oauth_provider(provider, config=config)
     if oauth is None:
@@ -858,15 +892,23 @@ def rule_add_command(scope: str, text: str, disabled: bool) -> None:
 @rule_group.command("edit")
 @click.argument("rule_id")
 @click.option("--text", default=None, help="Updated rule text")
-@click.option("--scope", type=click.Choice(["project", "global"]), default=None, help="Updated rule scope")
+@click.option(
+    "--scope", type=click.Choice(["project", "global"]), default=None, help="Updated rule scope"
+)
 @click.option("--enable/--disable", "enabled", default=None, help="Updated enabled state")
-def rule_edit_command(rule_id: str, text: str | None, scope: str | None, enabled: bool | None) -> None:
+def rule_edit_command(
+    rule_id: str, text: str | None, scope: str | None, enabled: bool | None
+) -> None:
     """Edit a rule."""
     try:
-        rule = update_rule(rule_id, project_dir=os.getcwd(), text=text, scope=scope, enabled=enabled)
+        rule = update_rule(
+            rule_id, project_dir=os.getcwd(), text=text, scope=scope, enabled=enabled
+        )
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
-    click.echo(f"Rule updated: {rule.id} [{rule.scope}] {'enabled' if rule.enabled else 'disabled'}")
+    click.echo(
+        f"Rule updated: {rule.id} [{rule.scope}] {'enabled' if rule.enabled else 'disabled'}"
+    )
 
 
 def _delete_rule_or_raise(rule_id: str) -> str:
@@ -1039,8 +1081,6 @@ async def _print_mode(
         await runtime.lsp_runtime.close()
 
 
-
-
 async def _resolve_api_key(config, provider_name: str) -> tuple[str | None, str]:
     """Resolve API key: config → env → OAuth token → None.
 
@@ -1053,6 +1093,7 @@ async def _resolve_api_key(config, provider_name: str) -> tuple[str | None, str]
     )
 
     from worker_core.provider_resolver import get_provider_config, get_provider_env_vars
+
     # From config
     prov_cfg = get_provider_config(config, provider_name)
     if prov_cfg and prov_cfg.api_key:

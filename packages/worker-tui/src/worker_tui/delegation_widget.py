@@ -6,7 +6,6 @@ from typing import Any
 
 from rich.text import Text
 from textual.widgets import Static
-
 from worker_core.delegation.registry import get_registry
 
 
@@ -81,7 +80,7 @@ class DelegationStatusWidget(Static):
             return "Orchestration: idle"
         lines = ["Orchestration:"]
         for run in runs[-5:]:
-            latest = str(run.get('latest_update', '')).strip()
+            latest = str(run.get("latest_update", "")).strip()
             suffix = f" — {_truncate(latest, 24)}" if latest else ""
             lines.append(
                 f"  {_status_icon(str(run.get('status', '')))} "

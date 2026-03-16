@@ -40,6 +40,7 @@ def get_provider_config(config: WorkerConfig, provider_name: str) -> ProviderCon
         return config.providers.get(spec.id)
     return None
 
+
 def _catalog_provider_name(provider_name: str, spec: ProviderSpec | None) -> str:
     if spec is not None and spec.catalog_id:
         return spec.catalog_id
@@ -177,8 +178,7 @@ async def _builtin_models_from_provider(
         if direct_discovery:
             models = await provider.list_models_direct()
             return {
-                model.id: model.model_copy(update={"provider": provider_id})
-                for model in models
+                model.id: model.model_copy(update={"provider": provider_id}) for model in models
             }
         return {
             model.id: model.model_copy(update={"provider": provider_id})
@@ -197,6 +197,7 @@ def _resolve_api_key_for_discovery(config: WorkerConfig, provider_name: str) -> 
         if value:
             return value
     return None
+
 
 def _supports_direct_model_discovery(provider_type: str, spec: ProviderSpec | None) -> bool:
     if spec is not None and spec.direct_model_discovery:
@@ -263,15 +264,9 @@ def _model_from_override(
         name=override.name or model_id,
         context_window=override.context_window or 0,
         max_output_tokens=override.max_output_tokens or 0,
-        supports_tools=(
-            override.supports_tools
-            if override.supports_tools is not None
-            else True
-        ),
+        supports_tools=(override.supports_tools if override.supports_tools is not None else True),
         supports_vision=(
-            override.supports_vision
-            if override.supports_vision is not None
-            else False
+            override.supports_vision if override.supports_vision is not None else False
         ),
         supports_reasoning=(
             override.supports_reasoning if override.supports_reasoning is not None else False

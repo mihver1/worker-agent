@@ -211,7 +211,9 @@ class TestArtelBootstrap:
         assert result.cmux_preflight is None
         assert seen == [resolved]
 
-    def test_bootstrap_artel_skips_cmux_preflight_for_non_interactive_command(self, tmp_path, monkeypatch):
+    def test_bootstrap_artel_skips_cmux_preflight_for_non_interactive_command(
+        self, tmp_path, monkeypatch
+    ):
         import worker_core.artel_bootstrap as bootstrap_mod
 
         seen: list[str | None] = []

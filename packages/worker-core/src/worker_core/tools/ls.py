@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import os
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +10,15 @@ from worker_ai.models import ToolDef, ToolParam
 
 from worker_core.tools import Tool
 
-_IGNORE_DIRS = {".git", "__pycache__", "node_modules", ".venv", ".tox", ".mypy_cache", ".pytest_cache"}
+_IGNORE_DIRS = {
+    ".git",
+    "__pycache__",
+    "node_modules",
+    ".venv",
+    ".tox",
+    ".mypy_cache",
+    ".pytest_cache",
+}
 
 
 class LsTool(Tool):
@@ -35,11 +42,7 @@ class LsTool(Tool):
         max_depth = int(kwargs.get("max_depth", 1))
         show_hidden = kwargs.get("show_hidden", False)
 
-        target = (
-            Path(self.working_dir) / path
-            if not Path(path).is_absolute()
-            else Path(path)
-        )
+        target = Path(self.working_dir) / path if not Path(path).is_absolute() else Path(path)
         if not target.exists():
             return f"Error: Path not found: {target}"
         if not target.is_dir():
@@ -49,7 +52,10 @@ class LsTool(Tool):
 
         # Offload blocking directory traversal to thread pool
         lines: list[str] = await asyncio.to_thread(
-            self._list_dir_sync, target, max_depth, show_hidden,
+            self._list_dir_sync,
+            target,
+            max_depth,
+            show_hidden,
         )
 
         if not lines:
@@ -58,7 +64,9 @@ class LsTool(Tool):
 
     @staticmethod
     def _list_dir_sync(
-        target: Path, max_depth: int, show_hidden: bool,
+        target: Path,
+        max_depth: int,
+        show_hidden: bool,
     ) -> list[str]:
         lines: list[str] = []
         LsTool._walk(target, lines, depth=0, max_depth=max_depth, show_hidden=show_hidden)

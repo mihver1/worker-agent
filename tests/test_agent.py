@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import pytest
-
+from conftest import MockProvider
 from worker_ai.models import Done, TextDelta, ToolCallDelta, Usage
 from worker_core.agent import AgentEventType, AgentSession
 from worker_core.config import PermissionsConfig
 from worker_core.tools.builtins import create_builtin_tools
-
-from conftest import MockProvider
 
 
 @pytest.mark.asyncio
@@ -17,7 +15,11 @@ async def test_simple_text_response():
     """Agent returns text without tool calls → single turn."""
     provider = MockProvider(
         responses=[
-            [TextDelta(content="Hello "), TextDelta(content="World"), Done(usage=Usage(input_tokens=10, output_tokens=5))],
+            [
+                TextDelta(content="Hello "),
+                TextDelta(content="World"),
+                Done(usage=Usage(input_tokens=10, output_tokens=5)),
+            ],
         ]
     )
     session = AgentSession(provider=provider, model="test-model", tools=[])
@@ -105,7 +107,10 @@ async def test_max_turns_limit():
     """Agent should stop after max_turns iterations."""
     # Always return a tool call → infinite loop without max_turns
     responses = [
-        [ToolCallDelta(id=f"tc_{i}", name="read", arguments={"path": "hello.txt"}), Done(usage=Usage())]
+        [
+            ToolCallDelta(id=f"tc_{i}", name="read", arguments={"path": "hello.txt"}),
+            Done(usage=Usage()),
+        ]
         for i in range(10)
     ]
     provider = MockProvider(responses=responses)

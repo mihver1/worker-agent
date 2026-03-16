@@ -34,9 +34,7 @@ _OAUTH_REQUIRED_BETAS = (
 _INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14"
 _FINE_GRAINED_TOOL_STREAMING_BETA = "fine-grained-tool-streaming-2025-05-14"
 _OAUTH_USER_AGENT = "claude-cli/2.1.2 (external, cli)"
-_CLAUDE_CODE_SYSTEM_PREFIX = (
-    "You are Claude Code, Anthropic's official CLI for Claude."
-)
+_CLAUDE_CODE_SYSTEM_PREFIX = "You are Claude Code, Anthropic's official CLI for Claude."
 
 # ── Known models ──────────────────────────────────────────────────
 
@@ -240,7 +238,7 @@ def _prefix_tool_name(name: str) -> str:
 
 def _strip_oauth_tool_prefix(name: str) -> str:
     if name.startswith(_OAUTH_TOOL_PREFIX):
-        return name[len(_OAUTH_TOOL_PREFIX):]
+        return name[len(_OAUTH_TOOL_PREFIX) :]
     return name
 
 
@@ -286,9 +284,7 @@ def _consume_message_event(event: dict[str, Any], usage: Usage) -> list[StreamEv
             if text:
                 emitted.append(ReasoningDelta(content=text))
         elif block_type == "tool_use":
-            tool_name = _strip_oauth_tool_prefix(
-                block.get("name") or block.get("tool_name", "")
-            )
+            tool_name = _strip_oauth_tool_prefix(block.get("name") or block.get("tool_name", ""))
             arguments = block.get("input")
             if arguments is None:
                 arguments = block.get("tool_input", {})
@@ -415,9 +411,7 @@ class AnthropicProvider(Provider):
         self._auth_type: str = kwargs.get("auth_type", "api")
         self._beta_headers = _normalize_beta_headers(kwargs.get("beta_headers"))
         self._interleaved_thinking = bool(kwargs.get("interleaved_thinking", False))
-        self._fine_grained_tool_streaming = bool(
-            kwargs.get("fine_grained_tool_streaming", False)
-        )
+        self._fine_grained_tool_streaming = bool(kwargs.get("fine_grained_tool_streaming", False))
         default_timeout = httpx.Timeout(connect=10.0, read=300.0, write=10.0, pool=10.0)
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
@@ -480,9 +474,7 @@ class AnthropicProvider(Provider):
         if merged_betas:
             headers["anthropic-beta"] = merged_betas
 
-        async with self._client.stream(
-            "POST", url, json=body, headers=headers
-        ) as response:
+        async with self._client.stream("POST", url, json=body, headers=headers) as response:
             if response.status_code != 200:
                 error_body = await response.aread()
                 msg = f"Anthropic API error {response.status_code}: {error_body.decode()}"

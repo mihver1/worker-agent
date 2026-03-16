@@ -75,8 +75,7 @@ _GITHUB_COPILOT_MODELS: list[ModelInfo] = [
 
 def _clone_models(provider_name: str) -> list[ModelInfo]:
     return [
-        model.model_copy(update={"provider": provider_name})
-        for model in _GITHUB_COPILOT_MODELS
+        model.model_copy(update={"provider": provider_name}) for model in _GITHUB_COPILOT_MODELS
     ]
 
 

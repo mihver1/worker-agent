@@ -159,6 +159,7 @@ def test_root_pyproject_exposes_artel_as_primary_distribution() -> None:
         "artel-web",
     ]
 
+
 def test_workspace_pyprojects_use_artel_distribution_names() -> None:
     expected_names = {
         "packages/worker-ai/pyproject.toml": "artel-ai",
@@ -198,9 +199,7 @@ def test_root_meta_package_exposes_artel_with_worker_compatibility(monkeypatch) 
     monkeypatch.syspath_prepend(str(src_root))
 
     saved_modules = {
-        name: module
-        for name, module in sys.modules.items()
-        if name == "artel" or name == "worker"
+        name: module for name, module in sys.modules.items() if name == "artel" or name == "worker"
     }
     sys.modules.pop("artel", None)
     sys.modules.pop("worker", None)

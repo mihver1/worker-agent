@@ -94,6 +94,7 @@ class TestPrompts:
     def test_list_prompts(self, tmp_path):
         """list_prompts returns sorted names."""
         from worker_core.prompts import list_prompts
+
         prompts_dir = tmp_path / ".artel" / "prompts"
         prompts_dir.mkdir(parents=True)
         (prompts_dir / "beta.md").write_text("B")
@@ -115,7 +116,8 @@ class TestSkills:
 
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
-        (skills_dir / "testing.md").write_text(textwrap.dedent("""\
+        (skills_dir / "testing.md").write_text(
+            textwrap.dedent("""\
             ---
             name: python-testing
             description: Best practices for pytest
@@ -124,7 +126,8 @@ class TestSkills:
             # Python Testing
 
             Use fixtures, parametrize, etc.
-        """))
+        """)
+        )
 
         skills = load_skills(str(tmp_path))
         assert "python-testing" in skills
@@ -135,6 +138,7 @@ class TestSkills:
     def test_load_skills_without_frontmatter(self, tmp_path):
         """Skills without frontmatter use filename as name."""
         from worker_core.skills import load_skills
+
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
         (skills_dir / "git-workflow.md").write_text(
@@ -161,11 +165,7 @@ class TestSkills:
         monkeypatch.setattr(cfg_mod, "SKILLS_DIR", global_dir)
         monkeypatch.setattr(cfg_mod, "LEGACY_SKILLS_DIR", tmp_path / "legacy-skills")
         (global_dir / "docker.md").write_text(
-            "---\n"
-            "name: docker\n"
-            "description: Global\n"
-            "---\n"
-            "Global content"
+            "---\nname: docker\ndescription: Global\n---\nGlobal content"
         )
 
         project_dir = tmp_path / "project"
@@ -173,11 +173,7 @@ class TestSkills:
         project_skills = project_dir / ".artel" / "skills"
         project_skills.mkdir(parents=True)
         (project_skills / "docker.md").write_text(
-            "---\n"
-            "name: docker\n"
-            "description: Project\n"
-            "---\n"
-            "Project content"
+            "---\nname: docker\ndescription: Project\n---\nProject content"
         )
 
         skills = skills_mod.load_skills(str(project_dir))
@@ -187,6 +183,7 @@ class TestSkills:
     def test_build_skills_header(self, tmp_path):
         """Skills header contains all skill names and descriptions."""
         from worker_core.skills import build_skills_header, load_skills
+
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
         (skills_dir / "a.md").write_text(
@@ -228,6 +225,7 @@ class TestSkills:
     def test_list_skills(self, tmp_path):
         """list_skills returns sorted names."""
         from worker_core.skills import list_skills
+
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
         (skills_dir / "z.md").write_text("---\nname: zulu\n---\nZ")
@@ -373,12 +371,14 @@ class TestKeybindingsConfig:
 
         config_dir = tmp_path / ".artel"
         config_dir.mkdir()
-        (config_dir / "config.toml").write_text(textwrap.dedent("""\
+        (config_dir / "config.toml").write_text(
+            textwrap.dedent("""\
             [keybindings]
             [keybindings.bindings]
             "ctrl+k" = "clear"
             "ctrl+r" = "resume"
-        """))
+        """)
+        )
 
         config = load_config(str(tmp_path))
         assert config.keybindings.bindings == {
@@ -389,9 +389,10 @@ class TestKeybindingsConfig:
     def test_keybindings_missing_section(self, tmp_path):
         """Config without keybindings section uses defaults."""
         from worker_core.config import load_config
+
         config_dir = tmp_path / ".artel"
         config_dir.mkdir()
-        (config_dir / "config.toml").write_text("[agent]\nmodel = \"mock/m\"\n")
+        (config_dir / "config.toml").write_text('[agent]\nmodel = "mock/m"\n')
 
         config = load_config(str(tmp_path))
         assert config.keybindings.bindings == {}

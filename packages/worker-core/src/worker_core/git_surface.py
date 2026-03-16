@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-from typing import Any
 
 
 def _run_git(args: list[str], *, cwd: str) -> subprocess.CompletedProcess[str]:
@@ -31,7 +29,14 @@ def render_git_status(*, cwd: str) -> str:
     if not entries:
         return f"Git status\n{header}\n\nWorking tree clean."
 
-    grouped: dict[str, list[str]] = {"modified": [], "added": [], "deleted": [], "renamed": [], "untracked": [], "other": []}
+    grouped: dict[str, list[str]] = {
+        "modified": [],
+        "added": [],
+        "deleted": [],
+        "renamed": [],
+        "untracked": [],
+        "other": [],
+    }
     for line in entries:
         code = line[:2]
         path = line[3:] if len(line) > 3 else line

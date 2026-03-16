@@ -5,13 +5,13 @@ from __future__ import annotations
 import fnmatch
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 from worker_core.config import PermissionsConfig
 
 
-class Decision(str, Enum):
+class Decision(StrEnum):
     ALLOW = "allow"
     ASK = "ask"
     DENY = "deny"
@@ -42,7 +42,9 @@ class PermissionPolicy:
             return PermissionResult(allowed=True)
 
         if decision == Decision.DENY:
-            return PermissionResult(allowed=False, reason=f"Tool '{tool_name}' is denied by policy.")
+            return PermissionResult(
+                allowed=False, reason=f"Tool '{tool_name}' is denied by policy."
+            )
 
         # ASK — requires user confirmation
         if self.callback:
@@ -52,7 +54,9 @@ class PermissionPolicy:
             return PermissionResult(allowed=False, reason="User denied permission.")
 
         # No callback — default deny for safety
-        return PermissionResult(allowed=False, reason="Permission required but no callback configured.")
+        return PermissionResult(
+            allowed=False, reason="Permission required but no callback configured."
+        )
 
     def _get_decision(self, tool_name: str, args: dict[str, Any]) -> Decision:
         """Determine the base decision from config."""

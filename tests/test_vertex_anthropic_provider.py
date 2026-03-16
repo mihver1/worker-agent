@@ -143,9 +143,7 @@ class TestAnthropicVertexProviderRuntime:
                     "description": "Read a file",
                     "input_schema": {
                         "type": "object",
-                        "properties": {
-                            "path": {"type": "string", "description": "Path"}
-                        },
+                        "properties": {"path": {"type": "string", "description": "Path"}},
                         "required": ["path"],
                     },
                 }
@@ -183,7 +181,9 @@ class TestAnthropicVertexProviderRuntime:
                             role=Role.USER,
                             content="Look",
                             attachments=[
-                                ImageAttachment(path=str(image_path), mime_type="image/png", name="shot.png")
+                                ImageAttachment(
+                                    path=str(image_path), mime_type="image/png", name="shot.png"
+                                )
                             ],
                         )
                     ],

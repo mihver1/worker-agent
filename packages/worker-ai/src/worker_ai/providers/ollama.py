@@ -23,6 +23,7 @@ class OllamaProvider(OpenAICompatibleProvider):
             models=[],
             **kwargs,
         )
+
     def _api_base_url(self) -> str:
         if self._base_url.endswith("/api"):
             return self._base_url

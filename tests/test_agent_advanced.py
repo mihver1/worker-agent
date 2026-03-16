@@ -80,7 +80,9 @@ async def test_abort_stops_loop():
         * 10
     )
     session = AgentSession(
-        provider=provider, model="test-model", tools=create_builtin_tools("/tmp"),
+        provider=provider,
+        model="test-model",
+        tools=create_builtin_tools("/tmp"),
         max_turns=10,
     )
 
@@ -111,9 +113,7 @@ async def test_thinking_level_passed_to_provider():
             [TextDelta(content="ok"), Done(usage=Usage())],
         ]
     )
-    session = AgentSession(
-        provider=provider, model="test-model", tools=[], thinking_level="high"
-    )
+    session = AgentSession(provider=provider, model="test-model", tools=[], thinking_level="high")
     async for _ in session.run("test"):
         pass
 
@@ -140,9 +140,7 @@ async def test_context_files_walk_up(tmp_path):
     (artel_dir / "AGENTS.md").write_text("Child project instructions")
 
     provider = MockProvider()
-    session = AgentSession(
-        provider=provider, model="test-model", tools=[], project_dir=str(child)
-    )
+    session = AgentSession(provider=provider, model="test-model", tools=[], project_dir=str(child))
 
     assert "Parent context instructions" in session.system_prompt
     assert "Child project instructions" in session.system_prompt

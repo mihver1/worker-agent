@@ -201,8 +201,7 @@ def _parse_openai_model_list(payload: Any, provider_name: str) -> list[ModelInfo
                     128_000,
                 ),
                 max_output_tokens=_int_or_default(
-                    raw_model.get("max_output_tokens")
-                    or raw_model.get("max_completion_tokens"),
+                    raw_model.get("max_output_tokens") or raw_model.get("max_completion_tokens"),
                     8_192,
                 ),
                 supports_tools=_bool_or_default(
@@ -261,8 +260,7 @@ def _message_content_parts_openai(msg: Message) -> str | list[dict[str, Any]]:
                 "type": "image_url",
                 "image_url": {
                     "url": (
-                        f"data:{attachment.mime_type};base64,"
-                        f"{attachment_data_base64(attachment)}"
+                        f"data:{attachment.mime_type};base64,{attachment_data_base64(attachment)}"
                     )
                 },
             }
@@ -385,42 +383,48 @@ def _build_responses_input(messages: list[Message]) -> tuple[str | None, list[di
             assert msg.tool_result is not None
             if msg.tool_result.tool_call_id not in emitted_tool_call_ids:
                 continue
-            items.append({
-                "type": "function_call_output",
-                "call_id": msg.tool_result.tool_call_id,
-                "output": msg.tool_result.content,
-            })
+            items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": msg.tool_result.tool_call_id,
+                    "output": msg.tool_result.content,
+                }
+            )
             continue
 
         if msg.role == Role.ASSISTANT and msg.tool_calls:
             if msg.content or msg.attachments:
-                items.append({
-                    "type": "message",
-                    "role": "assistant",
-                    "content": _message_content_parts_responses(msg),
-                })
+                items.append(
+                    {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": _message_content_parts_responses(msg),
+                    }
+                )
             for tc in msg.tool_calls:
                 if tc.id not in tool_result_ids:
                     continue
                 arguments = (
-                    json.dumps(tc.arguments)
-                    if isinstance(tc.arguments, dict)
-                    else tc.arguments
+                    json.dumps(tc.arguments) if isinstance(tc.arguments, dict) else tc.arguments
                 )
-                items.append({
-                    "type": "function_call",
-                    "name": tc.name,
-                    "arguments": arguments,
-                    "call_id": tc.id,
-                })
+                items.append(
+                    {
+                        "type": "function_call",
+                        "name": tc.name,
+                        "arguments": arguments,
+                        "call_id": tc.id,
+                    }
+                )
                 emitted_tool_call_ids.add(tc.id)
             continue
 
-        items.append({
-            "type": "message",
-            "role": msg.role.value,
-            "content": _message_content_parts_responses(msg),
-        })
+        items.append(
+            {
+                "type": "message",
+                "role": msg.role.value,
+                "content": _message_content_parts_responses(msg),
+            }
+        )
 
     return instructions, items
 
@@ -429,12 +433,14 @@ def _build_responses_tools(tools: list[ToolDef]) -> list[dict[str, Any]]:
     """Convert ToolDef list to Responses API tool definitions."""
     result = []
     for t in tools:
-        result.append({
-            "type": "function",
-            "name": t.name,
-            "description": t.description,
-            "parameters": tool_input_schema(t),
-        })
+        result.append(
+            {
+                "type": "function",
+                "name": t.name,
+                "description": t.description,
+                "parameters": tool_input_schema(t),
+            }
+        )
     return result
 
 
@@ -454,7 +460,13 @@ def _debug_log_responses_body(model: str, body: dict[str, Any]) -> None:
                     continue
                 if part.get("type") == "input_image":
                     image_url = str(part.get("image_url", ""))
-                    part_summary.append({"type": "input_image", "url_prefix": image_url[:32], "chars": len(image_url)})
+                    part_summary.append(
+                        {
+                            "type": "input_image",
+                            "url_prefix": image_url[:32],
+                            "chars": len(image_url),
+                        }
+                    )
                 else:
                     part_summary.append({"type": part.get("type", "unknown")})
             summary.append({"role": item.get("role"), "parts": part_summary})
@@ -636,9 +648,7 @@ class OpenAICompatibleProvider(Provider):
             thinking_level=thinking_level,
         )
 
-        async with self._client.stream(
-            "POST", path, json=body, headers=headers
-        ) as response:
+        async with self._client.stream("POST", path, json=body, headers=headers) as response:
             if response.status_code != 200:
                 error_body = await response.aread()
                 msg = f"OpenAI API error {response.status_code}: {error_body.decode()}"

@@ -3,9 +3,8 @@ from __future__ import annotations
 import asyncio
 
 from aiohttp.test_utils import TestClient, TestServer
-
-from worker_core.delegation.registry import get_registry, reset_registry
 from worker_core.config import WorkerConfig
+from worker_core.delegation.registry import get_registry, reset_registry
 from worker_server.server import ServerState, _create_rest_app
 
 
@@ -35,18 +34,27 @@ async def test_server_lists_gets_and_cancels_delegates() -> None:
     app = _create_rest_app(state, "test_token")
 
     async with TestClient(TestServer(app)) as client:
-        resp = await client.get("/api/sessions/session-1/delegates", headers={"Authorization": "Bearer test_token"})
+        resp = await client.get(
+            "/api/sessions/session-1/delegates", headers={"Authorization": "Bearer test_token"}
+        )
         assert resp.status == 200
         data = await resp.json()
         assert data["delegates"][0]["id"] == run.id
 
-        resp = await client.get(f"/api/sessions/session-1/delegates/{run.id}", headers={"Authorization": "Bearer test_token"})
+        resp = await client.get(
+            f"/api/sessions/session-1/delegates/{run.id}",
+            headers={"Authorization": "Bearer test_token"},
+        )
         assert resp.status == 200
         data = await resp.json()
         assert data["delegate"]["task"] == "Inspect the Artel server"
         assert data["delegate"]["latest_update"] == "started"
 
-        resp = await client.post(f"/api/sessions/session-1/delegates/{run.id}/cancel", headers={"Authorization": "Bearer test_token"}, json={})
+        resp = await client.post(
+            f"/api/sessions/session-1/delegates/{run.id}/cancel",
+            headers={"Authorization": "Bearer test_token"},
+            json={},
+        )
         assert resp.status == 200
         data = await resp.json()
         assert data["cancelled"] is True

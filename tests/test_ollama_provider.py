@@ -59,6 +59,7 @@ class TestOllamaProviderRuntime:
         assert mock_get.call_args.kwargs["headers"]["authorization"] == "Bearer ollama_cloud_token"
 
         await provider.close()
+
     @pytest.mark.asyncio
     async def test_stream_chat_supports_hosted_ollama_base_url_and_api_key(self):
         provider = OllamaProvider(

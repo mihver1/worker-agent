@@ -23,7 +23,13 @@ async def test_tool_result_display_round_trip(store):
             tool_call_id="tc1",
             content="Applied edit to file",
             is_error=False,
-            display={"kind": "file_diff", "path": "demo.py", "added_lines": 1, "removed_lines": 1, "diff": "@@\n-old\n+new"},
+            display={
+                "kind": "file_diff",
+                "path": "demo.py",
+                "added_lines": 1,
+                "removed_lines": 1,
+                "diff": "@@\n-old\n+new",
+            },
         ),
     )
     await store.add_message("s1", message)

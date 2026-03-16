@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from worker_core.session_rewind import collect_last_ai_changed_paths
 
 

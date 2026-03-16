@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 from pathlib import Path
 from typing import Any
-
-from worker_core.tool_display import build_file_diff_display
 
 from worker_ai.models import ToolDef, ToolParam
 
@@ -22,6 +21,7 @@ from worker_core.board import (
     update_task_in_markdown,
 )
 from worker_core.execution import get_current_tool_execution_context
+from worker_core.tool_display import build_file_diff_display
 from worker_core.tools import Tool
 from worker_core.worktree import run_worktree_command
 
@@ -362,7 +362,9 @@ class AddTaskTool(Tool):
     """Add a task to the shared project task board."""
 
     name = "add_task"
-    description = "Add a task to the shared project task board. Optionally nest it under a parent task."
+    description = (
+        "Add a task to the shared project task board. Optionally nest it under a parent task."
+    )
 
     def __init__(self, working_dir: str = "."):
         self.working_dir = working_dir
@@ -388,7 +390,7 @@ class AddTaskTool(Tool):
                 session = ctx.session
                 callback = getattr(session, "board_event_callback", None)
                 if callable(callback):
-                    try:
+                    with contextlib.suppress(Exception):
                         callback(
                             "task_added",
                             {
@@ -398,8 +400,6 @@ class AddTaskTool(Tool):
                                 "status": normalized_status,
                             },
                         )
-                    except Exception:
-                        pass
             return f"Added task #{task_id}: {title}"
         except Exception as e:
             return f"Error: {e}"
@@ -452,7 +452,7 @@ class UpdateTaskTool(Tool):
                 session = ctx.session
                 callback = getattr(session, "board_event_callback", None)
                 if callable(callback):
-                    try:
+                    with contextlib.suppress(Exception):
                         callback(
                             "task_updated",
                             {
@@ -461,8 +461,6 @@ class UpdateTaskTool(Tool):
                                 "status": status,
                             },
                         )
-                    except Exception:
-                        pass
             return f"Updated task #{task_id}"
         except Exception as e:
             return f"Error: {e}"
@@ -527,10 +525,8 @@ class AppendOperatorNoteTool(Tool):
             session = ctx.session
             callback = getattr(session, "board_event_callback", None)
             if callable(callback):
-                try:
+                with contextlib.suppress(Exception):
                     callback("operator_notes_appended", {"text": text})
-                except Exception:
-                    pass
         return "Appended operator note."
 
     def definition(self) -> ToolDef:

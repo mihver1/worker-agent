@@ -7,8 +7,8 @@ from aiohttp.test_utils import TestClient, TestServer
 @pytest.mark.asyncio
 async def test_session_rule_override_endpoints(tmp_path, monkeypatch):
     from worker_core import config as cfg_mod
-    from worker_server.server import ServerState, _create_rest_app
     from worker_core.config import WorkerConfig
+    from worker_server.server import ServerState, _create_rest_app
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -57,4 +57,7 @@ async def test_session_rule_override_endpoints(tmp_path, monkeypatch):
         )
         assert reset_all.status == 200
         reset_all_payload = await reset_all.json()
-        assert reset_all_payload["rule_overrides"] == {"disabled_rule_ids": [], "enabled_rule_ids": []}
+        assert reset_all_payload["rule_overrides"] == {
+            "disabled_rule_ids": [],
+            "enabled_rule_ids": [],
+        }

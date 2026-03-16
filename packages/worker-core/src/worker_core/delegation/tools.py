@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from worker_ai.models import ToolDef, ToolParam
+
 from worker_core.delegation.formatting import format_run_detail, format_run_list, format_run_summary
-from worker_core.delegation.service import DelegationService
 from worker_core.execution import get_current_tool_execution_context
 from worker_core.tools import Tool
 
@@ -19,7 +19,9 @@ def _coerce_bool(value: Any) -> bool:
 
 class DelegateTaskTool(Tool):
     name = "delegate_task"
-    description = "Delegate a focused task to an in-process Artel subagent running in the current window."
+    description = (
+        "Delegate a focused task to an in-process Artel subagent running in the current window."
+    )
 
     def __init__(self, service_factory: Any):
         self._service_factory = service_factory
@@ -51,11 +53,36 @@ class DelegateTaskTool(Tool):
             description=self.description,
             parameters=[
                 ToolParam(name="task", type="string", description="Task to delegate."),
-                ToolParam(name="context", type="string", description="Optional extra context.", required=False),
-                ToolParam(name="model", type="string", description="Optional model override.", required=False),
-                ToolParam(name="project_dir", type="string", description="Optional project directory override.", required=False),
-                ToolParam(name="mode", type="string", description="readonly or inherit (default: readonly).", required=False),
-                ToolParam(name="wait", type="boolean", description="Wait for completion before returning.", required=False),
+                ToolParam(
+                    name="context",
+                    type="string",
+                    description="Optional extra context.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="model",
+                    type="string",
+                    description="Optional model override.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="project_dir",
+                    type="string",
+                    description="Optional project directory override.",
+                    required=False,
+                ),
+                ToolParam(
+                    name="mode",
+                    type="string",
+                    description="readonly or inherit (default: readonly).",
+                    required=False,
+                ),
+                ToolParam(
+                    name="wait",
+                    type="boolean",
+                    description="Wait for completion before returning.",
+                    required=False,
+                ),
             ],
         )
 
@@ -82,7 +109,14 @@ class ListDelegatesTool(Tool):
         return ToolDef(
             name=self.name,
             description=self.description,
-            parameters=[ToolParam(name="status", type="string", description="Optional status filter.", required=False)],
+            parameters=[
+                ToolParam(
+                    name="status",
+                    type="string",
+                    description="Optional status filter.",
+                    required=False,
+                )
+            ],
         )
 
 
@@ -115,7 +149,12 @@ class GetDelegateTool(Tool):
             description=self.description,
             parameters=[
                 ToolParam(name="run_id", type="string", description="Delegated run ID."),
-                ToolParam(name="wait", type="boolean", description="Wait for completion before returning.", required=False),
+                ToolParam(
+                    name="wait",
+                    type="boolean",
+                    description="Wait for completion before returning.",
+                    required=False,
+                ),
             ],
         )
 

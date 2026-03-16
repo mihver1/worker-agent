@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from worker_core.config import CONFIG_DIR, project_state_dir
+
 from worker_tui import local_server
 
 _ARTEL_SERVER_TRAY_ACTIVE_ENV = "ARTEL_SERVER_TRAY_ACTIVE"
@@ -106,8 +107,7 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["launchctl", *args],
         check=False,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         text=True,
     )
 
@@ -185,7 +185,9 @@ def run_server_tray(project_dir: str = "") -> None:
     if sys.platform != "darwin":
         raise RuntimeError("Artel server tray is only available on macOS.")
 
-    resolved_project_dir = str(Path(project_dir or os.environ.get(PROJECT_DIR_ENV, os.getcwd())).resolve())
+    resolved_project_dir = str(
+        Path(project_dir or os.environ.get(PROJECT_DIR_ENV, os.getcwd())).resolve()
+    )
     os.environ[_ARTEL_SERVER_TRAY_ACTIVE_ENV] = "1"
 
     try:
@@ -197,7 +199,9 @@ def run_server_tray(project_dir: str = "") -> None:
         def __init__(self) -> None:
             super().__init__("Artel", quit_button=None)
             self._project_dir = resolved_project_dir
-            self._status_item = rumps.MenuItem(_server_status_text(self._project_dir), callback=None)
+            self._status_item = rumps.MenuItem(
+                _server_status_text(self._project_dir), callback=None
+            )
             self._status_item.set_callback(None)
             self.menu = [
                 self._status_item,
@@ -220,7 +224,9 @@ def run_server_tray(project_dir: str = "") -> None:
             if _local_server_running(self._project_dir):
                 self._refresh_status()
                 return
-            asyncio.run(local_server.ensure_managed_local_server(self._project_dir, ensure_tray=False))
+            asyncio.run(
+                local_server.ensure_managed_local_server(self._project_dir, ensure_tray=False)
+            )
             self._refresh_status()
 
         def _stop_server(self, _sender) -> None:
@@ -228,7 +234,9 @@ def run_server_tray(project_dir: str = "") -> None:
             self._refresh_status()
 
         def _restart_server(self, _sender) -> None:
-            asyncio.run(local_server.restart_managed_local_server(self._project_dir, ensure_tray=False))
+            asyncio.run(
+                local_server.restart_managed_local_server(self._project_dir, ensure_tray=False)
+            )
             self._refresh_status()
 
         def _clean_duplicate_servers(self, _sender) -> None:

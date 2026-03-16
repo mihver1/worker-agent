@@ -61,9 +61,7 @@ class AnthropicVertexProvider(GoogleVertexProvider):
         super().__init__(api_key=api_key, base_url=base_url, **kwargs)
         self._beta_headers = _normalize_beta_headers(kwargs.get("beta_headers"))
         self._interleaved_thinking = bool(kwargs.get("interleaved_thinking", False))
-        self._fine_grained_tool_streaming = bool(
-            kwargs.get("fine_grained_tool_streaming", False)
-        )
+        self._fine_grained_tool_streaming = bool(kwargs.get("fine_grained_tool_streaming", False))
 
     async def stream_chat(
         self,

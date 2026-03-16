@@ -22,6 +22,7 @@ _DEFAULT_AZURE_API_VERSION = "2024-10-21"
 def _looks_like_v1_base_url(base_url: str | None) -> bool:
     return (base_url or "").rstrip("/").endswith("/openai/v1")
 
+
 def _looks_like_models_base_url(base_url: str | None) -> bool:
     return (base_url or "").rstrip("/").endswith("/models")
 
@@ -71,8 +72,7 @@ class AzureOpenAIProvider(OpenAIProvider):
             or _is_azure_ai_foundry_base_url(base_url)
         )
         self._api_version = str(
-            kwargs.get("api_version", _DEFAULT_AZURE_API_VERSION)
-            or _DEFAULT_AZURE_API_VERSION
+            kwargs.get("api_version", _DEFAULT_AZURE_API_VERSION) or _DEFAULT_AZURE_API_VERSION
         )
         normalized_base_url = _normalize_azure_base_url(base_url, use_v1=self._use_v1_api)
         super().__init__(

@@ -9,7 +9,6 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urljoin, urlsplit
 
 import httpx
-
 from worker_ai.models import ToolDef, ToolParam
 
 from worker_core.tools import Tool
@@ -148,8 +147,7 @@ class WebSearchTool(Tool):
 
     name = "web_search"
     description = (
-        "Search the public web and return the top matching results with titles, "
-        "URLs, and snippets."
+        "Search the public web and return the top matching results with titles, URLs, and snippets."
     )
 
     async def execute(self, **kwargs: Any) -> str:
@@ -199,7 +197,9 @@ class WebSearchTool(Tool):
         for index, result in enumerate(filtered, start=1):
             snippet_text = result.snippet or "(no snippet provided)"
             if mode == "summary":
-                snippet_text = summarize_untrusted_web_content(snippet_text, max_lines=4, max_chars=800)
+                snippet_text = summarize_untrusted_web_content(
+                    snippet_text, max_lines=4, max_chars=800
+                )
             elif mode in {"llm_summary", "strict"}:
                 snippet_text = await llm_safe_summarize_untrusted_web_content(
                     snippet_text,
@@ -234,7 +234,10 @@ class WebSearchTool(Tool):
                 ToolParam(
                     name="mode",
                     type="string",
-                    description="Snippet mode: 'full', 'summary', 'llm_summary', or 'strict' (default: full)",
+                    description=(
+                        "Snippet mode: 'full', 'summary', 'llm_summary', or "
+                        "'strict' (default: full)"
+                    ),
                     required=False,
                     enum=["full", "summary", "llm_summary", "strict"],
                 ),

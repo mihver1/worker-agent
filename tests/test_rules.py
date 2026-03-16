@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 from worker_ai.models import Done, ToolCallDelta, Usage
 from worker_core.agent import AgentEventType, AgentSession
@@ -93,14 +91,16 @@ async def test_rule_blocks_edit_of_read_only_path(tmp_path, monkeypatch):
     add_rule(scope="project", text="README.md is read-only", project_dir=str(project_dir))
 
     provider = _Provider(
-        [[
-            ToolCallDelta(
-                id="tc_1",
-                name="edit",
-                arguments={"path": "README.md", "search": "hello", "replace": "updated"},
-            ),
-            Done(usage=Usage()),
-        ]]
+        [
+            [
+                ToolCallDelta(
+                    id="tc_1",
+                    name="edit",
+                    arguments={"path": "README.md", "search": "hello", "replace": "updated"},
+                ),
+                Done(usage=Usage()),
+            ]
+        ]
     )
     session = AgentSession(
         provider=provider,
@@ -126,13 +126,17 @@ def test_rule_crud_and_scope(tmp_path, monkeypatch):
     (project_dir / ".artel").mkdir(parents=True)
 
     global_rule = add_rule(scope="global", text="Global rule.", project_dir=str(project_dir))
-    project_rule = add_rule(scope="project", text="Project rule.", project_dir=str(project_dir), enabled=False)
+    project_rule = add_rule(
+        scope="project", text="Project rule.", project_dir=str(project_dir), enabled=False
+    )
 
     rules = list_rules(str(project_dir))
     assert [rule.id for rule in rules] == [global_rule.id, project_rule.id]
     assert get_rule(global_rule.id, str(project_dir)) is not None
 
-    updated = update_rule(project_rule.id, project_dir=str(project_dir), text="Project rule updated.", enabled=True)
+    updated = update_rule(
+        project_rule.id, project_dir=str(project_dir), text="Project rule updated.", enabled=True
+    )
     assert updated.text == "Project rule updated."
     assert updated.enabled is True
 

@@ -6,10 +6,9 @@ import json
 import re
 import uuid
 from dataclasses import asdict, dataclass
-from typing import Any
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import worker_core.config as config_mod
 
@@ -66,7 +65,7 @@ class SessionRuleOverrides:
     enabled_rule_ids: set[str]
 
     @classmethod
-    def empty(cls) -> "SessionRuleOverrides":
+    def empty(cls) -> SessionRuleOverrides:
         return cls(disabled_rule_ids=set(), enabled_rule_ids=set())
 
 
@@ -139,7 +138,9 @@ def _write_rules_file(path: Path, rules: list[RuleRecord]) -> None:
 
 def load_rules(project_dir: str = "") -> RuleCollection:
     global_records = _load_rules_file(global_rules_path(), scope="global")
-    project_records = _load_rules_file(project_rules_path(project_dir), scope="project") if project_dir else []
+    project_records = (
+        _load_rules_file(project_rules_path(project_dir), scope="project") if project_dir else []
+    )
     return RuleCollection(global_rules=global_records, project_rules=project_records)
 
 
@@ -162,7 +163,9 @@ def move_rule(
         raise ValueError(f"Rule '{needle}' not found")
     path = global_rules_path() if current.scope == "global" else project_rules_path(project_dir)
     records = _load_rules_file(path, scope=current.scope)
-    current_index = next((index for index, record in enumerate(records) if record.id == needle), None)
+    current_index = next(
+        (index for index, record in enumerate(records) if record.id == needle), None
+    )
     if current_index is None:
         raise ValueError(f"Rule '{needle}' not found")
     record = records.pop(current_index)
@@ -178,7 +181,9 @@ def move_rule(
     return get_rule(needle, project_dir) or record
 
 
-def active_rules(project_dir: str = "", overrides: SessionRuleOverrides | None = None) -> list[RuleRecord]:
+def active_rules(
+    project_dir: str = "", overrides: SessionRuleOverrides | None = None
+) -> list[RuleRecord]:
     rules = list_rules(project_dir)
     if overrides is None:
         return [rule for rule in rules if rule.enabled]
@@ -247,8 +252,12 @@ def update_rule(
         raise ValueError(f"Rule '{needle}' not found")
 
     target_scope = _normalize_scope(scope) if scope is not None else current.scope
-    target_path = global_rules_path() if target_scope == "global" else project_rules_path(project_dir)
-    source_path = global_rules_path() if current.scope == "global" else project_rules_path(project_dir)
+    target_path = (
+        global_rules_path() if target_scope == "global" else project_rules_path(project_dir)
+    )
+    source_path = (
+        global_rules_path() if current.scope == "global" else project_rules_path(project_dir)
+    )
     source_records = _load_rules_file(source_path, scope=current.scope)
     source_records = [record for record in source_records if record.id != needle]
 
@@ -308,7 +317,8 @@ def format_rules_for_system_prompt(
         return ""
     lines = [
         "## Active Rules",
-        "These rules are mandatory. If a request conflicts with any active rule, refuse and do not perform the action or call tools to carry it out.",
+        "These rules are mandatory. If a request conflicts with any active rule, "
+        "refuse and do not perform the action or call tools to carry it out.",
         "",
     ]
     for rule in rules:
@@ -341,7 +351,16 @@ def _evaluate_rule_text(
 
     tool_aliases = _TOOL_ALIASES.get(tool_name, ())
     for alias in tool_aliases:
-        if any(phrase in lowered for phrase in (f"do not use {alias}", f"don't use {alias}", f"never use {alias}", f"forbid {alias}", f"no {alias}")):
+        if any(
+            phrase in lowered
+            for phrase in (
+                f"do not use {alias}",
+                f"don't use {alias}",
+                f"never use {alias}",
+                f"forbid {alias}",
+                f"no {alias}",
+            )
+        ):
             return RuleViolation(rule=rule, reason=f"Rule forbids using tool '{tool_name}'.")
 
     if tool_name == "bash":
@@ -350,7 +369,9 @@ def _evaluate_rule_text(
         if match is not None:
             forbidden = match.group(1).strip()
             if forbidden and forbidden in command:
-                return RuleViolation(rule=rule, reason=f"Rule forbids running command matching '{forbidden}'.")
+                return RuleViolation(
+                    rule=rule, reason=f"Rule forbids running command matching '{forbidden}'."
+                )
 
     path_arg = _PATH_ARG_BY_TOOL.get(tool_name)
     if path_arg:
@@ -363,8 +384,14 @@ def _evaluate_rule_text(
             protected = _protected_path_from_rule(rule.text, project_dir)
             if protected is not None:
                 protected_resolved = protected.resolve(strict=False)
-                if resolved_target == protected_resolved or protected_resolved in resolved_target.parents:
-                    return RuleViolation(rule=rule, reason=f"Rule marks '{protected_resolved}' as read-only for modifications.")
+                if (
+                    resolved_target == protected_resolved
+                    or protected_resolved in resolved_target.parents
+                ):
+                    return RuleViolation(
+                        rule=rule,
+                        reason=f"Rule marks '{protected_resolved}' as read-only for modifications.",
+                    )
     return None
 
 
@@ -423,7 +450,8 @@ def deserialize_session_rule_overrides(payload: dict[str, Any] | None) -> Sessio
 
 def _protected_path_from_rule(text: str, project_dir: str) -> Path | None:
     patterns = (
-        r"(?:do not|don't|never)\s+(?:modify|edit|change|touch|rewrite|write to)\s+([`'\"]?[^`'\"\n]+[`'\"]?)",
+        r"(?:do not|don't|never)\s+(?:modify|edit|change|touch|rewrite|write to)\s+"
+        r"([`'\"]?[^`'\"\n]+[`'\"]?)",
         r"read-only\s*:\s*([`'\"]?[^`'\"\n]+[`'\"]?)",
         r"([`'\"][^`'\"]+[`'\"]|\S+)\s+is\s+read-only",
     )

@@ -155,6 +155,7 @@ class ServerState:
     schedule_registry: ScheduleRegistry = field(default_factory=ScheduleRegistry)
     schedule_service: ScheduleService | None = None
 
+
 def _tool_kind_for_name(tool_name: str) -> str:
     mapping = {
         "read": "read",
@@ -237,6 +238,7 @@ def _tool_locations(
         location["line"] = line
     return [location]
 
+
 def _agent_event_payload(event: Any, *, cwd: str | None = None) -> dict[str, Any]:
     payload: dict[str, Any] = {"type": event.type.value}
     if event.type in {
@@ -285,7 +287,9 @@ class ScheduleService:
         self._schedule_tasks: dict[str, set[str]] = {}
         self._schedule_scope: dict[str, str] = {}
         self._loaded_schedules: dict[str, ScheduleRecord] = {}
-        self._history_path = Path(self.state.default_project_dir) / ".artel" / "schedules-history.json"
+        self._history_path = (
+            Path(self.state.default_project_dir) / ".artel" / "schedules-history.json"
+        )
 
     async def start(self) -> None:
         await self.reload()
@@ -310,12 +314,16 @@ class ScheduleService:
         async with self._lock:
             loaded = self.state.schedule_registry.load_merged_config(self.state.default_project_dir)
             self._loaded_schedules = loaded.schedules
-            self._schedule_scope = {schedule_id: record.scope for schedule_id, record in loaded.schedules.items()}
+            self._schedule_scope = {
+                schedule_id: record.scope for schedule_id, record in loaded.schedules.items()
+            }
             self._load_state_files()
             self._load_history_file()
             now = datetime.now(UTC)
             for schedule_id, record in loaded.schedules.items():
-                state_record = self._schedule_states.setdefault(schedule_id, ScheduleStateRecord(schedule_id=schedule_id))
+                state_record = self._schedule_states.setdefault(
+                    schedule_id, ScheduleStateRecord(schedule_id=schedule_id)
+                )
                 state_record.next_run_at = self._compute_next_run(record, state_record, now=now)
                 state_record.updated_at = _schedule_now()
             for schedule_id in list(self._schedule_states):
@@ -329,12 +337,17 @@ class ScheduleService:
     def snapshot(self) -> dict[str, Any]:
         schedules_payload: list[dict[str, Any]] = []
         for schedule_id, record in sorted(self._loaded_schedules.items()):
-            state_record = self._schedule_states.get(schedule_id, ScheduleStateRecord(schedule_id=schedule_id))
+            state_record = self._schedule_states.get(
+                schedule_id, ScheduleStateRecord(schedule_id=schedule_id)
+            )
             schedules_payload.append(
                 {
                     "schedule": serialize_schedule(record),
                     "state": serialize_schedule_state(state_record),
-                    "runs": [serialize_schedule_run(run) for run in self._run_history.get(schedule_id, [])],
+                    "runs": [
+                        serialize_schedule_run(run)
+                        for run in self._run_history.get(schedule_id, [])
+                    ],
                 }
             )
         next_run_at = ""
@@ -379,7 +392,9 @@ class ScheduleService:
             raise
 
     async def _trigger_due_schedule(self, record: ScheduleRecord) -> None:
-        state_record = self._schedule_states.setdefault(record.id, ScheduleStateRecord(schedule_id=record.id))
+        state_record = self._schedule_states.setdefault(
+            record.id, ScheduleStateRecord(schedule_id=record.id)
+        )
         now = datetime.now(UTC)
         due_at = parse_timestamp(state_record.next_run_at) or now
         missed: list[datetime] = []
@@ -414,8 +429,12 @@ class ScheduleService:
         for schedule_id, record in self._loaded_schedules.items():
             if not record.enabled:
                 continue
-            state_record = self._schedule_states.setdefault(schedule_id, ScheduleStateRecord(schedule_id=schedule_id))
-            next_run = parse_timestamp(state_record.next_run_at) if state_record.next_run_at else None
+            state_record = self._schedule_states.setdefault(
+                schedule_id, ScheduleStateRecord(schedule_id=schedule_id)
+            )
+            next_run = (
+                parse_timestamp(state_record.next_run_at) if state_record.next_run_at else None
+            )
             if next_run is None:
                 next_text = self._compute_next_run(record, state_record, now=now)
                 state_record.next_run_at = next_text
@@ -429,11 +448,19 @@ class ScheduleService:
             return None, 0.0
         return best_record, max(0.0, (best_time - now).total_seconds())
 
-    async def _trigger_schedule(self, record: ScheduleRecord, *, trigger: str, scheduled_for: datetime) -> None:
+    async def _trigger_schedule(
+        self, record: ScheduleRecord, *, trigger: str, scheduled_for: datetime
+    ) -> None:
         schedule_id = record.id
-        state_record = self._schedule_states.setdefault(schedule_id, ScheduleStateRecord(schedule_id=schedule_id))
+        state_record = self._schedule_states.setdefault(
+            schedule_id, ScheduleStateRecord(schedule_id=schedule_id)
+        )
         state_record.next_run_at = ""
-        running_ids = [run_id for run_id in state_record.running_run_ids if run_id in self._run_tasks and not self._run_tasks[run_id].done()]
+        running_ids = [
+            run_id
+            for run_id in state_record.running_run_ids
+            if run_id in self._run_tasks and not self._run_tasks[run_id].done()
+        ]
         state_record.running_run_ids = running_ids
         if running_ids:
             if record.overlap_policy == "skip":
@@ -454,7 +481,9 @@ class ScheduleService:
                 state_record.total_skips += 1
                 state_record.total_runs += 1
                 state_record.last_run_at = _schedule_now()
-                state_record.next_run_at = self._compute_next_run(record, state_record, now=scheduled_for)
+                state_record.next_run_at = self._compute_next_run(
+                    record, state_record, now=scheduled_for
+                )
                 state_record.updated_at = _schedule_now()
                 self._persist_states(record.scope)
                 return
@@ -478,15 +507,21 @@ class ScheduleService:
         state_record.total_runs += 1
         state_record.updated_at = _schedule_now()
         self._append_run(run_record)
-        task = asyncio.create_task(self._execute_schedule(record, run_record), name=f"artel-schedule-{schedule_id}")
+        task = asyncio.create_task(
+            self._execute_schedule(record, run_record), name=f"artel-schedule-{schedule_id}"
+        )
         self._run_tasks[run_id] = task
         self._schedule_tasks.setdefault(schedule_id, set()).add(run_id)
         task.add_done_callback(lambda done, _run_id=run_id: self._run_tasks.pop(_run_id, None))
         self._persist_states(record.scope)
 
-    async def _execute_schedule(self, record: ScheduleRecord, run_record: ScheduleRunRecord) -> None:
+    async def _execute_schedule(
+        self, record: ScheduleRecord, run_record: ScheduleRunRecord
+    ) -> None:
         schedule_id = record.id
-        state_record = self._schedule_states.setdefault(schedule_id, ScheduleStateRecord(schedule_id=schedule_id))
+        state_record = self._schedule_states.setdefault(
+            schedule_id, ScheduleStateRecord(schedule_id=schedule_id)
+        )
         project_dir = _request_project_dir(self.state, record.project_dir)
         model = record.model.strip()
         session_id = self._scheduled_session_id(record, run_record)
@@ -538,8 +573,12 @@ class ScheduleService:
             state_record.last_run_id = run_record.id
             if run_record.session_id:
                 state_record.last_session_id = run_record.session_id
-            state_record.running_run_ids = [item for item in state_record.running_run_ids if item != run_record.id]
-            state_record.next_run_at = self._compute_next_run(record, state_record, now=datetime.now(UTC))
+            state_record.running_run_ids = [
+                item for item in state_record.running_run_ids if item != run_record.id
+            ]
+            state_record.next_run_at = self._compute_next_run(
+                record, state_record, now=datetime.now(UTC)
+            )
             state_record.updated_at = _schedule_now()
             self._persist_states(record.scope)
 
@@ -599,7 +638,9 @@ class ScheduleService:
                 return message.content.strip()[:400]
         return ""
 
-    def _compute_next_run(self, record: ScheduleRecord, state_record: ScheduleStateRecord, *, now: datetime) -> str:
+    def _compute_next_run(
+        self, record: ScheduleRecord, state_record: ScheduleStateRecord, *, now: datetime
+    ) -> str:
         anchor = now
         last_run = parse_timestamp(state_record.last_run_at)
         if last_run is not None and last_run > anchor:
@@ -672,7 +713,9 @@ class ScheduleService:
                 for schedule_id, runs in sorted(self._run_history.items())
             }
         }
-        self._history_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self._history_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
 
     def _persist_states(self, scope: str | None = None) -> None:
         scopes = [scope] if scope in {"global", "project"} else ["global", "project"]
@@ -982,7 +1025,9 @@ async def _serialize_session(
         "model": _session_model_label(state, session_id, session, session_info),
         "project_dir": _session_project_dir(state, session_id, session, session_info),
         "thinking_level": _session_thinking_level(state, session_id, session, session_info),
-        "rule_overrides": serialize_session_rule_overrides(_session_rule_overrides(state, session_id)),
+        "rule_overrides": serialize_session_rule_overrides(
+            _session_rule_overrides(state, session_id)
+        ),
         "messages": message_count,
         "created_at": session_info.created_at if session_info is not None else "",
         "updated_at": session_info.updated_at if session_info is not None else "",
@@ -1226,9 +1271,7 @@ async def _switch_server_session_model(
     provider_name, model_id = model_str.split("/", 1)
     model_info = await get_effective_model_info(state.config, provider_name, model_id)
     if model_info is None:
-        raise RuntimeError(
-            f"Model '{model_id}' not found for provider '{provider_name}'."
-        )
+        raise RuntimeError(f"Model '{model_id}' not found for provider '{provider_name}'.")
 
     previous = state.sessions.pop(session_id, None)
     stored_info, stored_messages = await _stored_session_context(state, session_id)
@@ -1686,9 +1729,11 @@ async def _handle_tool_approval(
 def _create_rest_app(state: ServerState, token: str) -> Any:
     """Create aiohttp REST application for management endpoints."""
     from aiohttp import web
+
     @web.middleware
     async def auth_middleware(
-        request: web.Request, handler: Any,
+        request: web.Request,
+        handler: Any,
     ) -> web.StreamResponse:
         # Skip auth for health endpoint
         if request.path == "/api/health":
@@ -1699,11 +1744,14 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         return await handler(request)
 
     async def handle_health(request: web.Request) -> web.Response:
-        return web.json_response({
-            "status": "ok",
-            "sessions": len(state.sessions),
-            "max_sessions": state.config.server.max_sessions,
-        })
+        return web.json_response(
+            {
+                "status": "ok",
+                "sessions": len(state.sessions),
+                "max_sessions": state.config.server.max_sessions,
+            }
+        )
+
     def _project_config_path() -> Path:
         return effective_project_config_path(state.default_project_dir)
 
@@ -1734,7 +1782,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
                 has_secret = any(token in lowered for token in secret_tokens)
                 has_value = value.strip().strip('"').strip("'")
                 if has_secret and has_value:
-                    lines.append(f"{key}{sep} \"***REDACTED***\"")
+                    lines.append(f'{key}{sep} "***REDACTED***"')
                     continue
             lines.append(line)
         return "\n".join(lines)
@@ -1760,11 +1808,15 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         return value
 
     async def handle_server_info(request: web.Request) -> web.Response:
-        schedule_summary = state.schedule_service.snapshot() if state.schedule_service is not None else {
-            "enabled": False,
-            "count": 0,
-            "next_run_at": "",
-        }
+        schedule_summary = (
+            state.schedule_service.snapshot()
+            if state.schedule_service is not None
+            else {
+                "enabled": False,
+                "count": 0,
+                "next_run_at": "",
+            }
+        )
         return web.json_response(
             {
                 "version": "0.1.0",
@@ -1796,7 +1848,9 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         return web.json_response({"config": _redact_value(effective)})
 
     async def handle_server_diagnostics(request: web.Request) -> web.Response:
-        scheduler_snapshot = state.schedule_service.snapshot() if state.schedule_service is not None else None
+        scheduler_snapshot = (
+            state.schedule_service.snapshot() if state.schedule_service is not None else None
+        )
         return web.json_response(
             {
                 "active_sessions": len(state.sessions),
@@ -1982,8 +2036,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         return web.json_response(
             {
                 "results": [
-                    {"name": ext_name, "ok": ok, "message": msg}
-                    for ext_name, ok, msg in results
+                    {"name": ext_name, "ok": ok, "message": msg} for ext_name, ok, msg in results
                 ]
             }
         )
@@ -2122,13 +2175,19 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
             name = str(item.get("name", "") or "").strip()
             if not name:
                 continue
-            servers.append(MCPServerConfig(name=name, **{k: v for k, v in item.items() if k != "name"}))
+            servers.append(
+                MCPServerConfig(name=name, **{k: v for k, v in item.items() if k != "name"})
+            )
         registry = MCPRegistry()
         if scope == "global":
             written = registry.write_global_config(MCPConfig(servers=servers))
         else:
-            written = registry.write_project_config(state.default_project_dir, MCPConfig(servers=servers))
-        return web.json_response({"path": str(written), "servers": [asdict(server) for server in servers]})
+            written = registry.write_project_config(
+                state.default_project_dir, MCPConfig(servers=servers)
+            )
+        return web.json_response(
+            {"path": str(written), "servers": [asdict(server) for server in servers]}
+        )
 
     async def handle_mcp_server_put(request: web.Request) -> web.Response:
         scope = str(request.query.get("scope", "project")).strip().lower() or "project"
@@ -2162,7 +2221,9 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         else:
             current = registry.load_project_config(state.default_project_dir)
             kept = [server for server in current.servers if server.name != name]
-            written = registry.write_project_config(state.default_project_dir, MCPConfig(servers=kept))
+            written = registry.write_project_config(
+                state.default_project_dir, MCPConfig(servers=kept)
+            )
         return web.json_response({"path": str(written), "deleted": name})
 
     async def handle_delegates_list(request: web.Request) -> web.Response:
@@ -2176,7 +2237,9 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         run = get_delegation_registry().get_session_run(session_id, run_id)
         if run is None:
             return web.json_response({"error": "Delegate not found"}, status=404)
-        return web.json_response({"delegate": run.to_payload(include_result=True, include_events=True)})
+        return web.json_response(
+            {"delegate": run.to_payload(include_result=True, include_events=True)}
+        )
 
     async def handle_delegate_cancel(request: web.Request) -> web.Response:
         session_id = request.match_info["session_id"]
@@ -2185,11 +2248,17 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         if run is None:
             return web.json_response({"error": "Delegate not found"}, status=404)
         cancelled = get_delegation_registry().cancel(run_id)
-        return web.json_response({"cancelled": cancelled, "delegate": run.to_payload(include_result=True, include_events=True)})
+        return web.json_response(
+            {
+                "cancelled": cancelled,
+                "delegate": run.to_payload(include_result=True, include_events=True),
+            }
+        )
 
     async def handle_sessions_list(request: web.Request) -> web.Response:
         sessions_info = await _list_serialized_sessions(state)
         return web.json_response({"sessions": sessions_info})
+
     async def handle_session_get(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         return web.json_response({"session": await _serialize_session(state, sid)})
@@ -2203,6 +2272,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         return web.json_response(
             {"messages": [_serialize_message(message) for message in messages]}
         )
+
     async def handle_session_tree_get(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         try:
@@ -2261,6 +2331,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response({"session": session})
+
     async def handle_session_title_put(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         try:
@@ -2275,6 +2346,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response({"session": session})
+
     async def handle_session_project_put(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         try:
@@ -2329,7 +2401,9 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         session = state.sessions.get(sid)
         project_dir = _session_project_dir(state, sid, session)
         content = await read_project_board_file(operator_notes_path(project_dir))
-        return web.json_response({"content": content, "path": str(operator_notes_path(project_dir))})
+        return web.json_response(
+            {"content": content, "path": str(operator_notes_path(project_dir))}
+        )
 
     async def handle_session_notes_put(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
@@ -2355,6 +2429,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response(result)
+
     async def handle_session_fork_post(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         try:
@@ -2369,6 +2444,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response(result)
+
     async def handle_session_skill_post(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         try:
@@ -2383,6 +2459,7 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
         return web.json_response({"session": session})
+
     async def handle_session_reload_post(request: web.Request) -> web.Response:
         sid = request.match_info["session_id"]
         try:
@@ -2487,8 +2564,12 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
             rule = update_rule(
                 rule_id,
                 project_dir=project_dir,
-                text=str(payload["text"]).strip() if "text" in payload and payload.get("text") is not None else None,
-                scope=str(payload["scope"]).strip() if "scope" in payload and payload.get("scope") is not None else None,
+                text=str(payload["text"]).strip()
+                if "text" in payload and payload.get("text") is not None
+                else None,
+                scope=str(payload["scope"]).strip()
+                if "scope" in payload and payload.get("scope") is not None
+                else None,
                 enabled=bool(payload.get("enabled")) if "enabled" in payload else None,
             )
         except Exception as exc:
@@ -2540,7 +2621,10 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
         overrides = _session_rule_overrides(state, sid)
         if rule_id == "*":
             if raw_enabled is not None:
-                return web.json_response({"error": "Use enabled=null with rule_id '*' to reset all overrides"}, status=400)
+                return web.json_response(
+                    {"error": "Use enabled=null with rule_id '*' to reset all overrides"},
+                    status=400,
+                )
             clear_session_rule_overrides(overrides)
             enabled = None
         elif raw_enabled is None:
@@ -2730,7 +2814,14 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
                 await state.schedule_service.reload()
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        return web.json_response({"schedule": serialize_schedule(schedule), "snapshot": state.schedule_service.snapshot() if state.schedule_service is not None else {}})
+        return web.json_response(
+            {
+                "schedule": serialize_schedule(schedule),
+                "snapshot": state.schedule_service.snapshot()
+                if state.schedule_service is not None
+                else {},
+            }
+        )
 
     async def handle_schedule_put(request: web.Request) -> web.Response:
         schedule_id = request.match_info["schedule_id"]
@@ -2742,28 +2833,66 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
             schedule = update_schedule(
                 schedule_id,
                 project_dir=state.default_project_dir,
-                scope=str(payload["scope"]) if "scope" in payload and payload.get("scope") is not None else None,
+                scope=str(payload["scope"])
+                if "scope" in payload and payload.get("scope") is not None
+                else None,
                 enabled=bool(payload.get("enabled")) if "enabled" in payload else None,
-                kind=str(payload["kind"]) if "kind" in payload and payload.get("kind") is not None else None,
-                every_seconds=int(payload["every_seconds"]) if "every_seconds" in payload and payload.get("every_seconds") is not None else None,
-                cron=str(payload["cron"]) if "cron" in payload and payload.get("cron") is not None else None,
-                timezone=str(payload["timezone"]) if "timezone" in payload and payload.get("timezone") is not None else None,
-                prompt=str(payload["prompt"]) if "prompt" in payload and payload.get("prompt") is not None else None,
-                prompt_name=str(payload["prompt_name"]) if "prompt_name" in payload and payload.get("prompt_name") is not None else None,
-                arg=str(payload["arg"]) if "arg" in payload and payload.get("arg") is not None else None,
-                model=str(payload["model"]) if "model" in payload and payload.get("model") is not None else None,
-                session_mode=str(payload["session_mode"]) if "session_mode" in payload and payload.get("session_mode") is not None else None,
-                execution_mode=str(payload["execution_mode"]) if "execution_mode" in payload and payload.get("execution_mode") is not None else None,
-                overlap_policy=str(payload["overlap_policy"]) if "overlap_policy" in payload and payload.get("overlap_policy") is not None else None,
-                max_runtime_seconds=int(payload["max_runtime_seconds"]) if "max_runtime_seconds" in payload and payload.get("max_runtime_seconds") is not None else None,
-                run_missed=str(payload["run_missed"]) if "run_missed" in payload and payload.get("run_missed") is not None else None,
-                target_project_dir=str(payload["project_dir"]) if "project_dir" in payload and payload.get("project_dir") is not None else None,
+                kind=str(payload["kind"])
+                if "kind" in payload and payload.get("kind") is not None
+                else None,
+                every_seconds=int(payload["every_seconds"])
+                if "every_seconds" in payload and payload.get("every_seconds") is not None
+                else None,
+                cron=str(payload["cron"])
+                if "cron" in payload and payload.get("cron") is not None
+                else None,
+                timezone=str(payload["timezone"])
+                if "timezone" in payload and payload.get("timezone") is not None
+                else None,
+                prompt=str(payload["prompt"])
+                if "prompt" in payload and payload.get("prompt") is not None
+                else None,
+                prompt_name=str(payload["prompt_name"])
+                if "prompt_name" in payload and payload.get("prompt_name") is not None
+                else None,
+                arg=str(payload["arg"])
+                if "arg" in payload and payload.get("arg") is not None
+                else None,
+                model=str(payload["model"])
+                if "model" in payload and payload.get("model") is not None
+                else None,
+                session_mode=str(payload["session_mode"])
+                if "session_mode" in payload and payload.get("session_mode") is not None
+                else None,
+                execution_mode=str(payload["execution_mode"])
+                if "execution_mode" in payload and payload.get("execution_mode") is not None
+                else None,
+                overlap_policy=str(payload["overlap_policy"])
+                if "overlap_policy" in payload and payload.get("overlap_policy") is not None
+                else None,
+                max_runtime_seconds=int(payload["max_runtime_seconds"])
+                if "max_runtime_seconds" in payload
+                and payload.get("max_runtime_seconds") is not None
+                else None,
+                run_missed=str(payload["run_missed"])
+                if "run_missed" in payload and payload.get("run_missed") is not None
+                else None,
+                target_project_dir=str(payload["project_dir"])
+                if "project_dir" in payload and payload.get("project_dir") is not None
+                else None,
             )
             if state.schedule_service is not None:
                 await state.schedule_service.reload()
         except Exception as exc:
             return web.json_response({"error": str(exc)}, status=400)
-        return web.json_response({"schedule": serialize_schedule(schedule), "snapshot": state.schedule_service.snapshot() if state.schedule_service is not None else {}})
+        return web.json_response(
+            {
+                "schedule": serialize_schedule(schedule),
+                "snapshot": state.schedule_service.snapshot()
+                if state.schedule_service is not None
+                else {},
+            }
+        )
 
     async def handle_schedule_delete(request: web.Request) -> web.Response:
         schedule_id = request.match_info["schedule_id"]
@@ -2772,7 +2901,14 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
             return web.json_response({"error": "Schedule not found"}, status=404)
         if state.schedule_service is not None:
             await state.schedule_service.reload()
-        return web.json_response({"schedule": serialize_schedule(schedule), "snapshot": state.schedule_service.snapshot() if state.schedule_service is not None else {}})
+        return web.json_response(
+            {
+                "schedule": serialize_schedule(schedule),
+                "snapshot": state.schedule_service.snapshot()
+                if state.schedule_service is not None
+                else {},
+            }
+        )
 
     async def handle_schedule_run(request: web.Request) -> web.Response:
         schedule_id = request.match_info["schedule_id"]
@@ -2875,7 +3011,9 @@ def _create_rest_app(state: ServerState, token: str) -> Any:
     app.router.add_get("/api/sessions/{session_id}/tree", handle_session_tree_get)
     app.router.add_get("/api/sessions/{session_id}/delegates", handle_delegates_list)
     app.router.add_get("/api/sessions/{session_id}/delegates/{run_id}", handle_delegate_get)
-    app.router.add_post("/api/sessions/{session_id}/delegates/{run_id}/cancel", handle_delegate_cancel)
+    app.router.add_post(
+        "/api/sessions/{session_id}/delegates/{run_id}/cancel", handle_delegate_cancel
+    )
     app.router.add_get("/api/sessions/{session_id}/commands", handle_session_commands_get)
     app.router.add_post(
         "/api/sessions/{session_id}/commands/{command_name}",

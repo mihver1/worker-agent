@@ -150,7 +150,10 @@ class DelegationRegistry:
             self._subscribers.remove(queue)
 
     def _publish(self, event_type: str, run: DelegatedRun) -> None:
-        payload = {"type": event_type, "run": run.to_payload(include_result=True, include_events=True)}
+        payload = {
+            "type": event_type,
+            "run": run.to_payload(include_result=True, include_events=True),
+        }
         for queue in list(self._subscribers):
             with suppress(Exception):
                 queue.put_nowait(payload)

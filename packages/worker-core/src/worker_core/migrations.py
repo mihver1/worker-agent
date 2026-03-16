@@ -37,7 +37,7 @@ def migration(version: int, description: str) -> Callable:
     """Decorator to register a migration function."""
 
     def decorator(
-        fn: Callable[[Path, dict[str, Any]], None]
+        fn: Callable[[Path, dict[str, Any]], None],
     ) -> Callable[[Path, dict[str, Any]], None]:
         _MIGRATIONS.append(Migration(version=version, description=description, fn=fn))
         _MIGRATIONS.sort(key=lambda item: item.version)
@@ -112,7 +112,7 @@ def _copy_tree_if_missing(source_dir: Path, target_dir: Path) -> list[str]:
     if source_dir == target_dir or not source_dir.is_dir():
         return []
     copied: list[str] = []
-    for source_path in sorted(source_dir.rglob('*')):
+    for source_path in sorted(source_dir.rglob("*")):
         if source_path.is_dir():
             continue
         relative = source_path.relative_to(source_dir)
@@ -160,8 +160,7 @@ def _copy_global_state() -> list[str]:
     ]
     for label, source_dir, target_dir in dir_pairs:
         copied.extend(
-            f"{label}/{relative}"
-            for relative in _copy_tree_if_missing(source_dir, target_dir)
+            f"{label}/{relative}" for relative in _copy_tree_if_missing(source_dir, target_dir)
         )
     return copied
 
@@ -218,8 +217,7 @@ def _copy_project_state(project_dir: str) -> list[str]:
     ]
     for label, source_dir, target_dir in dir_pairs:
         copied.extend(
-            f"{label}/{relative}"
-            for relative in _copy_tree_if_missing(source_dir, target_dir)
+            f"{label}/{relative}" for relative in _copy_tree_if_missing(source_dir, target_dir)
         )
     return copied
 

@@ -33,8 +33,12 @@ async def test_local_session_rule_disable_override_allows_tool(monkeypatch, tmp_
     (tmp_path / ".artel").mkdir()
     rule = add_rule(scope="project", text="Do not use bash.", project_dir=str(tmp_path))
 
-    provider = _Provider([[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]])
-    session = AgentSession(provider=provider, model="test", tools=[BashTool(str(tmp_path))], project_dir=str(tmp_path))
+    provider = _Provider(
+        [[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]]
+    )
+    session = AgentSession(
+        provider=provider, model="test", tools=[BashTool(str(tmp_path))], project_dir=str(tmp_path)
+    )
 
     app = WorkerApp()
     app._session = session
@@ -61,8 +65,12 @@ async def test_local_session_rule_reset_restores_enforcement(monkeypatch, tmp_pa
     (tmp_path / ".artel").mkdir()
     rule = add_rule(scope="project", text="Do not use bash.", project_dir=str(tmp_path))
 
-    provider = _Provider([[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]])
-    session = AgentSession(provider=provider, model="test", tools=[BashTool(str(tmp_path))], project_dir=str(tmp_path))
+    provider = _Provider(
+        [[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]]
+    )
+    session = AgentSession(
+        provider=provider, model="test", tools=[BashTool(str(tmp_path))], project_dir=str(tmp_path)
+    )
 
     app = WorkerApp()
     app._session = session
@@ -71,7 +79,9 @@ async def test_local_session_rule_reset_restores_enforcement(monkeypatch, tmp_pa
     await app._cmd_rule(f"disable {rule.id}")
     await app._cmd_rule(f"reset {rule.id}")
 
-    provider2 = _Provider([[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]])
+    provider2 = _Provider(
+        [[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]]
+    )
     session.provider = provider2
     events = [event async for event in session.run("show cwd")]
     results = [event for event in events if event.type == AgentEventType.TOOL_RESULT]

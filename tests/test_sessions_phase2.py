@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import pytest
-
-from worker_ai.models import Done, Message, Role, TextDelta, Usage
+from conftest import MockProvider
+from worker_ai.models import Message, Role
 from worker_core.agent import AgentEventType, AgentSession
 from worker_core.sessions import SessionStore
-
-from conftest import MockProvider
-
 
 # ── Fixtures ──────────────────────────────────────────────────────
 
@@ -326,8 +323,11 @@ async def test_resume_session(tmp_path):
 
     # Session 1: run a message
     session1 = AgentSession(
-        provider=provider, model="mock-model", tools=[],
-        store=store, session_id=session_id,
+        provider=provider,
+        model="mock-model",
+        tools=[],
+        store=store,
+        session_id=session_id,
     )
     async for _ in session1.run("Hello"):
         pass
@@ -338,8 +338,11 @@ async def test_resume_session(tmp_path):
     # Session 2: resume
     provider2 = MockProvider()
     session2 = AgentSession(
-        provider=provider2, model="mock-model", tools=[],
-        store=store, session_id=session_id,
+        provider=provider2,
+        model="mock-model",
+        tools=[],
+        store=store,
+        session_id=session_id,
     )
 
     # Load prior messages

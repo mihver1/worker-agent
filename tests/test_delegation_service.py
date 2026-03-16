@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from conftest import MockProvider
 from worker_ai.models import Done, ToolDef, Usage
 from worker_core.agent import AgentEvent, AgentEventType, AgentSession
 from worker_core.bootstrap import RuntimeBootstrap
@@ -10,8 +11,6 @@ from worker_core.delegation.registry import reset_registry
 from worker_core.delegation.service import DelegationService
 from worker_core.extensions import ExtensionContext, HookDispatcher
 from worker_core.tools import Tool
-
-from conftest import MockProvider
 
 
 class _ExtensionTool(Tool):
@@ -50,9 +49,15 @@ async def test_delegate_task_runs_and_waits(tmp_path, monkeypatch) -> None:
 
     reset_registry()
     monkeypatch.setattr(service_mod, "bootstrap_runtime", _fake_bootstrap_runtime)
-    monkeypatch.setattr(service_mod, "create_agent_session_from_bootstrap", lambda *args, **kwargs: _FakeChildSession())
+    monkeypatch.setattr(
+        service_mod,
+        "create_agent_session_from_bootstrap",
+        lambda *args, **kwargs: _FakeChildSession(),
+    )
 
-    service = DelegationService(ExtensionContext(project_dir=str(tmp_path), runtime="local", config=WorkerConfig()))
+    service = DelegationService(
+        ExtensionContext(project_dir=str(tmp_path), runtime="local", config=WorkerConfig())
+    )
     parent_session = AgentSession(
         provider=MockProvider(),
         model="parent-model",
@@ -145,7 +150,9 @@ async def test_inherit_profile_keeps_extensions_and_parent_permission_callback(m
         permission_callback=_parent_permission_callback,
     )
 
-    run = await service.spawn(parent_session, task="Commit and push", model="inherit", mode="inherit", wait=True)
+    run = await service.spawn(
+        parent_session, task="Commit and push", model="inherit", mode="inherit", wait=True
+    )
 
     assert run.status == "completed"
     assert run.model == "mock/parent-model"

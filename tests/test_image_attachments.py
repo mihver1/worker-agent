@@ -65,4 +65,6 @@ def test_google_builder_includes_inline_data_parts(tmp_path):
     assert built[0]["role"] == "user"
     assert built[0]["parts"][0] == {"text": "Look"}
     assert built[0]["parts"][1]["inlineData"]["mimeType"] == "image/png"
-    assert built[0]["parts"][1]["inlineData"]["data"] == base64.b64encode(b"png-data").decode("ascii")
+    assert built[0]["parts"][1]["inlineData"]["data"] == base64.b64encode(b"png-data").decode(
+        "ascii"
+    )

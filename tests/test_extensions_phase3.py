@@ -130,7 +130,10 @@ async def test_fire_filter_modifies_value():
 
     original = {"path": "foo.txt"}
     result = await dispatcher.fire_filter(
-        "before_tool_call", value=original, session=None, tool_name="read",
+        "before_tool_call",
+        value=original,
+        session=None,
+        tool_name="read",
     )
     assert result["path"] == "foo.txt"
     assert result["_modified"] is True
@@ -195,7 +198,10 @@ async def test_on_message_hook_fires():
     provider = MockProvider()
 
     session = AgentSession(
-        provider=provider, model="m", tools=[], hooks=dispatcher,
+        provider=provider,
+        model="m",
+        tools=[],
+        hooks=dispatcher,
     )
 
     async for _ in session.run("hello"):
@@ -224,7 +230,10 @@ async def test_on_error_hook_fires():
 
     provider = ErrorProvider()
     session = AgentSession(
-        provider=provider, model="m", tools=[], hooks=dispatcher,
+        provider=provider,
+        model="m",
+        tools=[],
+        hooks=dispatcher,
     )
 
     events = []
@@ -249,7 +258,10 @@ async def test_on_compaction_hook_fires():
     provider = MockProvider()
 
     session = AgentSession(
-        provider=provider, model="m", tools=[], hooks=dispatcher,
+        provider=provider,
+        model="m",
+        tools=[],
+        hooks=dispatcher,
     )
 
     # Run a message first
@@ -286,7 +298,10 @@ async def test_before_tool_call_modifies_args(tmp_workdir):
 
     tools = create_builtin_tools(tmp_workdir)
     session = AgentSession(
-        provider=provider, model="m", tools=tools, hooks=dispatcher,
+        provider=provider,
+        model="m",
+        tools=tools,
+        hooks=dispatcher,
     )
 
     async for _ in session.run("read hello.txt"):

@@ -190,7 +190,8 @@ def preflight_cmux(
             guidance=[
                 "Install cmux and make sure the `cmux` binary is on PATH.",
                 "If cmux is installed in a custom location, add it to PATH before running `artel`.",
-                "Use non-interactive commands like `artel -p`, `artel init`, or `artel serve` outside cmux.",
+                "Use non-interactive commands like `artel -p`, `artel init`, or "
+                "`artel serve` outside cmux.",
             ],
         )
 
@@ -202,7 +203,8 @@ def preflight_cmux(
             details=[f"Detected cmux binary: {binary}"],
             guidance=[
                 "Start or attach to a cmux workspace, then launch `artel` from that terminal.",
-                "Keep using explicit commands like `artel -p`, `artel init`, `artel serve`, `artel rpc`, or `artel acp` outside cmux.",
+                "Keep using explicit commands like `artel -p`, `artel init`, "
+                "`artel serve`, `artel rpc`, or `artel acp` outside cmux.",
             ],
             binary_path=binary,
         )
@@ -247,7 +249,8 @@ def preflight_cmux_management(
             summary="Artel cmux management requires the cmux binary, but it was not found.",
             guidance=[
                 "Install cmux and make sure the `cmux` binary is on PATH.",
-                "If cmux is installed in a custom location, add it to PATH before running cmux-backed commands.",
+                "If cmux is installed in a custom location, add it to PATH before "
+                "running cmux-backed commands.",
             ],
         )
 
@@ -255,11 +258,15 @@ def preflight_cmux_management(
         return CmuxPreflightResult(
             ok=False,
             code="socket_unavailable",
-            summary="Artel found the cmux binary, but the cmux socket is unavailable for cmux management.",
+            summary=(
+                "Artel found the cmux binary, but the cmux socket is unavailable "
+                "for cmux management."
+            ),
             details=[f"Expected socket: {socket_path}"],
             guidance=[
                 "Make sure the cmux daemon is running before using cmux-backed commands.",
-                "If your cmux socket lives elsewhere, export CMUX_SOCKET_PATH before running cmux-backed commands.",
+                "If your cmux socket lives elsewhere, export CMUX_SOCKET_PATH "
+                "before running cmux-backed commands.",
                 "CMUX_WORKSPACE_ID is not required here, but a reachable cmux daemon is required.",
             ],
             binary_path=binary,
@@ -271,11 +278,15 @@ def preflight_cmux_management(
         return CmuxPreflightResult(
             ok=False,
             code="socket_unreachable",
-            summary="Artel found the cmux socket path, but could not reach the cmux daemon for cmux management.",
+            summary=(
+                "Artel found the cmux socket path, but could not reach the cmux "
+                "daemon for cmux management."
+            ),
             details=[f"Socket: {socket_path}"],
             guidance=[
                 "Restart or reattach cmux so the socket accepts connections.",
-                "If your cmux socket changed, export CMUX_SOCKET_PATH before running cmux-backed commands.",
+                "If your cmux socket changed, export CMUX_SOCKET_PATH before "
+                "running cmux-backed commands.",
                 "CMUX_WORKSPACE_ID is optional here; cmux daemon reachability is not.",
             ],
             binary_path=binary,
@@ -293,14 +304,18 @@ def preflight_cmux_management(
         return CmuxPreflightResult(
             ok=False,
             code="capabilities_missing",
-            summary="Artel found cmux, but the available cmux CLI capabilities are incomplete for cmux management.",
+            summary=(
+                "Artel found cmux, but the available cmux CLI capabilities are "
+                "incomplete for cmux management."
+            ),
             details=[
                 f"Socket: {socket_path}",
                 f"Missing capabilities: {', '.join(missing_capabilities)}",
             ],
             guidance=[
                 "Upgrade cmux to a build that supports workspace and surface commands.",
-                "Re-run your cmux-backed command after upgrading or connecting to a compatible cmux runtime.",
+                "Re-run your cmux-backed command after upgrading or connecting to "
+                "a compatible cmux runtime.",
             ],
             binary_path=binary,
             workspace=workspace,
@@ -646,7 +661,15 @@ async def surface_create(
         if cwd.strip():
             safe_cwd = cwd.replace("'", "'\"'\"'")
             text = f"cd '{safe_cwd}' && {command.strip()}"
-        await _run(["send", "--surface", surface_ref, *( ["--workspace", workspace] if workspace else [] ), f"{text}\n"])
+        await _run(
+            [
+                "send",
+                "--surface",
+                surface_ref,
+                *(["--workspace", workspace] if workspace else []),
+                f"{text}\n",
+            ]
+        )
     return surface_ref
 
 
@@ -713,12 +736,14 @@ async def ensure_surface(
     for record in await surface_list_records(workspace=workspace):
         if record.id == normalized_title or record.title == normalized_title:
             return record
-    created = (await surface_create(
-        title=normalized_title,
-        command=command,
-        cwd=cwd,
-        workspace=workspace,
-    )).strip()
+    created = (
+        await surface_create(
+            title=normalized_title,
+            command=command,
+            cwd=cwd,
+            workspace=workspace,
+        )
+    ).strip()
     if created:
         return CmuxSurfaceRecord(
             id=created,
@@ -814,7 +839,7 @@ async def bootstrap_artel_workspace(
     orchestrator_record: CmuxSurfaceRecord | None = None
     if reuse_current_for_orchestrator:
         current_workspace = workspace_id().strip()
-        if current_workspace == resolved_workspace or current_workspace == workspace_name:
+        if current_workspace in (resolved_workspace, workspace_name):
             orchestrator_record = await reuse_current_surface(
                 title=orchestrator_title,
                 workspace=resolved_workspace,

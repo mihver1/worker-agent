@@ -29,7 +29,14 @@ async def test_schedule_rest_crud_and_run(tmp_path, monkeypatch):
         class _Session:
             def __init__(self):
                 self.project_dir = kwargs.get("project_dir", str(project_dir))
-                self.messages = [object(), type("M", (), {"role": type("R", (), {"value": "assistant"})(), "content": "done"})()]
+                self.messages = [
+                    object(),
+                    type(
+                        "M",
+                        (),
+                        {"role": type("R", (), {"value": "assistant"})(), "content": "done"},
+                    )(),
+                ]
                 self.provider = type("P", (), {"close": staticmethod(lambda: None)})()
 
             def abort(self):

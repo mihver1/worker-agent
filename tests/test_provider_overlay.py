@@ -32,7 +32,5 @@ class TestProviderOverlay:
         assert overlay["openai"].api_key == ""
         assert overlay["openai"].base_url == "https://api.openai.com/v1"
         assert json.loads(overlay_path.read_text(encoding="utf-8")) == {
-            "providers": {
-                "openai": {"base_url": "https://api.openai.com/v1"}
-            }
+            "providers": {"openai": {"base_url": "https://api.openai.com/v1"}}
         }

@@ -331,9 +331,7 @@ async def test_lsp_tools_use_fake_server_and_render_semantic_results(tmp_path: P
     )
 
     runtime = LspRuntimeManager()
-    await runtime.load(
-        ExtensionContext(project_dir=str(repo), runtime="local", config=config)
-    )
+    await runtime.load(ExtensionContext(project_dir=str(repo), runtime="local", config=config))
     try:
         tools = {tool.name: tool for tool in runtime.tools}
         assert {
@@ -435,9 +433,7 @@ async def test_lsp_runtime_auto_installs_builtin_server_on_first_use(
         assert "lsp_definition" in tools
 
         initial_payload = runtime.status_payload()
-        python_status = next(
-            item for item in initial_payload["servers"] if item["id"] == "python"
-        )
+        python_status = next(item for item in initial_payload["servers"] if item["id"] == "python")
         assert python_status["state"] == "unavailable"
         assert "auto-install is enabled" in python_status["error"]
 
@@ -448,18 +444,14 @@ async def test_lsp_runtime_auto_installs_builtin_server_on_first_use(
         assert install_log.read_text(encoding="utf-8").splitlines() == ["basedpyright"]
 
         final_payload = runtime.status_payload()
-        python_status = next(
-            item for item in final_payload["servers"] if item["id"] == "python"
-        )
+        python_status = next(item for item in final_payload["servers"] if item["id"] == "python")
         assert python_status["state"] == "active"
         assert final_payload["summary"]["clients"] == 1
     finally:
         await runtime.close()
 
     runtime = LspRuntimeManager()
-    await runtime.load(
-        ExtensionContext(project_dir=str(repo), runtime="local", config=config)
-    )
+    await runtime.load(ExtensionContext(project_dir=str(repo), runtime="local", config=config))
     try:
         tools = {tool.name: tool for tool in runtime.tools}
         payload = runtime.status_payload()

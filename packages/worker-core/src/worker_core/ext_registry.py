@@ -55,7 +55,8 @@ def _write_cache(url: str, entries: list[dict]) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     payload = {"ts": time.time(), "entries": entries}
     _cache_path(url).write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8",
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
     )
 
 

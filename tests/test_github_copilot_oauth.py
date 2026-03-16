@@ -66,16 +66,18 @@ class TestGitHubCopilotOAuthBroker:
 
         assert token.access_token == "gho_login_token"
         assert token.provider == "github_copilot_enterprise"
-        assert seen_commands == [[
-            "gh",
-            "auth",
-            "login",
-            "--web",
-            "--clipboard",
-            "--skip-ssh-key",
-            "--hostname",
-            "octo.ghe.com",
-        ]]
+        assert seen_commands == [
+            [
+                "gh",
+                "auth",
+                "login",
+                "--web",
+                "--clipboard",
+                "--skip-ssh-key",
+                "--hostname",
+                "octo.ghe.com",
+            ]
+        ]
         saved = TokenStore(path=tmp_path / "auth.json").load("github_copilot_enterprise")
         assert saved is not None
         assert saved.access_token == "gho_login_token"

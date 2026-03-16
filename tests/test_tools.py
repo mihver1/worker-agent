@@ -122,9 +122,7 @@ class TestEditTool:
 
     @pytest.mark.asyncio
     async def test_edit_replace(self):
-        result = await self.tool.execute(
-            path="hello.txt", search="Line 2", replace="Modified Line"
-        )
+        result = await self.tool.execute(path="hello.txt", search="Line 2", replace="Modified Line")
         assert "Applied edit" in result
         content = (Path(self.workdir) / "hello.txt").read_text()
         assert "Modified Line" in content
@@ -132,16 +130,12 @@ class TestEditTool:
 
     @pytest.mark.asyncio
     async def test_edit_not_found(self):
-        result = await self.tool.execute(
-            path="hello.txt", search="NONEXISTENT", replace="foo"
-        )
+        result = await self.tool.execute(path="hello.txt", search="NONEXISTENT", replace="foo")
         assert "not found" in result
 
     @pytest.mark.asyncio
     async def test_edit_nonexistent_file(self):
-        result = await self.tool.execute(
-            path="missing.txt", search="x", replace="y"
-        )
+        result = await self.tool.execute(path="missing.txt", search="x", replace="y")
         assert "Error" in result
 
     @pytest.mark.asyncio

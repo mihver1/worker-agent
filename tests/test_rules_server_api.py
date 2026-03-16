@@ -7,8 +7,8 @@ from aiohttp.test_utils import TestClient, TestServer
 @pytest.mark.asyncio
 async def test_rules_rest_crud(tmp_path, monkeypatch):
     from worker_core import config as cfg_mod
-    from worker_server.server import ServerState, _create_rest_app
     from worker_core.config import WorkerConfig
+    from worker_server.server import ServerState, _create_rest_app
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -54,8 +54,8 @@ async def test_rules_rest_crud(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_rules_rest_delete_missing_returns_404(tmp_path, monkeypatch):
     from worker_core import config as cfg_mod
-    from worker_server.server import ServerState, _create_rest_app
     from worker_core.config import WorkerConfig
+    from worker_server.server import ServerState, _create_rest_app
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)

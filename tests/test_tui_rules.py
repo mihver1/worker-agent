@@ -7,8 +7,8 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_rule_add_opens_dialog_and_saves(monkeypatch, tmp_path):
-    from worker_tui.app import WorkerApp
     from worker_core import config as cfg_mod
+    from worker_tui.app import WorkerApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -36,9 +36,9 @@ async def test_rule_add_opens_dialog_and_saves(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_rule_edit_opens_dialog_for_existing_rule(monkeypatch, tmp_path):
-    from worker_tui.app import WorkerApp
     from worker_core import config as cfg_mod
     from worker_core.rules import add_rule, list_rules
+    from worker_tui.app import WorkerApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -64,14 +64,16 @@ async def test_rule_edit_opens_dialog_for_existing_rule(monkeypatch, tmp_path):
 
     rules = list_rules(str(tmp_path))
     assert any(item.text == "Updated rule" and item.enabled is False for item in rules)
-    assert any("Updated rule" in message or "Updated rule" == message for message, _ in seen) or any("Updated rule" == item.text for item in rules)
+    assert any(
+        "Updated rule" in message or message == "Updated rule" for message, _ in seen
+    ) or any(item.text == "Updated rule" for item in rules)
 
 
 @pytest.mark.asyncio
 async def test_rules_command_lists_rules(monkeypatch, tmp_path):
-    from worker_tui.app import WorkerApp
     from worker_core import config as cfg_mod
     from worker_core.rules import add_rule
+    from worker_tui.app import WorkerApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)

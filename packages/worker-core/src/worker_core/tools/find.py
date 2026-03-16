@@ -37,11 +37,7 @@ class FindTool(Tool):
         file_type = kwargs.get("type", "")
         max_results = int(kwargs.get("max_results", 100))
 
-        search_path = (
-            Path(self.working_dir) / path
-            if not Path(path).is_absolute()
-            else Path(path)
-        )
+        search_path = Path(self.working_dir) / path if not Path(path).is_absolute() else Path(path)
         if not search_path.exists():
             return f"Error: Path not found: {search_path}"
 
@@ -66,9 +62,15 @@ class FindTool(Tool):
                 cmd += ["-name", pattern]
             # Exclude common noise
             cmd += [
-                "-not", "-path", "*/.git/*",
-                "-not", "-path", "*/__pycache__/*",
-                "-not", "-path", "*/node_modules/*",
+                "-not",
+                "-path",
+                "*/.git/*",
+                "-not",
+                "-path",
+                "*/__pycache__/*",
+                "-not",
+                "-path",
+                "*/node_modules/*",
             ]
 
         try:
@@ -79,7 +81,7 @@ class FindTool(Tool):
                 cwd=self.working_dir,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Error: Search timed out after 30s"
         except OSError as e:
             return f"Error running find: {e}"

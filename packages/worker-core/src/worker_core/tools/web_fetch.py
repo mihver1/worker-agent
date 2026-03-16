@@ -8,7 +8,6 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-
 from worker_ai.models import ToolDef, ToolParam
 
 from worker_core.tools import Tool
@@ -174,9 +173,7 @@ class WebFetchTool(Tool):
     """Fetch a public web page and return simplified text."""
 
     name = "web_fetch"
-    description = (
-        "Fetch a public URL and return a readable text version of the page content."
-    )
+    description = "Fetch a public URL and return a readable text version of the page content."
 
     async def execute(self, **kwargs: Any) -> str:
         url = str(kwargs.get("url", "")).strip()
@@ -225,7 +222,10 @@ class WebFetchTool(Tool):
                 ToolParam(
                     name="mode",
                     type="string",
-                    description="Response mode: 'full', 'summary', 'llm_summary', or 'strict' (default: full)",
+                    description=(
+                        "Response mode: 'full', 'summary', 'llm_summary', or "
+                        "'strict' (default: full)"
+                    ),
                     required=False,
                     enum=["full", "summary", "llm_summary", "strict"],
                 ),

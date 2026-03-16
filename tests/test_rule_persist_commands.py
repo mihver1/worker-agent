@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock
+
+import pytest
 
 
 @pytest.mark.asyncio
@@ -37,7 +38,9 @@ async def test_remote_rule_persist_enable_uses_edit_rule(monkeypatch):
         def __init__(self):
             self.calls = []
 
-        async def edit_rule(self, rule_id: str, *, text=None, scope=None, enabled=None, project_dir: str = ""):
+        async def edit_rule(
+            self, rule_id: str, *, text=None, scope=None, enabled=None, project_dir: str = ""
+        ):
             self.calls.append((rule_id, text, scope, enabled, project_dir))
             return {"rule": {"id": rule_id, "enabled": enabled}}
 

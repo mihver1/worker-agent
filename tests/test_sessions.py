@@ -107,9 +107,7 @@ async def test_message_with_image_attachments_round_trip(store, tmp_path):
     msg = Message(
         role=Role.USER,
         content="See attached",
-        attachments=[
-            ImageAttachment(path=str(image_path), mime_type="image/png", name="shot.png")
-        ],
+        attachments=[ImageAttachment(path=str(image_path), mime_type="image/png", name="shot.png")],
     )
     await store.add_message("s1", msg)
 

@@ -44,6 +44,7 @@ class TestAgentsMdLoading:
         )
         monkeypatch.setattr(cfg_mod, "SKILLS_DIR", global_dir / "skills")
         monkeypatch.setattr(cfg_mod, "LEGACY_SKILLS_DIR", global_dir / "legacy-skills")
+
     def test_system_prompt_includes_agents_md(self, tmp_path):
         artel_dir = tmp_path / ".artel"
         artel_dir.mkdir()
@@ -212,9 +213,7 @@ class TestOAuthFallback:
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        config = WorkerConfig(
-            providers={"anthropic": ProviderConfig(api_key="sk-config-key")}
-        )
+        config = WorkerConfig(providers={"anthropic": ProviderConfig(api_key="sk-config-key")})
         key, auth_type = await _resolve_api_key(config, "anthropic")
         assert key == "sk-config-key"
         assert auth_type == "api"
@@ -285,7 +284,9 @@ class TestOAuthFallback:
 
     @pytest.mark.asyncio
     async def test_non_oauth_provider_does_not_use_stale_token_store_entry(
-        self, tmp_path, monkeypatch,
+        self,
+        tmp_path,
+        monkeypatch,
     ):
         from worker_core.cli import _resolve_api_key
         from worker_core.config import WorkerConfig
@@ -380,6 +381,7 @@ class TestOAuthFallback:
 
         async def _unexpected_gh_cli(host: str) -> str | None:
             raise AssertionError(f"gh auth fallback should not be used for {host}")
+
         monkeypatch.setattr(
             oauth_mod,
             "load_github_copilot_token_from_gh_cli",
@@ -419,6 +421,7 @@ class TestOAuthFallback:
         async def _fake_gh_cli(host: str) -> str | None:
             seen_hosts.append(host)
             return "gho_from_gh_cli"
+
         monkeypatch.setattr(
             oauth_mod,
             "load_github_copilot_token_from_gh_cli",
@@ -527,6 +530,7 @@ class TestModelsCatalog:
     def _reset_catalog(self):
         """Reset in-memory cache before each test."""
         from worker_ai.models_catalog import ModelsCatalog
+
         ModelsCatalog._data = None
         yield
         ModelsCatalog._data = None
@@ -537,6 +541,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         catalog = await ModelsCatalog.load()
@@ -558,6 +563,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         models = await ModelsCatalog.list_models("openai")
@@ -572,6 +578,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         all_models = await ModelsCatalog.list_models()
@@ -583,6 +590,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         m = await ModelsCatalog.get_model("anthropic", "claude-sonnet-4-20250514")
@@ -598,6 +606,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         assert await ModelsCatalog.get_model("anthropic", "nonexistent") is None
@@ -609,6 +618,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         providers = await ModelsCatalog.list_providers()
@@ -626,6 +636,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         # Load writes cache
@@ -641,6 +652,7 @@ class TestModelsCatalog:
 
         # Write sample data to cache manually
         import json
+
         cache_path.write_text(json.dumps(_SAMPLE_API_RESPONSE))
         catalog = await ModelsCatalog.load()
         assert "anthropic" in catalog
@@ -656,6 +668,7 @@ class TestModelsCatalog:
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
+
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         await ModelsCatalog.load()

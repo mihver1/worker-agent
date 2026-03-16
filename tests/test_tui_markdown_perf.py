@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 import inspect
 
 
@@ -41,7 +40,6 @@ def test_message_widget_uses_stream_writer_when_available():
     assert len(worker.calls) == 1
 
 
-
 def test_message_widget_falls_back_to_markdown_append_without_stream():
     from worker_tui.app import MessageWidget
 
@@ -61,7 +59,6 @@ def test_message_widget_falls_back_to_markdown_append_without_stream():
 
     assert widget.content == "hello world"
     assert calls == [("append", " world")]
-
 
 
 def test_message_widget_non_markdown_roles_refresh_layout_on_append(monkeypatch):

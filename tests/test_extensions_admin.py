@@ -17,7 +17,13 @@ def test_list_installed_extensions_reads_discovery_and_manifest(monkeypatch):
     )
     monkeypatch.setattr(
         "worker_core.extensions_admin.ext_manifest.list_entries",
-        lambda: [type("Entry", (), {"name": "worker-ext-demo", "source": "git+https://example.com/demo.git"})()],
+        lambda: [
+            type(
+                "Entry",
+                (),
+                {"name": "worker-ext-demo", "source": "git+https://example.com/demo.git"},
+            )()
+        ],
     )
 
     result = list_installed_extensions()

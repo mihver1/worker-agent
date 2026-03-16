@@ -305,6 +305,8 @@ def test_render_follow_file_and_updates() -> None:
         render_follow_updates_note,
     )
 
+    controller_args = '{"files":[{"path":"packages/worker-web/src/worker_web/controller.py"}]}'
+    app_args = '{"files":[{"path":"packages/worker-web/src/worker_web/app.py"}]}'
     file_rendered = render_follow_file_markdown(
         [
             StubMessage(
@@ -313,7 +315,7 @@ def test_render_follow_file_and_updates() -> None:
                 tool_calls=[
                     {
                         "name": "read_files",
-                        "arguments": '{"files":[{"path":"packages/worker-web/src/worker_web/controller.py"}]}',
+                        "arguments": controller_args,
                     }
                 ],
                 tool_result={"content": "615|def render_messages(...)", "is_error": False},
@@ -324,7 +326,7 @@ def test_render_follow_file_and_updates() -> None:
                 tool_calls=[
                     {
                         "name": "read_files",
-                        "arguments": '{"files":[{"path":"packages/worker-web/src/worker_web/app.py"}]}',
+                        "arguments": app_args,
                     }
                 ],
                 tool_result={"content": "105|# Center: task-first entry", "is_error": False},
@@ -339,7 +341,7 @@ def test_render_follow_file_and_updates() -> None:
             tool_calls=[
                 {
                     "name": "read_files",
-                    "arguments": '{"files":[{"path":"packages/worker-web/src/worker_web/app.py"}]}',
+                    "arguments": app_args,
                 }
             ],
             tool_result={"content": "105|# Center: task-first entry", "is_error": False},
@@ -379,7 +381,9 @@ def test_render_diff_models_and_admin_helpers() -> None:
     diff_rendered = render_follow_diff_markdown(
         [],
         git_snapshot_loaded=True,
-        git_snapshot_command="git --no-pager diff --stat -- packages/worker-web/src/worker_web/app.py",
+        git_snapshot_command=(
+            "git --no-pager diff --stat -- packages/worker-web/src/worker_web/app.py"
+        ),
         git_snapshot_output=(
             " M packages/worker-web/src/worker_web/app.py\n1 file changed, 10 insertions(+)"
         ),
@@ -441,7 +445,11 @@ def test_render_diff_models_and_admin_helpers() -> None:
     skills = render_skills_markdown([StubSkill(name="python", description="Use pytest")])
     commands = render_extension_commands_markdown([StubExtensionCommand(name="echo")])
     installed = render_installed_extensions_markdown(
-        [StubInstalledExtension(name="worker-ext-demo", version="1.0.0", source="git+https://example.com/demo.git")]
+        [
+            StubInstalledExtension(
+                name="worker-ext-demo", version="1.0.0", source="git+https://example.com/demo.git"
+            )
+        ]
     )
     updates = render_extension_batch_update_markdown(
         StubBatchUpdateResult(

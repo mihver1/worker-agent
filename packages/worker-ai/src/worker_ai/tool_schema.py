@@ -133,10 +133,7 @@ def _resolve_schema_node(node: Any, root: dict[str, Any], ref_stack: tuple[str, 
                         continue
                     merged[key] = value
                 return _resolve_schema_node(merged, root, (*ref_stack, ref))
-        return {
-            key: _resolve_schema_node(value, root, ref_stack)
-            for key, value in node.items()
-        }
+        return {key: _resolve_schema_node(value, root, ref_stack) for key, value in node.items()}
     if isinstance(node, list):
         return [_resolve_schema_node(item, root, ref_stack) for item in node]
     return node

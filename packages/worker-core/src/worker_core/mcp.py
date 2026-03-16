@@ -55,7 +55,9 @@ class MCPRegistry:
         return self._load_config_from_path(effective_global_mcp_path())
 
     def load_project_config(self, project_dir: str) -> MCPConfig:
-        return self._load_config_from_path(effective_project_mcp_path(project_dir), project_dir=project_dir)
+        return self._load_config_from_path(
+            effective_project_mcp_path(project_dir), project_dir=project_dir
+        )
 
     def load_merged_config(self, project_dir: str) -> LoadedMCPConfig:
         paths: list[Path] = []
@@ -162,13 +164,19 @@ class MCPRegistry:
             name=normalized_name,
             transport=str(payload.get("transport", "stdio") or "stdio"),
             command=str(payload.get("command", "") or "").strip(),
-            args=[str(arg) for arg in payload.get("args", [])] if isinstance(payload.get("args"), list) else [],
-            env={str(k): str(v) for k, v in payload.get("env", {}).items()} if isinstance(payload.get("env"), dict) else {},
+            args=[str(arg) for arg in payload.get("args", [])]
+            if isinstance(payload.get("args"), list)
+            else [],
+            env={str(k): str(v) for k, v in payload.get("env", {}).items()}
+            if isinstance(payload.get("env"), dict)
+            else {},
             cwd=str(payload.get("cwd")) if payload.get("cwd") is not None else None,
             encoding=str(payload.get("encoding", "utf-8") or "utf-8"),
             encoding_error_handler=str(payload.get("encoding_error_handler", "strict") or "strict"),
             url=str(payload.get("url", "") or "").strip(),
-            headers={str(k): str(v) for k, v in payload.get("headers", {}).items()} if isinstance(payload.get("headers"), dict) else {},
+            headers={str(k): str(v) for k, v in payload.get("headers", {}).items()}
+            if isinstance(payload.get("headers"), dict)
+            else {},
             timeout=float(payload.get("timeout", 30.0) or 30.0),
             sse_read_timeout=float(payload.get("sse_read_timeout", 300.0) or 300.0),
             enabled=bool(payload.get("enabled", True)),
@@ -176,7 +184,9 @@ class MCPRegistry:
             include_tools=bool(payload.get("include_tools", True)),
             include_prompts=bool(payload.get("include_prompts", True)),
             include_resources=bool(payload.get("include_resources", True)),
-            roots=[str(item) for item in payload.get("roots", [])] if isinstance(payload.get("roots"), list) else [],
+            roots=[str(item) for item in payload.get("roots", [])]
+            if isinstance(payload.get("roots"), list)
+            else [],
             auth=dict(payload.get("auth", {})) if isinstance(payload.get("auth"), dict) else {},
         )
 
@@ -212,7 +222,6 @@ class MCPRegistry:
         return target
 
 
-
 def _resolve_server_dict(raw_server: dict[str, Any], *, base_dir: Path) -> dict[str, Any]:
     resolved = _expand_value(raw_server)
     if not isinstance(resolved, dict):
@@ -239,9 +248,7 @@ def _resolve_server_dict(raw_server: dict[str, Any], *, base_dir: Path) -> dict[
     roots = resolved.get("roots")
     if isinstance(roots, list):
         resolved["roots"] = [
-            str(_resolve_path(base_dir, item))
-            for item in roots
-            if isinstance(item, str)
+            str(_resolve_path(base_dir, item)) for item in roots if isinstance(item, str)
         ]
 
     return resolved

@@ -131,6 +131,7 @@ class TestRuntimeBootstrap:
         assert runtime.context_window == 262_144
 
         await runtime.provider.close()
+
     @pytest.mark.asyncio
     async def test_bootstrap_runtime_supports_github_copilot_alias(self, tmp_path, monkeypatch):
         from worker_ai.providers.github_copilot import GitHubCopilotProvider
@@ -242,9 +243,7 @@ class TestAzureFoundryIntegration:
                 "prompt_filter_results": [
                     {
                         "prompt_index": 0,
-                        "content_filter_results": {
-                            "hate": {"filtered": False, "severity": "safe"}
-                        },
+                        "content_filter_results": {"hate": {"filtered": False, "severity": "safe"}},
                     }
                 ],
             }
@@ -402,6 +401,7 @@ class TestCliConnect:
         import worker_tui.app as tui_app
         from click.testing import CliRunner
         from worker_core import cli as cli_mod
+
         calls: list[dict[str, str]] = []
 
         def fake_run_tui(**kwargs):
@@ -534,6 +534,7 @@ class TestCliDefaultMode:
         assert captured["continue_session"] is False
         assert captured["resume_id"] == ""
 
+
 class TestCliServe:
     def test_worker_serve_passes_stdout_announcer(self, monkeypatch):
         import worker_server.server as server_mod
@@ -644,7 +645,9 @@ class TestCliExtensions:
         result = runner.invoke(cli_mod.cli, ["ext", "install", "git+https://example.com/ext.git"])
 
         assert result.exit_code == 0
-        assert calls == [["uv", "pip", "install", "--no-sources", "git+https://example.com/ext.git"]]
+        assert calls == [
+            ["uv", "pip", "install", "--no-sources", "git+https://example.com/ext.git"]
+        ]
         # Verify manifest was updated
         entries = ext_manifest.list_entries()
         assert len(entries) == 1
@@ -681,8 +684,13 @@ class TestCliExtensions:
         assert result.exit_code == 0
         assert "Resolved" in result.output
         assert calls == [
-            ["uv", "pip", "install", "--no-sources",
-             "git+https://github.com/mihver1/worker-ext-mcp.git"]
+            [
+                "uv",
+                "pip",
+                "install",
+                "--no-sources",
+                "git+https://github.com/mihver1/worker-ext-mcp.git",
+            ]
         ]
 
     def test_ext_update_uses_no_sources(self, monkeypatch):
@@ -705,7 +713,9 @@ class TestCliExtensions:
         assert result.exit_code == 0
         assert calls == [["uv", "pip", "install", "--no-sources", "--upgrade", "worker-ext-mcp"]]
 
+
 # ── REST API ──────────────────────────────────────────────────────
+
 
 class TestRemoteControlClient:
     @pytest.mark.asyncio
@@ -890,7 +900,9 @@ class TestRESTAPI:
         state = ServerState(
             config=WorkerConfig(
                 providers={
-                    "openai": ProviderConfig(api_key="secret-key", base_url="https://api.openai.com/v1")
+                    "openai": ProviderConfig(
+                        api_key="secret-key", base_url="https://api.openai.com/v1"
+                    )
                 }
             ),
             default_project_dir=str(project_dir),
@@ -1557,6 +1569,7 @@ class TestRESTAPI:
         assert saved is not None
         assert saved.access_token == "oauth_from_broker"
 
+
 class FakeWebSocket:
     """Mock WebSocket connection for testing the protocol handler."""
 
@@ -1607,9 +1620,7 @@ class TestWebSocketProtocol:
         client_task = asyncio.create_task(handle_client(ws, state))  # type: ignore[arg-type]
         try:
             ws.inject(
-                json.dumps(
-                    {"type": "message", "session_id": "test_session", "content": "hi"}
-                )
+                json.dumps({"type": "message", "session_id": "test_session", "content": "hi"})
             )
 
             async def _wait_for_stream() -> None:
@@ -1818,9 +1829,15 @@ class TestWebSocketProtocol:
         ws = FakeWebSocket()
         client_task = asyncio.create_task(handle_client(ws, state))  # type: ignore[arg-type]
         try:
-            ws.inject(json.dumps({"type": "message", "session_id": "test_session", "content": "hi"}))
+            ws.inject(
+                json.dumps({"type": "message", "session_id": "test_session", "content": "hi"})
+            )
             await asyncio.wait_for(started.wait(), timeout=1.0)
-            ws.inject(json.dumps({"type": "steer", "session_id": "test_session", "content": "change course"}))
+            ws.inject(
+                json.dumps(
+                    {"type": "steer", "session_id": "test_session", "content": "change course"}
+                )
+            )
             finish.set()
 
             async def _wait_for_done() -> None:

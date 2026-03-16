@@ -60,14 +60,14 @@ class TestAzureOpenAIProviderRuntime:
         mock_response.status_code = 200
         mock_response.json = Mock(
             return_value={
-            "data": [
-                {
-                    "id": "Kimi-K2.5",
-                    "name": "Kimi K2.5",
-                    "capabilities": {"chat_completion": True},
-                }
-            ]
-        }
+                "data": [
+                    {
+                        "id": "Kimi-K2.5",
+                        "name": "Kimi K2.5",
+                        "capabilities": {"chat_completion": True},
+                    }
+                ]
+            }
         )
 
         with patch.object(provider._client, "get", return_value=mock_response) as mock_get:
@@ -166,7 +166,9 @@ class TestAzureOpenAIProviderRuntime:
                     role=Role.USER,
                     content="Look",
                     attachments=[
-                        ImageAttachment(path=str(image_path), mime_type="image/png", name="shot.png")
+                        ImageAttachment(
+                            path=str(image_path), mime_type="image/png", name="shot.png"
+                        )
                     ],
                 )
             ],
@@ -247,9 +249,7 @@ class TestAzureOpenAIProviderRuntime:
                 "prompt_filter_results": [
                     {
                         "prompt_index": 0,
-                        "content_filter_results": {
-                            "hate": {"filtered": False, "severity": "safe"}
-                        },
+                        "content_filter_results": {"hate": {"filtered": False, "severity": "safe"}},
                     }
                 ],
             }
@@ -271,19 +271,19 @@ class TestAzureOpenAIProviderRuntime:
         mock_post_response.status_code = 200
         mock_post_response.json = Mock(
             return_value={
-            "choices": [
-                {
-                    "finish_reason": "stop",
-                    "message": {
-                        "role": "assistant",
-                        "reasoning_content": "Reasoning",
-                        "content": "Answer",
-                        "tool_calls": None,
-                    },
-                }
-            ],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 2},
-        }
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "role": "assistant",
+                            "reasoning_content": "Reasoning",
+                            "content": "Answer",
+                            "tool_calls": None,
+                        },
+                    }
+                ],
+                "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+            }
         )
 
         with (

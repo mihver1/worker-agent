@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 ROOT_FILES = [
     Path("README.md"),
     Path("mkdocs.yml"),

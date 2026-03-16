@@ -25,9 +25,7 @@ def _canonical_provider_id(name: str) -> str:
 
 
 def _looks_local_base_url(base_url: str) -> bool:
-    return base_url.startswith("http://localhost") or base_url.startswith(
-        "http://127.0.0.1"
-    )
+    return base_url.startswith("http://localhost") or base_url.startswith("http://127.0.0.1")
 
 
 def parse_forward_credentials_spec(spec: str, config: Any) -> list[str]:

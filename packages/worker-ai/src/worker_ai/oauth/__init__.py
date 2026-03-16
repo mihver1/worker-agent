@@ -37,6 +37,7 @@ _LEGACY_CONFIG_DIR_ENV = "WORKER_CONFIG_DIR"
 
 # ── Token storage ─────────────────────────────────────────────────
 
+
 def _resolve_auth_path(*, env_names: tuple[str, ...], default_app_name: str) -> Path:
     for env_name in env_names:
         value = os.environ.get(env_name, "").strip()
@@ -164,6 +165,7 @@ class TokenStore:
                 path.write_text(json.dumps(data, indent=2), encoding="utf-8")
             except json.JSONDecodeError:
                 continue
+
 
 def _resolve_provider_id(name: str) -> str:
     spec = get_provider_spec(name)
@@ -350,9 +352,7 @@ def start_remote_oauth_challenge(
             "state": state,
         }
         params.update(OpenAIOAuth.EXTRA_PARAMS)
-        authorize_url = (
-            f"{OpenAIOAuth.AUTH_URL}?{urllib.parse.urlencode(params)}"
-        )
+        authorize_url = f"{OpenAIOAuth.AUTH_URL}?{urllib.parse.urlencode(params)}"
         challenge_data = RemoteOAuthChallenge(
             provider=resolved_name,
             flow_type="callback",
@@ -397,9 +397,7 @@ def start_remote_oauth_challenge(
             "authorize_url": authorize_url,
         }
 
-    raise RuntimeError(
-        f"Remote OAuth broker is not supported for '{provider_name}'."
-    )
+    raise RuntimeError(f"Remote OAuth broker is not supported for '{provider_name}'.")
 
 
 async def complete_remote_oauth_challenge(
@@ -441,9 +439,7 @@ async def complete_remote_oauth_challenge(
         if id_token:
             account_id = extract_openai_account_id(parse_jwt_claims(id_token))
         if not account_id:
-            account_id = extract_openai_account_id(
-                parse_jwt_claims(data["access_token"])
-            )
+            account_id = extract_openai_account_id(parse_jwt_claims(data["access_token"]))
         return OAuthToken(
             access_token=data["access_token"],
             refresh_token=data.get("refresh_token", ""),
@@ -487,9 +483,7 @@ async def complete_remote_oauth_challenge(
             provider=challenge.provider,
         )
 
-    raise RuntimeError(
-        f"Remote OAuth broker is not supported for '{challenge.provider}'."
-    )
+    raise RuntimeError(f"Remote OAuth broker is not supported for '{challenge.provider}'.")
 
 
 # ── Base OAuth provider ───────────────────────────────────────────
@@ -520,9 +514,7 @@ class OAuthProvider(ABC):
             return None
         if token.is_expired:
             if not token.refresh_token:
-                logger.warning(
-                    "Expired token without refresh token for %s", self.name
-                )
+                logger.warning("Expired token without refresh token for %s", self.name)
                 return None
             try:
                 token = await self.refresh(token)
@@ -601,9 +593,7 @@ class _DeviceFlowOAuth(OAuthProvider):
 
             device_code = data["device_code"]
             user_code = data["user_code"]
-            verification_uri = (
-                data.get("verification_uri") or data.get("verification_url", "")
-            )
+            verification_uri = data.get("verification_uri") or data.get("verification_url", "")
             verification_url = self._verification_url(
                 str(verification_uri or ""),
                 str(user_code),
@@ -625,9 +615,7 @@ class _DeviceFlowOAuth(OAuthProvider):
                 token_resp = await client.post(
                     self.TOKEN_URL,
                     headers=self._device_flow_headers(),
-                    content=urllib.parse.urlencode(
-                        self._device_token_payload(device_code)
-                    ),
+                    content=urllib.parse.urlencode(self._device_token_payload(device_code)),
                 )
                 if token_resp.status_code == 200:
                     token_data = token_resp.json()
@@ -635,8 +623,7 @@ class _DeviceFlowOAuth(OAuthProvider):
                         access_token=token_data["access_token"],
                         refresh_token=token_data.get("refresh_token", ""),
                         token_type=token_data.get("token_type", "Bearer"),
-                        expires_at=time.time()
-                        + token_data.get("expires_in", 3600),
+                        expires_at=time.time() + token_data.get("expires_in", 3600),
                         provider=self.name,
                     )
                     self.store.save(token)
@@ -649,13 +636,9 @@ class _DeviceFlowOAuth(OAuthProvider):
                 if error == "slow_down":
                     interval += 5
                     continue
-                raise RuntimeError(
-                    f"{self.name.capitalize()} OAuth failed: {error}"
-                )
+                raise RuntimeError(f"{self.name.capitalize()} OAuth failed: {error}")
 
-            raise TimeoutError(
-                f"{self.name.capitalize()} device authorization timed out."
-            )
+            raise TimeoutError(f"{self.name.capitalize()} device authorization timed out.")
 
     async def refresh(self, token: OAuthToken) -> OAuthToken:
         async with httpx.AsyncClient() as client:
@@ -833,9 +816,7 @@ class _LocalCallbackOAuth(OAuthProvider):
             if error:
                 desc = request.query.get("error_description", error)
                 if not code_future.done():
-                    code_future.set_exception(
-                        RuntimeError(f"OAuth error: {desc}")
-                    )
+                    code_future.set_exception(RuntimeError(f"OAuth error: {desc}"))
                 return web.Response(
                     text=f"<html><body><h1>Failed</h1><p>{desc}</p></body></html>",
                     content_type="text/html",
@@ -845,9 +826,7 @@ class _LocalCallbackOAuth(OAuthProvider):
             received_state = request.query.get("state", "")
             if received_state != state:
                 if not code_future.done():
-                    code_future.set_exception(
-                        RuntimeError("Invalid state — possible CSRF")
-                    )
+                    code_future.set_exception(RuntimeError("Invalid state — possible CSRF"))
                 return web.Response(text="Invalid state", status=400)
 
             code = request.query.get("code", "")
@@ -856,9 +835,7 @@ class _LocalCallbackOAuth(OAuthProvider):
                 return web.Response(text=success_html, content_type="text/html")
 
             if not code_future.done():
-                code_future.set_exception(
-                    RuntimeError("Missing authorization code")
-                )
+                code_future.set_exception(RuntimeError("Missing authorization code"))
             return web.Response(text="Missing code", status=400)
 
         app = web.Application()
@@ -1001,6 +978,7 @@ class OpenAIOAuth(_LocalCallbackOAuth):
         "codex_cli_simplified_flow": "true",
         "originator": "artel",
     }
+
 
 class _GitHubCliOAuth(OAuthProvider):
     """GitHub CLI-backed auth for GitHub Copilot providers."""

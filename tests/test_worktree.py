@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
-
+from worker_core.tools.builtins import WorktreeTool
 from worker_core.worktree import (
     CreateCommand,
     FinishCommand,
@@ -19,7 +19,6 @@ from worker_core.worktree import (
     resolve_remove_target,
     run_worktree_command,
 )
-from worker_core.tools.builtins import WorktreeTool
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -153,7 +152,9 @@ def test_format_worktree_list_marks_primary_and_managed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_worktree_tool_without_branch_creates_detached_worktree(monkeypatch, tmp_path: Path) -> None:
+async def test_worktree_tool_without_branch_creates_detached_worktree(
+    monkeypatch, tmp_path: Path
+) -> None:
     managed_root = tmp_path / "managed"
     repo = tmp_path / "repo"
     monkeypatch.setenv("WORKER_EXT_WORKTREE_BASE_DIR", str(managed_root))

@@ -11,8 +11,13 @@ async def test_local_undo_uses_last_ai_changed_paths(monkeypatch):
     app._session = type("_Session", (), {"messages": [object()]})()
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
-    monkeypatch.setattr("worker_tui.app.collect_last_ai_changed_paths", lambda msgs: ["a.py", "b.py"])
-    monkeypatch.setattr("worker_tui.app.restore_paths", lambda *, cwd, paths: "Restored 2 files:\n  - a.py\n  - b.py")
+    monkeypatch.setattr(
+        "worker_tui.app.collect_last_ai_changed_paths", lambda msgs: ["a.py", "b.py"]
+    )
+    monkeypatch.setattr(
+        "worker_tui.app.restore_paths",
+        lambda *, cwd, paths: "Restored 2 files:\n  - a.py\n  - b.py",
+    )
 
     await app._cmd_undo()
 

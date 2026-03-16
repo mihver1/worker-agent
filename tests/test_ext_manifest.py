@@ -103,25 +103,26 @@ def test_manifest_persists_to_disk(_isolated_manifest):
 
 
 class TestParseInstalledPackageName:
-
     def test_uv_output_with_plus_line(self):
         stdout = "Resolved 3 packages\n + worker-ext-foo==0.2.1\n + dep==1.0\n"
         assert _parse_installed_package_name(stdout, "whatever") == "worker-ext-foo"
 
     def test_fallback_git_https(self):
-        assert _parse_installed_package_name(
-            "", "git+https://github.com/user/worker-ext-bar.git"
-        ) == "worker-ext-bar"
+        assert (
+            _parse_installed_package_name("", "git+https://github.com/user/worker-ext-bar.git")
+            == "worker-ext-bar"
+        )
 
     def test_fallback_git_https_with_branch(self):
-        assert _parse_installed_package_name(
-            "", "git+https://github.com/user/worker-ext-bar.git@main"
-        ) == "worker-ext-bar"
+        assert (
+            _parse_installed_package_name("", "git+https://github.com/user/worker-ext-bar.git@main")
+            == "worker-ext-bar"
+        )
 
     def test_fallback_git_ssh(self):
-        assert _parse_installed_package_name(
-            "", "git+ssh://git@github.com/org/my-ext.git"
-        ) == "my-ext"
+        assert (
+            _parse_installed_package_name("", "git+ssh://git@github.com/org/my-ext.git") == "my-ext"
+        )
 
     def test_fallback_simple_name(self):
         assert _parse_installed_package_name("", "worker-ext-hello") == "worker-ext-hello"
@@ -133,11 +134,7 @@ class TestParseInstalledPackageName:
         assert _parse_installed_package_name("", "./extensions/my-ext") == "my-ext"
 
     def test_fallback_scp_style(self):
-        assert _parse_installed_package_name(
-            "", "git@github.com:org/my-ext.git"
-        ) == "my-ext"
+        assert _parse_installed_package_name("", "git@github.com:org/my-ext.git") == "my-ext"
 
     def test_fallback_scp_style_with_branch(self):
-        assert _parse_installed_package_name(
-            "", "git@github.com:org/my-ext.git@main"
-        ) == "my-ext"
+        assert _parse_installed_package_name("", "git@github.com:org/my-ext.git@main") == "my-ext"

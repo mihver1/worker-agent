@@ -13,5 +13,6 @@ def run_web(**kwargs: Any) -> None:
     """
     raise RuntimeError(
         "The Artel web UI source is not available in this checkout yet. "
-        "The current repository only ships the shared rendering helpers and compatibility import surface."
+        "The current repository only ships the shared rendering helpers and "
+        "compatibility import surface."
     )

@@ -10,7 +10,9 @@ async def test_local_git_status_command_renders_summary(monkeypatch, tmp_path):
     app = WorkerApp()
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
-    monkeypatch.setattr("worker_tui.app.render_git_status", lambda *, cwd: "Git status\nModified (1):\n  - app.py")
+    monkeypatch.setattr(
+        "worker_tui.app.render_git_status", lambda *, cwd: "Git status\nModified (1):\n  - app.py"
+    )
     monkeypatch.chdir(tmp_path)
 
     await app._cmd_git("/git", "status")
@@ -49,7 +51,9 @@ async def test_local_git_rollback_all_reports_result(monkeypatch, tmp_path):
     app = WorkerApp()
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
-    monkeypatch.setattr("worker_tui.app.restore_all", lambda *, cwd: "Restored all unstaged changes.")
+    monkeypatch.setattr(
+        "worker_tui.app.restore_all", lambda *, cwd: "Restored all unstaged changes."
+    )
     monkeypatch.chdir(tmp_path)
 
     await app._cmd_git("/rollback", "--all")

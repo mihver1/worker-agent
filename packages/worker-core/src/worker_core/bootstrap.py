@@ -57,9 +57,7 @@ async def fetch_model_runtime_info(
 ) -> tuple[int, float, float]:
     """Return (context_window, input_price_per_m, output_price_per_m)."""
     try:
-        model = await _provider_resolver.get_effective_model_info(
-            config, provider_name, model_id
-        )
+        model = await _provider_resolver.get_effective_model_info(config, provider_name, model_id)
         if model:
             return (
                 model.context_window or 0,
@@ -135,17 +133,15 @@ async def bootstrap_runtime(
         for ext in extensions:
             tools.extend(ext.get_tools())
 
-    context_window, input_price_per_m, output_price_per_m = (
-        await fetch_model_runtime_info(config, provider_name, model_id)
+    context_window, input_price_per_m, output_price_per_m = await fetch_model_runtime_info(
+        config, provider_name, model_id
     )
 
     # Bootstrap small model if configured
     small_provider = None
     small_model_id = ""
     if config.agent.small_model and "/" in config.agent.small_model:
-        sm_provider_name, small_model_id = config.agent.small_model.split(
-            "/", 1
-        )
+        sm_provider_name, small_model_id = config.agent.small_model.split("/", 1)
         sm_resolved = resolve_api_key(config, sm_provider_name)
         if isawaitable(sm_resolved):
             sm_key, sm_auth = await sm_resolved

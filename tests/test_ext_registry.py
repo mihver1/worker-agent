@@ -46,6 +46,7 @@ def _mock_httpx_get(entries: list[dict], *, fmt: str = "json"):
     """Mock httpx.get returning *entries* as JSON bytes (default) or TOML bytes."""
     if fmt == "toml":
         import tomli_w
+
         body = tomli_w.dumps({"extensions": entries})
     else:
         body = json.dumps(entries)
@@ -74,7 +75,8 @@ class TestFetchRegistry:
     def test_fetches_toml_format(self):
         with _mock_httpx_get(SAMPLE_ENTRIES, fmt="toml"):
             result = ext_registry.fetch_registry(
-                "https://r.example.com/ext.toml", use_cache=False,
+                "https://r.example.com/ext.toml",
+                use_cache=False,
             )
         assert len(result) == 3
         assert result[0]["name"] == "worker-ext-foo"
@@ -121,7 +123,9 @@ class TestSearchAll:
     def test_search_by_name(self):
         with _mock_httpx_get(SAMPLE_ENTRIES):
             results = ext_registry.search_all(
-                self._regs("https://r.example.com/ext.json"), "foo", use_cache=False,
+                self._regs("https://r.example.com/ext.json"),
+                "foo",
+                use_cache=False,
             )
         assert len(results) == 1
         assert results[0].name == "worker-ext-foo"
@@ -129,7 +133,9 @@ class TestSearchAll:
     def test_search_by_tag(self):
         with _mock_httpx_get(SAMPLE_ENTRIES):
             results = ext_registry.search_all(
-                self._regs("https://r.example.com/ext.json"), "mcp", use_cache=False,
+                self._regs("https://r.example.com/ext.json"),
+                "mcp",
+                use_cache=False,
             )
         assert len(results) == 1
         assert results[0].name == "worker-ext-mcp"
@@ -137,7 +143,9 @@ class TestSearchAll:
     def test_search_by_description(self):
         with _mock_httpx_get(SAMPLE_ENTRIES):
             results = ext_registry.search_all(
-                self._regs("https://r.example.com/ext.json"), "integration", use_cache=False,
+                self._regs("https://r.example.com/ext.json"),
+                "integration",
+                use_cache=False,
             )
         assert len(results) == 1
         assert results[0].name == "worker-ext-bar"
@@ -146,10 +154,12 @@ class TestSearchAll:
         entries_a = [SAMPLE_ENTRIES[0]]
         entries_b = [SAMPLE_ENTRIES[1]]
         resp_a = Mock(
-            content=json.dumps(entries_a).encode(), raise_for_status=Mock(),
+            content=json.dumps(entries_a).encode(),
+            raise_for_status=Mock(),
         )
         resp_b = Mock(
-            content=json.dumps(entries_b).encode(), raise_for_status=Mock(),
+            content=json.dumps(entries_b).encode(),
+            raise_for_status=Mock(),
         )
 
         with patch("worker_core.ext_registry.httpx.get", side_effect=[resp_a, resp_b]):
@@ -165,14 +175,18 @@ class TestSearchAll:
     def test_search_no_matches(self):
         with _mock_httpx_get(SAMPLE_ENTRIES):
             results = ext_registry.search_all(
-                self._regs("https://r.example.com/ext.json"), "nonexistent", use_cache=False,
+                self._regs("https://r.example.com/ext.json"),
+                "nonexistent",
+                use_cache=False,
             )
         assert results == []
 
     def test_search_skips_failing_registry(self):
         with patch("worker_core.ext_registry.httpx.get", side_effect=Exception("network")):
             results = ext_registry.search_all(
-                self._regs("https://broken.example.com/ext.json"), "foo", use_cache=False,
+                self._regs("https://broken.example.com/ext.json"),
+                "foo",
+                use_cache=False,
             )
         assert results == []
 

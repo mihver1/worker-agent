@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from click.testing import CliRunner
 
 
@@ -13,18 +14,30 @@ def test_rule_ordering_and_move_in_storage(monkeypatch, tmp_path):
     (project_dir / ".artel").mkdir(parents=True)
 
     first = add_rule(scope="project", text="First", project_dir=str(project_dir))
-    second = add_rule(scope="project", text="Second", project_dir=str(project_dir))
+    add_rule(scope="project", text="Second", project_dir=str(project_dir))
     third = add_rule(scope="project", text="Third", project_dir=str(project_dir))
 
-    assert [rule.text for rule in list_rules(str(project_dir)) if rule.scope == "project"] == ["First", "Second", "Third"]
+    assert [rule.text for rule in list_rules(str(project_dir)) if rule.scope == "project"] == [
+        "First",
+        "Second",
+        "Third",
+    ]
 
     moved = move_rule(third.id, project_dir=str(project_dir), position=1)
     assert moved.order == 1
-    assert [rule.text for rule in list_rules(str(project_dir)) if rule.scope == "project"] == ["Third", "First", "Second"]
+    assert [rule.text for rule in list_rules(str(project_dir)) if rule.scope == "project"] == [
+        "Third",
+        "First",
+        "Second",
+    ]
 
     moved_again = move_rule(first.id, project_dir=str(project_dir), offset=1)
     assert moved_again.text == "First"
-    assert [rule.text for rule in list_rules(str(project_dir)) if rule.scope == "project"] == ["Third", "Second", "First"]
+    assert [rule.text for rule in list_rules(str(project_dir)) if rule.scope == "project"] == [
+        "Third",
+        "Second",
+        "First",
+    ]
 
 
 def test_rule_cli_move(monkeypatch, tmp_path):
@@ -38,7 +51,7 @@ def test_rule_cli_move(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
 
-    first = add_rule(scope="project", text="First", project_dir=str(tmp_path))
+    add_rule(scope="project", text="First", project_dir=str(tmp_path))
     second = add_rule(scope="project", text="Second", project_dir=str(tmp_path))
 
     cli_mod = importlib.import_module("worker_core.cli")
@@ -53,9 +66,6 @@ def test_rule_cli_move(monkeypatch, tmp_path):
     assert second.id in first_line
 
 
-import pytest
-
-
 @pytest.mark.asyncio
 async def test_tui_rule_move_local(monkeypatch, tmp_path):
     from worker_core import config as cfg_mod
@@ -67,7 +77,7 @@ async def test_tui_rule_move_local(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
 
-    first = add_rule(scope="project", text="First", project_dir=str(tmp_path))
+    add_rule(scope="project", text="First", project_dir=str(tmp_path))
     second = add_rule(scope="project", text="Second", project_dir=str(tmp_path))
 
     app = WorkerApp()

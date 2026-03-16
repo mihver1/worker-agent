@@ -54,9 +54,7 @@ class MockProvider(Provider):
         max_tokens: int | None = None,
         thinking_level: str = "off",
     ) -> AsyncIterator[StreamEvent]:
-        self.calls.append(
-            {"model": model, "messages": messages, "tools": tools}
-        )
+        self.calls.append({"model": model, "messages": messages, "tools": tools})
         if self._call_index < len(self._responses):
             events = self._responses[self._call_index]
             self._call_index += 1

@@ -17,7 +17,10 @@ def test_launch_agent_plist_path_uses_launchagents_dir(monkeypatch, tmp_path):
     import worker_tui.server_tray as tray_mod
 
     monkeypatch.setattr(tray_mod.Path, "home", lambda: tmp_path)
-    assert tray_mod.launch_agent_plist_path() == tmp_path / "Library" / "LaunchAgents" / "dev.artel.server-tray.plist"
+    assert (
+        tray_mod.launch_agent_plist_path()
+        == tmp_path / "Library" / "LaunchAgents" / "dev.artel.server-tray.plist"
+    )
 
 
 def test_ensure_server_tray_bootstraps_launch_agent_on_macos(tmp_path, monkeypatch):
@@ -59,7 +62,11 @@ def test_ensure_server_tray_skips_start_when_server_not_running(tmp_path, monkey
     monkeypatch.setattr(tray_mod, "_local_server_running", lambda project_dir: False)
     monkeypatch.setattr(tray_mod.Path, "home", lambda: tmp_path)
     started: list[tuple[str, ...]] = []
-    monkeypatch.setattr(tray_mod, "_launchctl", lambda *args: started.append(args) or SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(
+        tray_mod,
+        "_launchctl",
+        lambda *args: started.append(args) or SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
 
     handle = tray_mod.ensure_server_tray(str(tmp_path))
 
@@ -79,7 +86,13 @@ def test_stop_server_tray_boots_out_and_removes_registry(tmp_path, monkeypatch):
     plist_path.parent.mkdir(parents=True)
     plist_path.write_text("plist", encoding="utf-8")
     launchctl_calls: list[tuple[str, ...]] = []
-    monkeypatch.setattr(tray_mod, "_launchctl", lambda *args: launchctl_calls.append(args) or SimpleNamespace(returncode=0, stdout="", stderr=""))
+    monkeypatch.setattr(
+        tray_mod,
+        "_launchctl",
+        lambda *args: (
+            launchctl_calls.append(args) or SimpleNamespace(returncode=0, stdout="", stderr="")
+        ),
+    )
 
     tray_mod.stop_server_tray(str(tmp_path))
 
@@ -91,7 +104,9 @@ def test_stop_server_tray_boots_out_and_removes_registry(tmp_path, monkeypatch):
 def test_server_status_text_reports_duplicate_processes(tmp_path, monkeypatch):
     import worker_tui.server_tray as tray_mod
 
-    monkeypatch.setattr("worker_tui.local_server._managed_server_processes", lambda project_dir: [111, 222])
+    monkeypatch.setattr(
+        "worker_tui.local_server._managed_server_processes", lambda project_dir: [111, 222]
+    )
     monkeypatch.setattr("worker_tui.local_server._load_registry", lambda project_dir: None)
 
     assert tray_mod._server_status_text(str(tmp_path)) == "Server: duplicate processes detected (2)"
@@ -100,7 +115,9 @@ def test_server_status_text_reports_duplicate_processes(tmp_path, monkeypatch):
 def test_clean_duplicate_managed_servers_kills_all_but_one(tmp_path, monkeypatch):
     import worker_tui.local_server as local_server_mod
 
-    monkeypatch.setattr(local_server_mod, "_managed_server_processes", lambda project_dir: [100, 200, 300])
+    monkeypatch.setattr(
+        local_server_mod, "_managed_server_processes", lambda project_dir: [100, 200, 300]
+    )
     monkeypatch.setattr(
         local_server_mod,
         "_load_registry",
@@ -117,7 +134,10 @@ def test_clean_duplicate_managed_servers_kills_all_but_one(tmp_path, monkeypatch
     result = local_server_mod.cleanup_duplicate_managed_servers(str(tmp_path))
 
     assert result == [100, 300]
-    assert killed == [(100, local_server_mod.signal.SIGTERM), (300, local_server_mod.signal.SIGTERM)]
+    assert killed == [
+        (100, local_server_mod.signal.SIGTERM),
+        (300, local_server_mod.signal.SIGTERM),
+    ]
 
 
 def test_ensure_managed_local_server_bootstraps_tray_on_macos(tmp_path, monkeypatch):
@@ -144,7 +164,11 @@ def test_ensure_managed_local_server_bootstraps_tray_on_macos(tmp_path, monkeypa
     monkeypatch.setattr(local_server_mod, "_wait_until_ready", fake_wait_until_ready)
     monkeypatch.setattr(local_server_mod.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(local_server_mod.sys, "platform", "darwin")
-    monkeypatch.setattr(local_server_mod, "_spawn_server_tray_ensure", lambda project_dir: started_trays.append(project_dir))
+    monkeypatch.setattr(
+        local_server_mod,
+        "_spawn_server_tray_ensure",
+        lambda project_dir: started_trays.append(project_dir),
+    )
 
     import asyncio
 

@@ -340,9 +340,7 @@ class WorktreeManager:
         if branch is None:
             current_branch = self.current_branch
             if current_branch is None:
-                raise WorktreeError(
-                    "Current worktree is detached; pass a branch name explicitly."
-                )
+                raise WorktreeError("Current worktree is detached; pass a branch name explicitly.")
             worktree_path = self._new_managed_path(current_branch)
             self._git("worktree", "add", "--detach", str(worktree_path), current_branch)
             return CreateResult(
@@ -440,9 +438,7 @@ class WorktreeManager:
         )
         source_worktree = self._worktree_by_path(worktrees, source_path)
         if source_worktree.branch is None:
-            raise WorktreeError(
-                "Cannot finish a detached worktree; create it from a branch first."
-            )
+            raise WorktreeError("Cannot finish a detached worktree; create it from a branch first.")
         if source_worktree.branch == current_branch:
             raise WorktreeError(
                 f"Source branch {source_worktree.branch} is already the current branch."
@@ -492,28 +488,32 @@ class WorktreeManager:
         """Branches currently checked out in any worktree for this repository."""
 
         return {
-            worktree.branch
-            for worktree in self.list_worktrees()
-            if worktree.branch is not None
+            worktree.branch for worktree in self.list_worktrees() if worktree.branch is not None
         }
 
     def _local_branch_exists(self, branch: str) -> bool:
-        return self._git(
-            "show-ref",
-            "--verify",
-            "--quiet",
-            f"refs/heads/{branch}",
-            check=False,
-        ).returncode == 0
+        return (
+            self._git(
+                "show-ref",
+                "--verify",
+                "--quiet",
+                f"refs/heads/{branch}",
+                check=False,
+            ).returncode
+            == 0
+        )
 
     def _remote_branch_exists(self, branch: str) -> bool:
-        return self._git(
-            "show-ref",
-            "--verify",
-            "--quiet",
-            f"refs/remotes/origin/{branch}",
-            check=False,
-        ).returncode == 0
+        return (
+            self._git(
+                "show-ref",
+                "--verify",
+                "--quiet",
+                f"refs/remotes/origin/{branch}",
+                check=False,
+            ).returncode
+            == 0
+        )
 
     def _new_managed_path(self, name_hint: str) -> Path:
         safe_name = _sanitize_name(name_hint)

@@ -482,13 +482,9 @@ class TestEffectiveProviderCatalog:
         bedrock = providers["bedrock"]
         bedrock_models = {model.id: model for model in bedrock.models}
 
+        assert bedrock_models["anthropic.claude-3-7-sonnet-20250219-v1:0"].provider == "bedrock"
         assert (
-            bedrock_models["anthropic.claude-3-7-sonnet-20250219-v1:0"].provider
-            == "bedrock"
-        )
-        assert (
-            bedrock_models["anthropic.claude-3-7-sonnet-20250219-v1:0"].supports_reasoning
-            is True
+            bedrock_models["anthropic.claude-3-7-sonnet-20250219-v1:0"].supports_reasoning is True
         )
 
     @pytest.mark.asyncio

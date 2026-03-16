@@ -21,11 +21,14 @@ import httpx
 logger = logging.getLogger("artel.models_catalog")
 
 _MODELS_URL = "https://models.dev/api.json"
-_CACHE_DIR = Path(
-    os.environ.get("ARTEL_CONFIG_DIR")
-    or os.environ.get("WORKER_CONFIG_DIR")
-    or "~/.config/artel"
-).expanduser() / "cache"
+_CACHE_DIR = (
+    Path(
+        os.environ.get("ARTEL_CONFIG_DIR")
+        or os.environ.get("WORKER_CONFIG_DIR")
+        or "~/.config/artel"
+    ).expanduser()
+    / "cache"
+)
 _CACHE_PATH = _CACHE_DIR / "models.json"
 _CACHE_TTL = 3600  # 1 hour
 
@@ -175,9 +178,7 @@ class ModelsCatalog:
         return [p for p in catalog.values() if p.models]
 
     @classmethod
-    async def list_models(
-        cls, provider_id: str | None = None
-    ) -> list[CatalogModel]:
+    async def list_models(cls, provider_id: str | None = None) -> list[CatalogModel]:
         """List models, optionally filtered by provider."""
         catalog = await cls.load()
         if provider_id:
@@ -189,9 +190,7 @@ class ModelsCatalog:
         return result
 
     @classmethod
-    async def get_model(
-        cls, provider_id: str, model_id: str
-    ) -> CatalogModel | None:
+    async def get_model(cls, provider_id: str, model_id: str) -> CatalogModel | None:
         """Get a specific model by provider and model ID."""
         catalog = await cls.load()
         prov = catalog.get(provider_id)

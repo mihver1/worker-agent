@@ -6,10 +6,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
-
 from worker_core.tools.builtins import create_builtin_tools
 from worker_core.tools.extra_search import AgTool, GlobTool, RipgrepTool, create_extra_tools
-
 
 _FAKE_SEARCH_SCRIPT = """#!/usr/bin/env python3
 from __future__ import annotations

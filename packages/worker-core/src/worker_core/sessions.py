@@ -79,9 +79,7 @@ class SessionStore:
         except Exception:  # column already exists
             pass
         try:
-            await self._db.execute(
-                "ALTER TABLE messages ADD COLUMN attachments TEXT"
-            )
+            await self._db.execute("ALTER TABLE messages ADD COLUMN attachments TEXT")
             await self._db.commit()
         except Exception:  # column already exists
             pass
@@ -250,8 +248,7 @@ class SessionStore:
             if row_dict["tool_calls"]:
                 raw = json.loads(row_dict["tool_calls"])
                 tcs = [
-                    ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"])
-                    for tc in raw
+                    ToolCall(id=tc["id"], name=tc["name"], arguments=tc["arguments"]) for tc in raw
                 ]
 
             tr = None
@@ -335,7 +332,8 @@ class SessionStore:
             raise ValueError(f"Session '{source_id}' not found")
 
         await self.create_session(
-            new_id, source.model,
+            new_id,
+            source.model,
             title=title or f"Fork of {source.title}",
             project_dir=source.project_dir,
             thinking_level=source.thinking_level,

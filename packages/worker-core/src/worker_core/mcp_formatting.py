@@ -76,7 +76,10 @@ def format_resources_listing(resources: list[Any], resource_templates: list[Any]
     parts: list[str] = []
     if resources:
         parts.append("Resources:")
-        parts.extend(f"- {getattr(resource, 'name', 'resource')}: {getattr(resource, 'uri', '')}" for resource in resources)
+        parts.extend(
+            f"- {getattr(resource, 'name', 'resource')}: {getattr(resource, 'uri', '')}"
+            for resource in resources
+        )
     if resource_templates:
         if parts:
             parts.append("")
@@ -93,19 +96,27 @@ def _format_content_item(item: Any) -> str:
     if item_name == "TextContent":
         return str(getattr(item, "text", ""))
     if item_name == "ImageContent":
-        return f"[image: {getattr(item, 'mimeType', '')}, {len(str(getattr(item, 'data', '')))} base64 chars]"
+        mime_type = getattr(item, "mimeType", "")
+        data_len = len(str(getattr(item, "data", "")))
+        return f"[image: {mime_type}, {data_len} base64 chars]"
     if item_name == "AudioContent":
-        return f"[audio: {getattr(item, 'mimeType', '')}, {len(str(getattr(item, 'data', '')))} base64 chars]"
+        mime_type = getattr(item, "mimeType", "")
+        data_len = len(str(getattr(item, "data", "")))
+        return f"[audio: {mime_type}, {data_len} base64 chars]"
     if item_name == "ResourceLink":
         return f"[resource] {getattr(item, 'name', '')}: {getattr(item, 'uri', '')}"
     if item_name == "EmbeddedResource":
         resource = getattr(item, "resource", None)
         resource_name = type(resource).__name__
         if resource_name == "TextResourceContents":
-            return f"[embedded resource] {getattr(resource, 'uri', '')}\n{getattr(resource, 'text', '')}"
+            uri = getattr(resource, "uri", "")
+            text = getattr(resource, "text", "")
+            return f"[embedded resource] {uri}\n{text}"
         if resource_name == "BlobResourceContents":
-            mime = getattr(resource, 'mimeType', None) or "application/octet-stream"
-            return f"[embedded resource] {getattr(resource, 'uri', '')} ({mime}, {len(str(getattr(resource, 'blob', '')))} base64 chars)"
+            mime = getattr(resource, "mimeType", None) or "application/octet-stream"
+            uri = getattr(resource, "uri", "")
+            blob_len = len(str(getattr(resource, "blob", "")))
+            return f"[embedded resource] {uri} ({mime}, {blob_len} base64 chars)"
     if hasattr(item, "model_dump"):
         return _json_block(item.model_dump(mode="json"))
     return str(item)

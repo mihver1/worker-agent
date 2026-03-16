@@ -190,7 +190,11 @@ def add_schedule(
     normalized_id = schedule_id.strip()
     if not normalized_id:
         raise ValueError("Schedule id cannot be empty")
-    path = global_schedules_path() if normalized_scope == "global" else project_schedules_path(project_dir)
+    path = (
+        global_schedules_path()
+        if normalized_scope == "global"
+        else project_schedules_path(project_dir)
+    )
     if normalized_scope == "project" and not project_dir:
         raise ValueError("project_dir is required for project-scoped schedules")
     records = _load_schedule_file(path, scope=normalized_scope)
@@ -254,12 +258,22 @@ def update_schedule(
         raise ValueError(f"Schedule '{needle}' not found")
 
     target_scope = _normalize_scope(scope) if scope is not None else current.scope
-    source_path = global_schedules_path() if current.scope == "global" else project_schedules_path(project_dir)
-    target_path = global_schedules_path() if target_scope == "global" else project_schedules_path(project_dir)
+    source_path = (
+        global_schedules_path()
+        if current.scope == "global"
+        else project_schedules_path(project_dir)
+    )
+    target_path = (
+        global_schedules_path() if target_scope == "global" else project_schedules_path(project_dir)
+    )
     if target_scope == "project" and not project_dir:
         raise ValueError("project_dir is required for project-scoped schedules")
 
-    source_records = [record for record in _load_schedule_file(source_path, scope=current.scope) if record.id != needle]
+    source_records = [
+        record
+        for record in _load_schedule_file(source_path, scope=current.scope)
+        if record.id != needle
+    ]
     if source_path != target_path:
         _write_schedule_file(source_path, source_records)
         target_records = _load_schedule_file(target_path, scope=target_scope)
@@ -278,15 +292,25 @@ def update_schedule(
             prompt=current.prompt if prompt is None else prompt,
             prompt_name=current.prompt_name if prompt_name is None else prompt_name.strip(),
             arg=current.arg if arg is None else arg,
-            project_dir=current.project_dir if target_project_dir is None else target_project_dir.strip(),
+            project_dir=current.project_dir
+            if target_project_dir is None
+            else target_project_dir.strip(),
             model=current.model if model is None else model.strip(),
-            session_mode=current.session_mode if session_mode is None else _normalize_session_mode(session_mode),
-            execution_mode=current.execution_mode if execution_mode is None else _normalize_execution_mode(execution_mode),
-            overlap_policy=current.overlap_policy if overlap_policy is None else _normalize_overlap_policy(overlap_policy),
+            session_mode=current.session_mode
+            if session_mode is None
+            else _normalize_session_mode(session_mode),
+            execution_mode=current.execution_mode
+            if execution_mode is None
+            else _normalize_execution_mode(execution_mode),
+            overlap_policy=current.overlap_policy
+            if overlap_policy is None
+            else _normalize_overlap_policy(overlap_policy),
             max_runtime_seconds=(
                 current.max_runtime_seconds if max_runtime_seconds is None else max_runtime_seconds
             ),
-            run_missed=current.run_missed if run_missed is None else _normalize_run_missed_policy(run_missed),
+            run_missed=current.run_missed
+            if run_missed is None
+            else _normalize_run_missed_policy(run_missed),
             created_at=current.created_at,
             updated_at=_now(),
         )
@@ -304,8 +328,14 @@ def delete_schedule(schedule_id: str, project_dir: str = "") -> ScheduleRecord |
     current = get_schedule(needle, project_dir)
     if current is None:
         return None
-    path = global_schedules_path() if current.scope == "global" else project_schedules_path(project_dir)
-    kept = [record for record in _load_schedule_file(path, scope=current.scope) if record.id != needle]
+    path = (
+        global_schedules_path()
+        if current.scope == "global"
+        else project_schedules_path(project_dir)
+    )
+    kept = [
+        record for record in _load_schedule_file(path, scope=current.scope) if record.id != needle
+    ]
     _write_schedule_file(path, kept)
     return current
 
@@ -446,11 +476,19 @@ def _load_schedule_file(path: Path, *, scope: ScheduleScope) -> list[ScheduleRec
                     arg=str(item.get("arg", "") or ""),
                     project_dir=str(item.get("project_dir", "") or "").strip(),
                     model=str(item.get("model", "") or "").strip(),
-                    session_mode=_normalize_session_mode(str(item.get("session_mode", "reuse") or "reuse")),
-                    execution_mode=_normalize_execution_mode(str(item.get("execution_mode", "readonly") or "readonly")),
-                    overlap_policy=_normalize_overlap_policy(str(item.get("overlap_policy", "skip") or "skip")),
+                    session_mode=_normalize_session_mode(
+                        str(item.get("session_mode", "reuse") or "reuse")
+                    ),
+                    execution_mode=_normalize_execution_mode(
+                        str(item.get("execution_mode", "readonly") or "readonly")
+                    ),
+                    overlap_policy=_normalize_overlap_policy(
+                        str(item.get("overlap_policy", "skip") or "skip")
+                    ),
                     max_runtime_seconds=int(item.get("max_runtime_seconds", 0) or 0),
-                    run_missed=_normalize_run_missed_policy(str(item.get("run_missed", "none") or "none")),
+                    run_missed=_normalize_run_missed_policy(
+                        str(item.get("run_missed", "none") or "none")
+                    ),
                     created_at=str(item.get("created_at", "") or ""),
                     updated_at=str(item.get("updated_at", "") or ""),
                 )
@@ -465,10 +503,7 @@ def _load_schedule_file(path: Path, *, scope: ScheduleScope) -> list[ScheduleRec
 def _write_schedule_file(path: Path, schedules: list[ScheduleRecord]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schedules": [
-            asdict(record)
-            for record in sorted(schedules, key=lambda item: item.id)
-        ]
+        "schedules": [asdict(record) for record in sorted(schedules, key=lambda item: item.id)]
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
@@ -483,7 +518,10 @@ def project_schedule_state_path(project_dir: str) -> Path:
 
 def load_schedule_states(project_dir: str = "") -> dict[str, ScheduleStateRecord]:
     merged: dict[str, ScheduleStateRecord] = {}
-    for path in (global_schedule_state_path(), project_schedule_state_path(project_dir) if project_dir else None):
+    for path in (
+        global_schedule_state_path(),
+        project_schedule_state_path(project_dir) if project_dir else None,
+    ):
         if path is None or not path.exists():
             continue
         for key, value in _load_schedule_state_file(path).items():
@@ -491,13 +529,25 @@ def load_schedule_states(project_dir: str = "") -> dict[str, ScheduleStateRecord
     return merged
 
 
-def load_schedule_states_for_scope(project_dir: str, *, scope: ScheduleScope) -> dict[str, ScheduleStateRecord]:
-    path = global_schedule_state_path() if scope == "global" else project_schedule_state_path(project_dir)
+def load_schedule_states_for_scope(
+    project_dir: str, *, scope: ScheduleScope
+) -> dict[str, ScheduleStateRecord]:
+    path = (
+        global_schedule_state_path()
+        if scope == "global"
+        else project_schedule_state_path(project_dir)
+    )
     return _load_schedule_state_file(path)
 
 
-def write_schedule_states(project_dir: str, states: dict[str, ScheduleStateRecord], *, scope: ScheduleScope = "project") -> Path:
-    path = global_schedule_state_path() if scope == "global" else project_schedule_state_path(project_dir)
+def write_schedule_states(
+    project_dir: str, states: dict[str, ScheduleStateRecord], *, scope: ScheduleScope = "project"
+) -> Path:
+    path = (
+        global_schedule_state_path()
+        if scope == "global"
+        else project_schedule_state_path(project_dir)
+    )
     _write_schedule_state_file(path, states)
     return path
 
@@ -525,7 +575,9 @@ def _load_schedule_state_file(path: Path) -> dict[str, ScheduleStateRecord]:
             last_result_preview=str(item.get("last_result_preview", "") or ""),
             last_session_id=str(item.get("last_session_id", "") or ""),
             last_run_id=str(item.get("last_run_id", "") or ""),
-            running_run_ids=[str(value) for value in item.get("running_run_ids", [])] if isinstance(item.get("running_run_ids"), list) else [],
+            running_run_ids=[str(value) for value in item.get("running_run_ids", [])]
+            if isinstance(item.get("running_run_ids"), list)
+            else [],
             total_runs=int(item.get("total_runs", 0) or 0),
             total_successes=int(item.get("total_successes", 0) or 0),
             total_failures=int(item.get("total_failures", 0) or 0),
@@ -537,12 +589,7 @@ def _load_schedule_state_file(path: Path) -> dict[str, ScheduleStateRecord]:
 
 def _write_schedule_state_file(path: Path, states: dict[str, ScheduleStateRecord]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "schedules": {
-            key: asdict(value)
-            for key, value in sorted(states.items())
-        }
-    }
+    payload = {"schedules": {key: asdict(value) for key, value in sorted(states.items())}}
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
@@ -571,7 +618,9 @@ def _now() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _parse_cron_expression(expr: str) -> tuple[set[int], set[int], set[int], set[int], set[int], bool, bool]:
+def _parse_cron_expression(
+    expr: str,
+) -> tuple[set[int], set[int], set[int], set[int], set[int], bool, bool]:
     parts = expr.split()
     if len(parts) != 5:
         raise ValueError("cron must have 5 fields: minute hour day month weekday")
@@ -638,12 +687,16 @@ def _parse_field_value(raw: str, *, names: dict[str, int] | None = None) -> int:
 
 def _next_cron_time(record: ScheduleRecord, after: datetime) -> datetime | None:
     tz = timezone_for_schedule(record)
-    minutes, hours, days, months, weekdays, day_any, weekday_any = _parse_cron_expression(record.cron)
+    minutes, hours, days, months, weekdays, day_any, weekday_any = _parse_cron_expression(
+        record.cron
+    )
     candidate = after.astimezone(tz).replace(second=0, microsecond=0) + timedelta(minutes=1)
     limit = candidate + timedelta(days=366 * 5)
     while candidate <= limit:
         if candidate.month not in months:
-            candidate = (candidate.replace(day=1, hour=0, minute=0) + timedelta(days=32)).replace(day=1)
+            candidate = (candidate.replace(day=1, hour=0, minute=0) + timedelta(days=32)).replace(
+                day=1
+            )
             continue
         if candidate.hour not in hours:
             candidate += timedelta(hours=1)
@@ -661,7 +714,9 @@ def _next_cron_time(record: ScheduleRecord, after: datetime) -> datetime | None:
     return None
 
 
-def _cron_day_matches(day_match: bool, weekday_match: bool, *, day_any: bool, weekday_any: bool) -> bool:
+def _cron_day_matches(
+    day_match: bool, weekday_match: bool, *, day_any: bool, weekday_any: bool
+) -> bool:
     if day_any and weekday_any:
         return True
     if day_any:

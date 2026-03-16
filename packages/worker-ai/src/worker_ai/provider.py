@@ -52,6 +52,7 @@ class Provider(ABC):
     def list_models(self) -> list[ModelInfo]:
         """Return the list of known models for this provider."""
         ...
+
     async def list_models_direct(self) -> list[ModelInfo]:
         """Return models discovered directly from the provider when supported."""
         return self.list_models()

@@ -4,7 +4,6 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-
 from worker_core.delegation.registry import get_registry, reset_registry
 
 
@@ -46,7 +45,9 @@ async def test_tui_auto_surfaces_completed_delegation(monkeypatch):
 
     app = WorkerApp()
     seen_messages: list[tuple[str, str]] = []
-    monkeypatch.setattr(app, "_add_message", lambda content, role="assistant": seen_messages.append((content, role)))
+    monkeypatch.setattr(
+        app, "_add_message", lambda content, role="assistant": seen_messages.append((content, role))
+    )
 
     queue: asyncio.Queue[dict[str, object]] = asyncio.Queue()
     task = asyncio.create_task(app._consume_delegation_events(queue))
@@ -73,7 +74,9 @@ async def test_tui_auto_surfaces_completed_delegation(monkeypatch):
 def test_widget_renders_latest_update() -> None:
     from worker_tui.delegation_widget import DelegationStatusWidget
 
-    widget = DelegationStatusWidget(SimpleNamespace(remote_url="", _session=SimpleNamespace(session_id="s1")))
+    widget = DelegationStatusWidget(
+        SimpleNamespace(remote_url="", _session=SimpleNamespace(session_id="s1"))
+    )
     rendered = widget._render_text(
         [
             {

@@ -615,12 +615,10 @@ class LspRuntimeManager:
         self.errors = {}
         self.specs = self._build_specs(config)
         self._resolved_commands = {
-            server_id: self._first_resolved_command(spec)
-            for server_id, spec in self.specs.items()
+            server_id: self._first_resolved_command(spec) for server_id, spec in self.specs.items()
         }
         self.server_statuses = {
-            server_id: self._build_status(server_id, spec)
-            for server_id, spec in self.specs.items()
+            server_id: self._build_status(server_id, spec) for server_id, spec in self.specs.items()
         }
         self.tools = create_lsp_tools(self.project_dir, self) if self.enabled else []
 
@@ -650,19 +648,15 @@ class LspRuntimeManager:
 
     def status_payload(self) -> dict[str, Any]:
         server_items = [
-            self.server_statuses[name].to_payload()
-            for name in sorted(self.server_statuses)
+            self.server_statuses[name].to_payload() for name in sorted(self.server_statuses)
         ]
         client_items = [
-            self._client_status(client).to_payload()
-            for _, client in sorted(self._clients.items())
+            self._client_status(client).to_payload() for _, client in sorted(self._clients.items())
         ]
         summary = {
             "enabled": self.enabled,
             "available": sum(
-                1
-                for item in server_items
-                if item["state"] in {"available", "active"}
+                1 for item in server_items if item["state"] in {"available", "active"}
             ),
             "disabled": sum(1 for item in server_items if item["state"] == "disabled"),
             "unavailable": sum(1 for item in server_items if item["state"] == "unavailable"),
@@ -887,8 +881,7 @@ class LspRuntimeManager:
 
     def _refresh_statuses(self) -> None:
         self.server_statuses = {
-            server_id: self._build_status(server_id, spec)
-            for server_id, spec in self.specs.items()
+            server_id: self._build_status(server_id, spec) for server_id, spec in self.specs.items()
         }
 
     def _unavailable_message(self, spec: LspServerSpec, candidates: list[str]) -> str:
@@ -924,9 +917,7 @@ class LspRuntimeManager:
 
     def _available_installers(self, spec: LspServerSpec) -> tuple[str, ...]:
         return tuple(
-            installer
-            for installer in self._required_installers(spec)
-            if shutil.which(installer)
+            installer for installer in self._required_installers(spec) if shutil.which(installer)
         )
 
     def _client_status(self, client: LspClient) -> LspClientStatus:

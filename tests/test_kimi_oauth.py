@@ -170,14 +170,10 @@ class TestKimiOAuth:
 
         monkeypatch.setattr(oauth_mod.asyncio, "sleep", _no_sleep)
 
-        provider = oauth_mod.KimiOAuth(
-            token_store=oauth_mod.TokenStore(tmp_path / "auth.json")
-        )
+        provider = oauth_mod.KimiOAuth(token_store=oauth_mod.TokenStore(tmp_path / "auth.json"))
         await provider.login()
 
-        assert opened_urls == [
-            "https://www.kimi.com/code/authorize_device?user_code=ABCD-EFGH"
-        ]
+        assert opened_urls == ["https://www.kimi.com/code/authorize_device?user_code=ABCD-EFGH"]
 
     @pytest.mark.asyncio
     async def test_refresh_uses_form_encoded_request(self, monkeypatch):

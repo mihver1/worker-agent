@@ -41,7 +41,12 @@ async def test_schedule_service_manual_run_and_overlap_skip(tmp_path, monkeypatc
         class _Session:
             def __init__(self):
                 self.project_dir = kwargs.get("project_dir", str(project_dir))
-                self.messages = [object(), type("M", (), {"role": type("R", (), {"value": "assistant"})(), "content": "OK"})()]
+                self.messages = [
+                    object(),
+                    type(
+                        "M", (), {"role": type("R", (), {"value": "assistant"})(), "content": "OK"}
+                    )(),
+                ]
                 self.provider = type("P", (), {"close": staticmethod(lambda: None)})()
 
             def abort(self):

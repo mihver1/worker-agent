@@ -57,9 +57,7 @@ LEGACY_EXTENSIONS_MANIFEST = LEGACY_CONFIG_DIR / "extensions.lock"
 REGISTRY_CACHE_DIR = CONFIG_DIR / "registry_cache"
 LEGACY_REGISTRY_CACHE_DIR = LEGACY_CONFIG_DIR / "registry_cache"
 SERVER_PROVIDER_OVERLAY_PATH = CONFIG_DIR / "server-provider-overlay.json"
-LEGACY_SERVER_PROVIDER_OVERLAY_PATH = (
-    LEGACY_CONFIG_DIR / "server-provider-overlay.json"
-)
+LEGACY_SERVER_PROVIDER_OVERLAY_PATH = LEGACY_CONFIG_DIR / "server-provider-overlay.json"
 GLOBAL_MCP_PATH = CONFIG_DIR / "mcp.json"
 LEGACY_GLOBAL_MCP_PATH = LEGACY_CONFIG_DIR / "mcp.json"
 GLOBAL_STATE_FILE = CONFIG_DIR / "state.json"
@@ -151,6 +149,7 @@ def project_server_registry_path(project_dir: str) -> Path:
 def legacy_project_server_registry_path(project_dir: str) -> Path:
     return legacy_project_state_dir(project_dir) / "server.json"
 
+
 def project_mcp_path(project_dir: str) -> Path:
     return project_state_dir(project_dir) / "mcp.json"
 
@@ -162,15 +161,13 @@ def legacy_project_mcp_path(project_dir: str) -> Path:
 def effective_global_config_path() -> Path:
     return _first_existing_path(GLOBAL_CONFIG, LEGACY_GLOBAL_CONFIG) or GLOBAL_CONFIG
 
+
 def effective_auth_path() -> Path:
     return _first_existing_path(AUTH_FILE, LEGACY_AUTH_FILE) or AUTH_FILE
 
 
 def effective_global_agents_path() -> Path:
-    return (
-        _first_existing_path(GLOBAL_AGENTS_FILE, LEGACY_GLOBAL_AGENTS_FILE)
-        or GLOBAL_AGENTS_FILE
-    )
+    return _first_existing_path(GLOBAL_AGENTS_FILE, LEGACY_GLOBAL_AGENTS_FILE) or GLOBAL_AGENTS_FILE
 
 
 def effective_global_system_override_path() -> Path:
@@ -188,63 +185,45 @@ def effective_global_append_system_path() -> Path:
 
 
 def effective_project_config_path(project_dir: str) -> Path:
-    return (
-        _first_existing_path(
-            project_config_path(project_dir),
-            legacy_project_config_path(project_dir),
-        )
-        or project_config_path(project_dir)
-    )
+    return _first_existing_path(
+        project_config_path(project_dir),
+        legacy_project_config_path(project_dir),
+    ) or project_config_path(project_dir)
 
 
 def effective_project_agents_path(project_dir: str) -> Path:
-    return (
-        _first_existing_path(
-            project_agents_path(project_dir),
-            legacy_project_agents_path(project_dir),
-        )
-        or project_agents_path(project_dir)
-    )
+    return _first_existing_path(
+        project_agents_path(project_dir),
+        legacy_project_agents_path(project_dir),
+    ) or project_agents_path(project_dir)
 
 
 def effective_project_system_override_path(project_dir: str) -> Path:
-    return (
-        _first_existing_path(
-            project_system_override_path(project_dir),
-            legacy_project_system_override_path(project_dir),
-        )
-        or project_system_override_path(project_dir)
-    )
+    return _first_existing_path(
+        project_system_override_path(project_dir),
+        legacy_project_system_override_path(project_dir),
+    ) or project_system_override_path(project_dir)
 
 
 def effective_project_append_system_path(project_dir: str) -> Path:
-    return (
-        _first_existing_path(
-            project_append_system_path(project_dir),
-            legacy_project_append_system_path(project_dir),
-        )
-        or project_append_system_path(project_dir)
-    )
+    return _first_existing_path(
+        project_append_system_path(project_dir),
+        legacy_project_append_system_path(project_dir),
+    ) or project_append_system_path(project_dir)
 
 
 def effective_project_server_registry_path(project_dir: str) -> Path:
-    return (
-        _first_existing_path(
-            project_server_registry_path(project_dir),
-            legacy_project_server_registry_path(project_dir),
-        )
-        or project_server_registry_path(project_dir)
-    )
+    return _first_existing_path(
+        project_server_registry_path(project_dir),
+        legacy_project_server_registry_path(project_dir),
+    ) or project_server_registry_path(project_dir)
 
 
 def effective_project_mcp_path(project_dir: str) -> Path:
-    return (
-        _first_existing_path(
-            project_mcp_path(project_dir),
-            legacy_project_mcp_path(project_dir),
-        )
-        or project_mcp_path(project_dir)
-    )
+    return _first_existing_path(
+        project_mcp_path(project_dir),
+        legacy_project_mcp_path(project_dir),
+    ) or project_mcp_path(project_dir)
 
 
 def effective_global_mcp_path() -> Path:
@@ -295,6 +274,7 @@ class AgentConfig(BaseModel):
     max_turns: int = 50
     system_prompt: str = ""
     thinking: str = "off"  # off | minimal | low | medium | high | xhigh
+
 
 class ProviderModelConfig(BaseModel):
     name: str | None = None

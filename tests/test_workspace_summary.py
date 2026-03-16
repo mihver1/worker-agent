@@ -72,8 +72,7 @@ def test_summarize_workspace_captures_follow_context() -> None:
     assert "current file: src/app.py" in summary.task.workspace_evidence
     assert "git focus: src/app.py, tests/test_web_phase8.py" in summary.task.workspace_evidence
     assert (
-        "recent terminal: uv run pytest tests/test_web_phase8.py"
-        in summary.task.workspace_evidence
+        "recent terminal: uv run pytest tests/test_web_phase8.py" in summary.task.workspace_evidence
     )
     assert "tool trail: read_files" in summary.task.workspace_evidence
 
@@ -168,11 +167,14 @@ def test_follow_workspace_helpers_delegate_to_shared_logic() -> None:
     assert len(updates) == 3
     assert render_follow_updates_note(len(updates), limit=4).startswith("Follow-first mode")
     assert has_follow_workspace_context(messages) is True
-    assert format_code_item_preview([
-        "packages/worker-web/src/worker_web/app.py",
-        "packages/worker-web/src/worker_web/controller.py",
-        "packages/worker-web/src/worker_web/state.py",
-    ], limit=2) == (
+    assert format_code_item_preview(
+        [
+            "packages/worker-web/src/worker_web/app.py",
+            "packages/worker-web/src/worker_web/controller.py",
+            "packages/worker-web/src/worker_web/state.py",
+        ],
+        limit=2,
+    ) == (
         "`packages/worker-web/src/worker_web/app.py`, "
         "`packages/worker-web/src/worker_web/controller.py` (+1 more)"
     )

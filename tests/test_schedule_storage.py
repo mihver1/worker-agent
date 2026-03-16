@@ -77,7 +77,14 @@ def test_next_schedule_time_for_cron(cron, expected):
         cron=cron,
         prompt="hello",
     )
-    start = datetime(2025, 1, 1, 12 if cron.startswith("*/") else 8, 2 if cron.startswith("*/") else 0, tzinfo=UTC)
+    start = datetime(
+        2025,
+        1,
+        1,
+        12 if cron.startswith("*/") else 8,
+        2 if cron.startswith("*/") else 0,
+        tzinfo=UTC,
+    )
     next_run = next_schedule_time(schedule, start)
     assert next_run is not None
     assert next_run.strftime("%Y-%m-%d %H:%M:%S") == expected
@@ -87,4 +94,7 @@ def test_render_prompt_variables_supports_key_value_and_input():
     from worker_core.schedules import render_prompt_variables
 
     assert render_prompt_variables("hello world") == {"input": "hello world"}
-    assert render_prompt_variables("repo=backend branch=main") == {"repo": "backend", "branch": "main"}
+    assert render_prompt_variables("repo=backend branch=main") == {
+        "repo": "backend",
+        "branch": "main",
+    }

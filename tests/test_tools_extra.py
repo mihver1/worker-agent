@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import pytest
-
-from worker_core.tools.grep import GrepTool
 from worker_core.tools.find import FindTool
+from worker_core.tools.grep import GrepTool
 from worker_core.tools.ls import LsTool
-
 
 # ── GrepTool ────────────────────────────────────────────────────
 
@@ -126,6 +124,7 @@ async def test_ls_missing_path(tmp_workdir):
 @pytest.mark.asyncio
 async def test_ls_empty_dir(tmp_workdir):
     import os
+
     os.makedirs(os.path.join(tmp_workdir, "empty_dir"), exist_ok=True)
     tool = LsTool(tmp_workdir)
     result = await tool.execute(path="empty_dir")

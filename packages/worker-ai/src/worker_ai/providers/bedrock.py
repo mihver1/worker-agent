@@ -71,9 +71,7 @@ def _build_tools(tools: list[ToolDef]) -> list[dict[str, Any]]:
                 "toolSpec": {
                     "name": tool.name,
                     "description": tool.description,
-                    "inputSchema": {
-                        "json": tool_input_schema(tool)
-                    },
+                    "inputSchema": {"json": tool_input_schema(tool)},
                 }
             }
         )

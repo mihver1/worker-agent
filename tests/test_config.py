@@ -62,9 +62,7 @@ class TestDeepMerge:
 
 class TestProviderRuntimeConfig:
     def test_provider_section_name_used_when_type_omitted(self):
-        config = WorkerConfig(
-            providers={"openai": ProviderConfig(api_key="sk-test")}
-        )
+        config = WorkerConfig(providers={"openai": ProviderConfig(api_key="sk-test")})
         provider_type, kwargs = resolve_provider_runtime_config(config, "openai")
         assert provider_type == "openai"
         assert kwargs == {}
@@ -118,6 +116,7 @@ class TestProviderRuntimeConfig:
             assert provider_type == "lmstudio"
             assert kwargs["base_url"] == "http://127.0.0.1:1234/v1"
             assert provider_requires_api_key(config, provider_name) is False
+
     def test_llamacpp_aliases_are_keyless_with_local_defaults(self):
         config = WorkerConfig()
 
@@ -360,6 +359,7 @@ class TestLoadConfig:
         assert config.agent.temperature == 0.0
         assert config.permissions.bash == "ask"
         assert config.server.port == 7432
+
     def test_project_overlay(self, tmp_path, monkeypatch):
         """Project config merges over global defaults."""
         import worker_core.config as cfg_mod
@@ -425,6 +425,7 @@ class TestGenerateConfig:
         generate_global_config()
         assert (tmp_path / "config.toml").read_text() == "custom content"
 
+
 class TestPersistServerAuthToken:
     def test_creates_global_config_when_missing(self, tmp_path, monkeypatch):
         import worker_core.config as cfg_mod
@@ -439,6 +440,7 @@ class TestPersistServerAuthToken:
         saved = tomllib.loads((tmp_path / "config.toml").read_text())
         assert saved["server"]["auth_token"] == "artel_first_run_token"
         assert load_config("/nonexistent/path").server.auth_token == "artel_first_run_token"
+
     def test_updates_global_config_when_no_project_override(self, tmp_path, monkeypatch):
         import worker_core.config as cfg_mod
 
@@ -466,7 +468,7 @@ class TestPersistServerAuthToken:
         project_dir = tmp_path / "project"
         project_config = project_dir / ".artel" / "config.toml"
         project_config.parent.mkdir(parents=True)
-        project_config.write_text("[server]\nauth_token = \"\"\n", encoding="utf-8")
+        project_config.write_text('[server]\nauth_token = ""\n', encoding="utf-8")
 
         saved_path = persist_server_auth_token("artel_project_token", project_dir=str(project_dir))
 

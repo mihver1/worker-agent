@@ -13,31 +13,66 @@ async def test_remote_control_rules_endpoints_are_used():
 
         async def list_rules(self, *, project_dir: str = ""):
             self.calls.append(("list", project_dir))
-            return {"rules": [{"id": "rule-1", "scope": "project", "enabled": True, "text": "Use pytest."}]}
+            return {
+                "rules": [
+                    {"id": "rule-1", "scope": "project", "enabled": True, "text": "Use pytest."}
+                ]
+            }
 
-        async def add_rule(self, *, scope: str, text: str, enabled: bool = True, project_dir: str = ""):
+        async def add_rule(
+            self, *, scope: str, text: str, enabled: bool = True, project_dir: str = ""
+        ):
             self.calls.append(("add", scope, text, enabled, project_dir))
             return {"rule": {"id": "rule-2", "scope": scope, "enabled": enabled, "text": text}}
 
-        async def edit_rule(self, rule_id: str, *, text=None, scope=None, enabled=None, project_dir: str = ""):
+        async def edit_rule(
+            self, rule_id: str, *, text=None, scope=None, enabled=None, project_dir: str = ""
+        ):
             self.calls.append(("edit", rule_id, text, scope, enabled, project_dir))
-            return {"rule": {"id": rule_id, "scope": scope or "project", "enabled": True if enabled is None else enabled, "text": text or "x"}}
+            return {
+                "rule": {
+                    "id": rule_id,
+                    "scope": scope or "project",
+                    "enabled": True if enabled is None else enabled,
+                    "text": text or "x",
+                }
+            }
 
         async def delete_rule(self, rule_id: str, *, project_dir: str = ""):
             self.calls.append(("delete", rule_id, project_dir))
             return {"rule": {"id": rule_id}}
 
-        async def set_session_rule_enabled(self, session_id: str, rule_id: str, *, enabled: bool | None):
+        async def set_session_rule_enabled(
+            self, session_id: str, rule_id: str, *, enabled: bool | None
+        ):
             self.calls.append(("toggle", session_id, rule_id, enabled))
             if enabled is None and rule_id == "*":
-                return {"rule_id": rule_id, "enabled": None, "rule_overrides": {"enabled_rule_ids": [], "disabled_rule_ids": []}}
+                return {
+                    "rule_id": rule_id,
+                    "enabled": None,
+                    "rule_overrides": {"enabled_rule_ids": [], "disabled_rule_ids": []},
+                }
             if enabled is None:
-                return {"rule_id": rule_id, "enabled": None, "rule_overrides": {"enabled_rule_ids": [], "disabled_rule_ids": []}}
-            return {"rule_id": rule_id, "enabled": enabled, "rule_overrides": {"enabled_rule_ids": [rule_id] if enabled else [], "disabled_rule_ids": [] if enabled else [rule_id]}}
+                return {
+                    "rule_id": rule_id,
+                    "enabled": None,
+                    "rule_overrides": {"enabled_rule_ids": [], "disabled_rule_ids": []},
+                }
+            return {
+                "rule_id": rule_id,
+                "enabled": enabled,
+                "rule_overrides": {
+                    "enabled_rule_ids": [rule_id] if enabled else [],
+                    "disabled_rule_ids": [] if enabled else [rule_id],
+                },
+            }
 
         async def get_session_rule_overrides(self, session_id: str):
             self.calls.append(("get_overrides", session_id))
-            return {"session_id": session_id, "rule_overrides": {"enabled_rule_ids": [], "disabled_rule_ids": []}}
+            return {
+                "session_id": session_id,
+                "rule_overrides": {"enabled_rule_ids": [], "disabled_rule_ids": []},
+            }
 
     app = WorkerApp(remote_url="ws://localhost:7432")
     app._remote_project_dir = "/srv/project"

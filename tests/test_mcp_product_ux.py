@@ -22,7 +22,11 @@ def test_mcp_cli_status_and_reload(monkeypatch, tmp_path):
             return None
 
         def status_text(self):
-            return "Connected servers:\n- demo [streamable_http] state=connected tools=1 prompts=0 resources=0 templates=0"
+            return (
+                "Connected servers:\n"
+                "- demo [streamable_http] state=connected tools=1 "
+                "prompts=0 resources=0 templates=0"
+            )
 
         def status_payload(self):
             return {
@@ -132,10 +136,15 @@ async def test_tui_mcp_command_remote_uses_control_plane(monkeypatch):
 
     class _RemoteClient:
         async def request(self, method: str, path: str, *, json_data=None):
+            status = (
+                "Connected servers:\n"
+                "- context7 [streamable_http] state=connected tools=3 "
+                "prompts=0 resources=0 templates=0"
+            )
             if method == "GET" and path == "/api/mcp":
-                return {"status": "Connected servers:\n- context7 [streamable_http] state=connected tools=3 prompts=0 resources=0 templates=0"}
+                return {"status": status}
             if method == "POST" and path == "/api/mcp/reload":
-                return {"status": "Connected servers:\n- context7 [streamable_http] state=connected tools=3 prompts=0 resources=0 templates=0"}
+                return {"status": status}
             raise AssertionError((method, path, json_data))
 
     app = WorkerApp(remote_url="ws://localhost:7432")
@@ -147,6 +156,16 @@ async def test_tui_mcp_command_remote_uses_control_plane(monkeypatch):
     await app._cmd_mcp("reload")
 
     assert seen_messages == [
-        ("Connected servers:\n- context7 [streamable_http] state=connected tools=3 prompts=0 resources=0 templates=0", "tool"),
-        ("Connected servers:\n- context7 [streamable_http] state=connected tools=3 prompts=0 resources=0 templates=0", "tool"),
+        (
+            "Connected servers:\n"
+            "- context7 [streamable_http] state=connected tools=3 "
+            "prompts=0 resources=0 templates=0",
+            "tool",
+        ),
+        (
+            "Connected servers:\n"
+            "- context7 [streamable_http] state=connected tools=3 "
+            "prompts=0 resources=0 templates=0",
+            "tool",
+        ),
     ]

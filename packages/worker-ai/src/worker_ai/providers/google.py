@@ -100,9 +100,7 @@ def _build_contents(messages: list[Message]) -> tuple[str | None, list[dict[str,
         parts = _build_parts(msg)
         if msg.tool_calls:
             for tc in msg.tool_calls:
-                parts.append(
-                    {"functionCall": {"name": tc.name, "args": tc.arguments}}
-                )
+                parts.append({"functionCall": {"name": tc.name, "args": tc.arguments}})
         contents.append({"role": role, "parts": parts})
     return system, contents
 
@@ -203,9 +201,7 @@ def _normalize_scopes(value: str | list[str] | tuple[str, ...] | None) -> tuple[
     if isinstance(value, str):
         scopes = tuple(part.strip() for part in value.split(",") if part.strip())
     else:
-        scopes = tuple(
-            part.strip() for part in value if isinstance(part, str) and part.strip()
-        )
+        scopes = tuple(part.strip() for part in value if isinstance(part, str) and part.strip())
     return scopes or (_CLOUD_PLATFORM_SCOPE,)
 
 

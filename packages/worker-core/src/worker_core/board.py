@@ -36,10 +36,7 @@ async def write_project_board_file(path: Path, content: str) -> None:
 async def append_project_board_file(path: Path, text: str) -> None:
     existing = await read_project_board_file(path)
     content = text.rstrip()
-    if existing.strip():
-        updated = existing.rstrip() + "\n\n" + content + "\n"
-    else:
-        updated = content + "\n"
+    updated = existing.rstrip() + "\n\n" + content + "\n" if existing.strip() else content + "\n"
     await write_project_board_file(path, updated)
 
 

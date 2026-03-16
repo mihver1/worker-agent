@@ -129,9 +129,7 @@ async def _wait_until_ready(
     deadline = loop.time() + _START_TIMEOUT_SECONDS
     while loop.time() < deadline:
         if process.poll() is not None:
-            raise RuntimeError(
-                f"Managed local Artel server exited with code {process.returncode}"
-            )
+            raise RuntimeError(f"Managed local Artel server exited with code {process.returncode}")
         if await _server_matches_project(handle):
             return
         await asyncio.sleep(_POLL_INTERVAL_SECONDS)
@@ -158,8 +156,7 @@ def _managed_server_processes(project_dir: str) -> list[int]:
         result = subprocess.run(
             ["ps", "-axo", "pid=,command="],
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
     except Exception:
@@ -189,8 +186,7 @@ def _managed_server_processes(project_dir: str) -> list[int]:
                 proc = subprocess.run(
                     ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
                     check=False,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    capture_output=True,
                     text=True,
                 )
                 for row in proc.stdout.splitlines():
@@ -210,7 +206,9 @@ def _managed_server_processes(project_dir: str) -> list[int]:
     return pids
 
 
-def _kill_managed_server_processes(project_dir: str, *, include_pid: int | None = None) -> list[int]:
+def _kill_managed_server_processes(
+    project_dir: str, *, include_pid: int | None = None
+) -> list[int]:
     killed: list[int] = []
     candidate_pids = set(_managed_server_processes(project_dir))
     if include_pid is not None and include_pid > 0:

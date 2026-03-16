@@ -103,9 +103,7 @@ def merge_provider_overlay(
     for provider_id, provider_overlay in overlay.items():
         base_config = config.providers.get(provider_id)
         merged = (
-            base_config.model_dump()
-            if base_config is not None
-            else ProviderConfig().model_dump()
+            base_config.model_dump() if base_config is not None else ProviderConfig().model_dump()
         )
         _deep_merge(
             merged,
@@ -120,11 +118,7 @@ def upsert_provider_overlay(
     provider_data: dict[str, Any],
 ) -> ProviderConfig:
     base_config = overlay.get(provider_id)
-    merged = (
-        base_config.model_dump()
-        if base_config is not None
-        else ProviderConfig().model_dump()
-    )
+    merged = base_config.model_dump() if base_config is not None else ProviderConfig().model_dump()
     _deep_merge(merged, provider_data)
     provider_config = ProviderConfig.model_validate(merged)
     provider_config, _ = _sanitize_provider_config(provider_config)

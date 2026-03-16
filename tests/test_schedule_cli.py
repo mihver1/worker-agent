@@ -20,7 +20,17 @@ def test_schedule_cli_add_list_show_enable_disable_delete(monkeypatch, tmp_path)
 
     add_result = runner.invoke(
         cli_mod.cli,
-        ["schedule", "add", "heartbeat", "--every", "60", "--prompt", "Summarize repo health", "--run-missed", "latest"],
+        [
+            "schedule",
+            "add",
+            "heartbeat",
+            "--every",
+            "60",
+            "--prompt",
+            "Summarize repo health",
+            "--run-missed",
+            "latest",
+        ],
     )
     assert add_result.exit_code == 0
     assert "Schedule added: heartbeat" in add_result.output

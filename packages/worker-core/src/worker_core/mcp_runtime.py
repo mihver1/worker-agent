@@ -15,6 +15,7 @@ from typing import Any, Literal
 import httpx
 from worker_ai.models import Message, Role, ToolCall, ToolDef, ToolResult
 from worker_ai.tool_schema import normalize_json_schema
+
 from worker_core.execution import get_current_tool_execution_context
 from worker_core.extensions import ExtensionContext
 from worker_core.mcp import LoadedMCPConfig, MCPRegistry, MCPServerConfig
@@ -24,7 +25,6 @@ from worker_core.mcp_formatting import (
     format_prompts_listing,
     format_read_resource_result,
     format_resources_listing,
-    format_tools_listing,
 )
 from worker_core.tools import Tool
 
@@ -196,10 +196,7 @@ class McpRuntimeManager:
         self.tools = []
 
     def status_payload(self) -> dict[str, Any]:
-        servers = [
-            self.server_statuses[name].to_payload()
-            for name in sorted(self.server_statuses)
-        ]
+        servers = [self.server_statuses[name].to_payload() for name in sorted(self.server_statuses)]
         summary = {
             "connected": sum(1 for item in servers if item["state"] == "connected"),
             "disabled": sum(1 for item in servers if item["state"] == "disabled"),
@@ -263,8 +260,12 @@ class McpRuntimeManager:
             state=state,
             transport=server_config.transport,
             enabled=server_config.enabled,
-            source=runtime.source_label if runtime is not None else (server_config.command or server_config.url),
-            endpoint=runtime.endpoint_label if runtime is not None else (server_config.url or server_config.command),
+            source=runtime.source_label
+            if runtime is not None
+            else (server_config.command or server_config.url),
+            endpoint=runtime.endpoint_label
+            if runtime is not None
+            else (server_config.url or server_config.command),
             tool_prefix=server_config.tool_prefix,
             include_tools=server_config.include_tools,
             include_prompts=server_config.include_prompts,
@@ -511,7 +512,11 @@ class McpRuntimeManager:
             session.model,
             messages,
             tools=_mcp_tools_to_artel_tool_defs(getattr(params, "tools", None)),
-            temperature=(getattr(params, "temperature", None) if getattr(params, "temperature", None) is not None else session.temperature),
+            temperature=(
+                getattr(params, "temperature", None)
+                if getattr(params, "temperature", None) is not None
+                else session.temperature
+            ),
             max_tokens=getattr(params, "maxTokens", None),
             thinking_level=session.thinking_level,
         ):
@@ -556,18 +561,26 @@ class McpRuntimeManager:
         logger.warning("MCP elicitation requested but interactive elicitation is not implemented.")
         return types.ElicitResult(action="cancel")
 
-    def _resolve_remote_auth(self, server_config: MCPServerConfig) -> tuple[dict[str, str], httpx.Auth | None]:
+    def _resolve_remote_auth(
+        self, server_config: MCPServerConfig
+    ) -> tuple[dict[str, str], httpx.Auth | None]:
         headers = dict(server_config.headers)
         auth = dict(server_config.auth)
         auth_type = str(auth.get("type", "none") or "none")
         if auth_type == "bearer":
-            token = str(auth.get("token", "") or "") or os.environ.get(str(auth.get("token_env", "") or ""), "")
+            token = str(auth.get("token", "") or "") or os.environ.get(
+                str(auth.get("token_env", "") or ""), ""
+            )
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             return headers, None
         if auth_type == "basic":
-            username = str(auth.get("username", "") or "") or os.environ.get(str(auth.get("username_env", "") or ""), "")
-            password = str(auth.get("password", "") or "") or os.environ.get(str(auth.get("password_env", "") or ""), "")
+            username = str(auth.get("username", "") or "") or os.environ.get(
+                str(auth.get("username_env", "") or ""), ""
+            )
+            password = str(auth.get("password", "") or "") or os.environ.get(
+                str(auth.get("password_env", "") or ""), ""
+            )
             return headers, httpx.BasicAuth(username, password)
         return headers, None
 
@@ -601,8 +614,16 @@ def _prompt_schema(prompts: list[Any]) -> dict[str, Any]:
 
 
 def _resource_schema(resources: list[Any], resource_templates: list[Any]) -> dict[str, Any]:
-    uris = [str(getattr(resource, "uri", "")) for resource in resources if getattr(resource, "uri", None)]
-    template_descriptions = [str(getattr(template, "uriTemplate", "")) for template in resource_templates if getattr(template, "uriTemplate", None)]
+    uris = [
+        str(getattr(resource, "uri", ""))
+        for resource in resources
+        if getattr(resource, "uri", None)
+    ]
+    template_descriptions = [
+        str(getattr(template, "uriTemplate", ""))
+        for template in resource_templates
+        if getattr(template, "uriTemplate", None)
+    ]
     description = "MCP resource URI to read"
     if template_descriptions:
         description += f"; templates: {', '.join(template_descriptions)}"
@@ -630,7 +651,10 @@ def _classify_error_state(exc: Exception) -> McpServerState:
     if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
         return "timeout"
     text = str(exc).strip().lower()
-    if any(token in text for token in ("401", "403", "unauthorized", "forbidden", "auth", "credential", "token")):
+    if any(
+        token in text
+        for token in ("401", "403", "unauthorized", "forbidden", "auth", "credential", "token")
+    ):
         return "needs_auth"
     if any(token in text for token in ("timed out", "timeout")):
         return "timeout"
@@ -643,7 +667,9 @@ def _mcp_tools_to_artel_tool_defs(tools: list[Any] | None) -> list[ToolDef] | No
     return [
         ToolDef(
             name=getattr(tool, "name", "tool"),
-            description=getattr(tool, "description", "") or getattr(tool, "title", "") or getattr(tool, "name", "tool"),
+            description=getattr(tool, "description", "")
+            or getattr(tool, "title", "")
+            or getattr(tool, "name", "tool"),
             parameters=[],
             input_schema=normalize_json_schema(
                 getattr(tool, "inputSchema", None) or {"type": "object", "properties": {}}
@@ -677,7 +703,11 @@ def _sampling_message_to_artel(message: Any) -> list[Message]:
             text_parts.append(str(getattr(block, "text", "")))
         elif block_type == "tool_use":
             tool_calls.append(
-                ToolCall(id=getattr(block, "id", ""), name=getattr(block, "name", ""), arguments=dict(getattr(block, "input", {}) or {}))
+                ToolCall(
+                    id=getattr(block, "id", ""),
+                    name=getattr(block, "name", ""),
+                    arguments=dict(getattr(block, "input", {}) or {}),
+                )
             )
         elif block_type == "tool_result":
             tool_messages.append(
@@ -714,7 +744,7 @@ def _format_tool_result_content(block: Any) -> str:
         else:
             rendered.append(str(item))
     if getattr(block, "structuredContent", None):
-        rendered.append(json.dumps(getattr(block, "structuredContent"), ensure_ascii=False, indent=2))
+        rendered.append(json.dumps(block.structuredContent, ensure_ascii=False, indent=2))
     return "\n".join(rendered).strip() or "(empty tool result)"
 
 

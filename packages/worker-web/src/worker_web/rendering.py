@@ -130,9 +130,7 @@ def render_follow_update_summary_markdown(summary: Any) -> str:
 
 
 def render_follow_update_markdown(message: Any) -> str:
-    return render_follow_update_summary_markdown(
-        workspace_summary.summarize_recent_update(message)
-    )
+    return render_follow_update_summary_markdown(workspace_summary.summarize_recent_update(message))
 
 
 def render_tool_activity_summary_markdown(summary: Any) -> str:
@@ -157,9 +155,7 @@ def render_tool_activity_summary_markdown(summary: Any) -> str:
 
 
 def render_tool_activity_markdown(message: Any) -> str:
-    return render_tool_activity_summary_markdown(
-        workspace_summary.summarize_tool_activity(message)
-    )
+    return render_tool_activity_summary_markdown(workspace_summary.summarize_tool_activity(message))
 
 
 def render_follow_task_summary_markdown(summary: Any) -> str:
@@ -264,10 +260,7 @@ def render_follow_diff_summary_markdown(summary: Any) -> str:
         lines.extend(["", "```text", _truncate_block(summary.output, 1400), "```"])
         return "\n".join(lines)
     if not summary.paths:
-        return (
-            "No change set is visible yet.\n\n"
-            "Recent file-oriented tool calls will show up here."
-        )
+        return "No change set is visible yet.\n\nRecent file-oriented tool calls will show up here."
     return "\n".join(
         [
             "**Recent change set**",
@@ -456,9 +449,7 @@ def render_models_markdown(provider_models: list[Any]) -> str:
             model_label = getattr(model, "full_id", "") or (
                 f"{getattr(provider, 'id', '')}/{getattr(model, 'id', '')}"
             )
-            lines.append(
-                f"  - `{model_label}` ({getattr(model, 'name', '')}, {ctx_label})"
-            )
+            lines.append(f"  - `{model_label}` ({getattr(model, 'name', '')}, {ctx_label})")
     return "\n".join(lines)
 
 
@@ -531,7 +522,7 @@ def render_raw_config_markdown(raw_config: Any) -> str:
             f"- exists: `{getattr(raw_config, 'exists', False)}`",
             "",
             "```toml",
-            getattr(raw_config, 'content', '') or '',
+            getattr(raw_config, "content", "") or "",
             "```",
         ]
     )

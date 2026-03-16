@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Automated smoke coverage for primary Artel CLI entrypoints.
 
 These tests define the minimum expected behavior for the primary user-facing
@@ -13,6 +11,8 @@ commands tracked in issue #12:
 - `artel rules`
 - `artel ext ...`
 """
+
+from __future__ import annotations
 
 import asyncio
 import json
@@ -60,7 +60,9 @@ def test_cli_smoke_default_artel_starts_local_tui(monkeypatch):
     def fake_run_tui(**kwargs):
         captured.update(kwargs)
 
-    monkeypatch.setattr(local_server_mod, "ensure_managed_local_server", fake_ensure_managed_local_server)
+    monkeypatch.setattr(
+        local_server_mod, "ensure_managed_local_server", fake_ensure_managed_local_server
+    )
     monkeypatch.setattr(tui_app, "run_tui", fake_run_tui)
     monkeypatch.setattr(cli_mod.asyncio, "run", _run_coro)
 
@@ -256,7 +258,9 @@ def test_cli_smoke_ext_list_shows_expected_entries(monkeypatch):
         "worker_core.extensions_admin.list_installed_extensions",
         lambda: [
             ExtensionInfo(name="artel-mcp", version="bundled", source="bundled"),
-            ExtensionInfo(name="demo-ext", version="1.2.3", source="git+https://example.com/demo-ext.git"),
+            ExtensionInfo(
+                name="demo-ext", version="1.2.3", source="git+https://example.com/demo-ext.git"
+            ),
         ],
     )
 

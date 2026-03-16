@@ -40,12 +40,18 @@ class TestManagedLocalServerIdempotency:
         monkeypatch.setattr(local_server_mod, "load_config", lambda _: config)
         monkeypatch.setattr(local_server_mod, "_pick_port", lambda preferred_port: 9011)
         monkeypatch.setattr(local_server_mod, "_wait_until_ready", fake_wait_until_ready)
-        monkeypatch.setattr(local_server_mod, "_server_matches_project", fake_server_matches_project)
+        monkeypatch.setattr(
+            local_server_mod, "_server_matches_project", fake_server_matches_project
+        )
         monkeypatch.setattr(local_server_mod.subprocess, "Popen", fake_popen)
 
-        first = asyncio.create_task(local_server_mod.ensure_managed_local_server(str(tmp_path), ensure_tray=False))
+        first = asyncio.create_task(
+            local_server_mod.ensure_managed_local_server(str(tmp_path), ensure_tray=False)
+        )
         await wait_started.wait()
-        second = asyncio.create_task(local_server_mod.ensure_managed_local_server(str(tmp_path), ensure_tray=False))
+        second = asyncio.create_task(
+            local_server_mod.ensure_managed_local_server(str(tmp_path), ensure_tray=False)
+        )
         release_wait.set()
 
         handle1 = await first

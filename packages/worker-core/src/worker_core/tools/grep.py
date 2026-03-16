@@ -37,11 +37,7 @@ class GrepTool(Tool):
         include = kwargs.get("include", "")
         max_results = int(kwargs.get("max_results", 50))
 
-        search_path = (
-            Path(self.working_dir) / path
-            if not Path(path).is_absolute()
-            else Path(path)
-        )
+        search_path = Path(self.working_dir) / path if not Path(path).is_absolute() else Path(path)
         if not search_path.exists():
             return f"Error: Path not found: {search_path}"
 
@@ -65,7 +61,7 @@ class GrepTool(Tool):
                 cwd=self.working_dir,
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return "Error: Search timed out after 30s"
         except OSError as e:
             return f"Error running search: {e}"

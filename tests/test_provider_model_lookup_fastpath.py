@@ -14,12 +14,9 @@ class TestEffectiveModelLookupFastPath:
         ModelsCatalog._data = None
 
     @pytest.mark.asyncio
-    async def test_effective_model_lookup_does_not_build_full_provider_catalog_for_catalog_backed_model(
-        self,
-        monkeypatch,
-    ):
-        from worker_ai.models_catalog import ModelsCatalog
+    async def test_effective_model_lookup_fast_path_uses_catalog_entry(self, monkeypatch):
         import worker_core.provider_resolver as resolver_mod
+        from worker_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return {
@@ -40,10 +37,14 @@ class TestEffectiveModelLookupFastPath:
             }
 
         async def _unexpected_catalog_build(*args, **kwargs):
-            raise AssertionError("full provider catalog should not be built for direct model lookup")
+            raise AssertionError(
+                "full provider catalog should not be built for direct model lookup"
+            )
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
-        monkeypatch.setattr(resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build)
+        monkeypatch.setattr(
+            resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build
+        )
 
         model = await resolver_mod.get_effective_model_info(WorkerConfig(), "openai", "gpt-fast")
 
@@ -58,8 +59,8 @@ class TestEffectiveModelLookupFastPath:
         self,
         monkeypatch,
     ):
-        from worker_ai.models_catalog import ModelsCatalog
         import worker_core.provider_resolver as resolver_mod
+        from worker_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return {
@@ -80,10 +81,14 @@ class TestEffectiveModelLookupFastPath:
             }
 
         async def _unexpected_catalog_build(*args, **kwargs):
-            raise AssertionError("full provider catalog should not be built for direct model lookup")
+            raise AssertionError(
+                "full provider catalog should not be built for direct model lookup"
+            )
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
-        monkeypatch.setattr(resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build)
+        monkeypatch.setattr(
+            resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build
+        )
 
         config = WorkerConfig(
             providers={
@@ -109,10 +114,10 @@ class TestEffectiveModelLookupFastPath:
         self,
         monkeypatch,
     ):
+        import worker_core.provider_resolver as resolver_mod
         from worker_ai.models import ModelInfo
         from worker_ai.models_catalog import ModelsCatalog
         from worker_ai.providers.lmstudio import LMStudioProvider
-        import worker_core.provider_resolver as resolver_mod
 
         async def _fake_fetch(cls):
             return {}
@@ -128,13 +133,19 @@ class TestEffectiveModelLookupFastPath:
             ]
 
         async def _unexpected_catalog_build(*args, **kwargs):
-            raise AssertionError("full provider catalog should not be built for direct model lookup")
+            raise AssertionError(
+                "full provider catalog should not be built for direct model lookup"
+            )
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
         monkeypatch.setattr(LMStudioProvider, "list_models_direct", _fake_direct)
-        monkeypatch.setattr(resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build)
+        monkeypatch.setattr(
+            resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build
+        )
 
-        model = await resolver_mod.get_effective_model_info(WorkerConfig(), "lm-studio", "qwen-fast")
+        model = await resolver_mod.get_effective_model_info(
+            WorkerConfig(), "lm-studio", "qwen-fast"
+        )
 
         assert model is not None
         assert model.provider == "lmstudio"

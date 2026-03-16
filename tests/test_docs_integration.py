@@ -30,9 +30,7 @@ def test_mkdocs_build_strict(tmp_path) -> None:
     )
 
     assert result.returncode == 0, (
-        "mkdocs build --strict failed\n"
-        f"stdout:\n{result.stdout}\n"
-        f"stderr:\n{result.stderr}"
+        f"mkdocs build --strict failed\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"
     )
     assert (site_dir / "index.html").exists()
     assert (site_dir / "acp" / "index.html").exists()

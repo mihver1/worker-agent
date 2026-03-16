@@ -31,12 +31,19 @@ async def test_first_matching_rule_by_order_wins(monkeypatch, tmp_path):
     project_dir = tmp_path / "project"
     (project_dir / ".artel").mkdir(parents=True)
 
-    broad = add_rule(scope="project", text="Do not use bash.", project_dir=str(project_dir))
+    add_rule(scope="project", text="Do not use bash.", project_dir=str(project_dir))
     specific = add_rule(scope="project", text="Do not run `pwd`.", project_dir=str(project_dir))
     move_rule(specific.id, project_dir=str(project_dir), position=1)
 
-    provider = _Provider([[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]])
-    session = AgentSession(provider=provider, model="test", tools=[BashTool(str(project_dir))], project_dir=str(project_dir))
+    provider = _Provider(
+        [[ToolCallDelta(id="tc_1", name="bash", arguments={"command": "pwd"}), Done(usage=Usage())]]
+    )
+    session = AgentSession(
+        provider=provider,
+        model="test",
+        tools=[BashTool(str(project_dir))],
+        project_dir=str(project_dir),
+    )
 
     events = [event async for event in session.run("show cwd")]
     results = [event for event in events if event.type == AgentEventType.TOOL_RESULT]

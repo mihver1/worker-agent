@@ -49,8 +49,7 @@ class _FakeConn:
                         "id": (
                             option.get("id")
                             if isinstance(option, dict)
-                            else getattr(option, "option_id", None)
-                            or getattr(option, "id", None)
+                            else getattr(option, "option_id", None) or getattr(option, "id", None)
                         )
                     }
                     for option in options
@@ -180,6 +179,7 @@ def _install_fake_acp(monkeypatch: pytest.MonkeyPatch, *, run_agent: Any) -> Non
 
     def update_agent_message_text(text: str) -> dict[str, str]:
         return {"kind": "message_text", "text": text}
+
     def update_user_message_text(text: str) -> dict[str, str]:
         return {"kind": "user_message_text", "text": text}
 
@@ -323,10 +323,7 @@ def _patch_acp_server_state(
             | set(state_obj.session_projects)
             | set(state_obj.session_thinking_levels)
         )
-        return [
-            await fake_serialize_session(state_obj, session_id)
-            for session_id in session_ids
-        ]
+        return [await fake_serialize_session(state_obj, session_id) for session_id in session_ids]
 
     async def fake_switch_server_session_model(
         state_obj: ServerState,
@@ -411,6 +408,7 @@ def _event(event_type: Any, **kwargs: Any) -> Any:
     }
     defaults.update(kwargs)
     return SimpleNamespace(type=event_type, **defaults)
+
 
 def _config_option_current_value(config_options: list[Any], option_id: str) -> Any:
     for option in config_options:
