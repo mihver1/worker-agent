@@ -288,6 +288,10 @@ class ComposerTextArea(TextArea):
             event.stop()
             event.prevent_default()
             return
+        # Textual will continue dispatching default handlers up the MRO after this
+        # override returns. Prevent the implicit base-class dispatch before calling
+        # TextArea's paste handler manually so regular text paste is applied once.
+        event.prevent_default()
         await super()._on_paste(event)
 
 

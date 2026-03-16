@@ -3779,6 +3779,27 @@ class TestRemoteModeCommandRouting:
         assert app._pending_attachments[0].name == "drop.png"
         assert ("Attached pasted image reference(s): drop.png", "tool") in seen_messages
 
+
+    @pytest.mark.asyncio
+    async def test_regular_paste_inserts_text_once(self, monkeypatch):
+        from textual import events
+        from textual.widgets import TextArea
+        from worker_tui.app import WorkerApp
+
+        _patch_tui_test_context(monkeypatch)
+
+        app = WorkerApp(remote_url="ws://localhost:7432")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            input_bar = app.query_one("#input-bar", TextArea)
+            event = events.Paste("hello")
+            event._set_forwarded()
+            input_bar.post_message(event)
+            await pilot.pause()
+
+            assert input_bar.text == "hello"
+
     async def test_double_bang_routes_to_remote_shell(self, monkeypatch):
         from types import SimpleNamespace
 
