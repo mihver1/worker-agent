@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
-from worker_core.tools.find import FindTool
-from worker_core.tools.grep import GrepTool
-from worker_core.tools.ls import LsTool
+from artel_core.tools.find import FindTool
+from artel_core.tools.grep import GrepTool
+from artel_core.tools.ls import LsTool
 
 # ── GrepTool ────────────────────────────────────────────────────
 

@@ -5,7 +5,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_remote_control_rules_endpoints_are_used():
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     class _RemoteClient:
         def __init__(self):
@@ -74,7 +74,7 @@ async def test_remote_control_rules_endpoints_are_used():
                 "rule_overrides": {"enabled_rule_ids": [], "disabled_rule_ids": []},
             }
 
-    app = WorkerApp(remote_url="ws://localhost:7432")
+    app = ArtelApp(remote_url="ws://localhost:7432")
     app._remote_project_dir = "/srv/project"
     app._remote_control_client = _RemoteClient()
     seen: list[tuple[str, str]] = []

@@ -12,26 +12,26 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_SRC_PATHS = [
-    REPO_ROOT / "packages/worker-ai/src",
-    REPO_ROOT / "packages/worker-core/src",
-    REPO_ROOT / "packages/worker-server/src",
-    REPO_ROOT / "packages/worker-tui/src",
-    REPO_ROOT / "packages/worker-web/src",
+    REPO_ROOT / "packages/artel-ai/src",
+    REPO_ROOT / "packages/artel-core/src",
+    REPO_ROOT / "packages/artel-server/src",
+    REPO_ROOT / "packages/artel-tui/src",
+    REPO_ROOT / "packages/artel-web/src",
 ]
 for package_path in reversed(PACKAGE_SRC_PATHS):
     package_str = str(package_path)
     if package_str not in sys.path:
         sys.path.insert(0, package_str)
-_worker_ai_models = importlib.import_module("worker_ai.models")
-Done = _worker_ai_models.Done
-Message = _worker_ai_models.Message
-ModelInfo = _worker_ai_models.ModelInfo
-ReasoningDelta = _worker_ai_models.ReasoningDelta
-StreamEvent = _worker_ai_models.StreamEvent
-TextDelta = _worker_ai_models.TextDelta
-ToolDef = _worker_ai_models.ToolDef
-Usage = _worker_ai_models.Usage
-Provider = importlib.import_module("worker_ai.provider").Provider
+_artel_ai_models = importlib.import_module("artel_ai.models")
+Done = _artel_ai_models.Done
+Message = _artel_ai_models.Message
+ModelInfo = _artel_ai_models.ModelInfo
+ReasoningDelta = _artel_ai_models.ReasoningDelta
+StreamEvent = _artel_ai_models.StreamEvent
+TextDelta = _artel_ai_models.TextDelta
+ToolDef = _artel_ai_models.ToolDef
+Usage = _artel_ai_models.Usage
+Provider = importlib.import_module("artel_ai.provider").Provider
 
 
 class MockProvider(Provider):

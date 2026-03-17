@@ -5,13 +5,13 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_local_git_status_command_renders_summary(monkeypatch, tmp_path):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
     monkeypatch.setattr(
-        "worker_tui.app.render_git_status", lambda *, cwd: "Git status\nModified (1):\n  - app.py"
+        "artel_tui.app.render_git_status", lambda *, cwd: "Git status\nModified (1):\n  - app.py"
     )
     monkeypatch.chdir(tmp_path)
 
@@ -23,9 +23,9 @@ async def test_local_git_status_command_renders_summary(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_remote_git_diff_command_uses_bash_endpoint(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp(remote_url="ws://127.0.0.1:7432")
+    app = ArtelApp(remote_url="ws://127.0.0.1:7432")
     app._remote_session_id = "sess-1"
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
@@ -46,13 +46,13 @@ async def test_remote_git_diff_command_uses_bash_endpoint(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_local_git_rollback_all_reports_result(monkeypatch, tmp_path):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
     monkeypatch.setattr(
-        "worker_tui.app.restore_all", lambda *, cwd: "Restored all unstaged changes."
+        "artel_tui.app.restore_all", lambda *, cwd: "Restored all unstaged changes."
     )
     monkeypatch.chdir(tmp_path)
 

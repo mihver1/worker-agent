@@ -8,7 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from worker_ai.models import (
+from artel_ai.models import (
     Done,
     ImageAttachment,
     Message,
@@ -21,9 +21,9 @@ from worker_ai.models import (
     ToolParam,
     ToolResult,
 )
-from worker_ai.oauth import extract_openai_account_id, parse_jwt_claims
-from worker_ai.providers import create_default_registry
-from worker_ai.providers.openai_compat import (
+from artel_ai.oauth import extract_openai_account_id, parse_jwt_claims
+from artel_ai.providers import create_default_registry
+from artel_ai.providers.openai_compat import (
     OpenAICompatibleProvider,
     OpenAIProvider,
     _build_responses_input,

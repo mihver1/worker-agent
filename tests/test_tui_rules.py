@@ -3,20 +3,20 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from worker_tui.app import RuleEditorSubmitted
+from artel_tui.app import RuleEditorSubmitted
 
 
 @pytest.mark.asyncio
 async def test_rule_add_opens_dialog_and_saves(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_tui.app import WorkerApp
+    from artel_core import config as cfg_mod
+    from artel_tui.app import ArtelApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
-    monkeypatch.setattr("worker_tui.app.WorkerApp._init_local_session", AsyncMock())
-    app = WorkerApp()
+    monkeypatch.setattr("artel_tui.app.ArtelApp._init_local_session", AsyncMock())
+    app = ArtelApp()
     seen: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen.append((content, role))  # type: ignore[method-assign]
 
@@ -37,17 +37,17 @@ async def test_rule_add_opens_dialog_and_saves(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_rule_edit_opens_dialog_for_existing_rule(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_core.rules import add_rule, list_rules
-    from worker_tui.app import WorkerApp
+    from artel_core import config as cfg_mod
+    from artel_core.rules import add_rule, list_rules
+    from artel_tui.app import ArtelApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
     rule = add_rule(scope="project", text="Original rule", project_dir=str(tmp_path))
-    monkeypatch.setattr("worker_tui.app.WorkerApp._init_local_session", AsyncMock())
-    app = WorkerApp()
+    monkeypatch.setattr("artel_tui.app.ArtelApp._init_local_session", AsyncMock())
+    app = ArtelApp()
     seen: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen.append((content, role))  # type: ignore[method-assign]
 
@@ -72,18 +72,18 @@ async def test_rule_edit_opens_dialog_for_existing_rule(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_rules_command_lists_rules(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_core.rules import add_rule
-    from worker_tui.app import WorkerApp
+    from artel_core import config as cfg_mod
+    from artel_core.rules import add_rule
+    from artel_tui.app import ArtelApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
     add_rule(scope="project", text="Use pytest.", project_dir=str(tmp_path))
-    monkeypatch.setattr("worker_tui.app.WorkerApp._init_local_session", AsyncMock())
+    monkeypatch.setattr("artel_tui.app.ArtelApp._init_local_session", AsyncMock())
 
-    app = WorkerApp()
+    app = ArtelApp()
     seen: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen.append((content, role))  # type: ignore[method-assign]
 

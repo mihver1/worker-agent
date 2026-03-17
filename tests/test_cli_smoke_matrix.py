@@ -30,17 +30,17 @@ def _run_coro(coro):
 
 
 def test_cli_smoke_default_artel_starts_local_tui(monkeypatch):
-    import worker_tui.app as tui_app
-    import worker_tui.local_server as local_server_mod
-    from worker_core import cli as cli_mod
-    from worker_core.artel_bootstrap import ArtelBootstrapResult
+    import artel_tui.app as tui_app
+    import artel_tui.local_server as local_server_mod
+    from artel_core import cli as cli_mod
+    from artel_core.artel_bootstrap import ArtelBootstrapResult
 
     expected_project_dir = str(Path("/tmp/project").resolve())
     captured: dict[str, object] = {}
 
     monkeypatch.setattr(cli_mod.os, "getcwd", lambda: "/tmp/project")
     monkeypatch.setattr(
-        "worker_core.artel_bootstrap.bootstrap_artel",
+        "artel_core.artel_bootstrap.bootstrap_artel",
         lambda project_dir=None, command_name=None, prompt=None: ArtelBootstrapResult(
             project_dir=expected_project_dir,
             cmux_required=False,
@@ -79,8 +79,8 @@ def test_cli_smoke_default_artel_starts_local_tui(monkeypatch):
 
 
 def test_cli_smoke_prompt_mode_invokes_print_flow(monkeypatch):
-    from worker_core import cli as cli_mod
-    from worker_core.artel_bootstrap import ArtelBootstrapResult
+    from artel_core import cli as cli_mod
+    from artel_core.artel_bootstrap import ArtelBootstrapResult
 
     captured: dict[str, object] = {}
 
@@ -90,7 +90,7 @@ def test_cli_smoke_prompt_mode_invokes_print_flow(monkeypatch):
 
     monkeypatch.setattr(cli_mod.os, "getcwd", lambda: "/tmp/project")
     monkeypatch.setattr(
-        "worker_core.artel_bootstrap.bootstrap_artel",
+        "artel_core.artel_bootstrap.bootstrap_artel",
         lambda project_dir=None, command_name=None, prompt=None: ArtelBootstrapResult(
             project_dir=str(Path("/tmp/project").resolve()),
             cmux_required=False,
@@ -112,8 +112,8 @@ def test_cli_smoke_prompt_mode_invokes_print_flow(monkeypatch):
 
 
 def test_cli_smoke_serve_invokes_server_entrypoint(monkeypatch):
-    import worker_server.server as server_mod
-    from worker_core import cli as cli_mod
+    import artel_server.server as server_mod
+    from artel_core import cli as cli_mod
 
     captured: dict[str, object] = {}
 
@@ -136,8 +136,8 @@ def test_cli_smoke_serve_invokes_server_entrypoint(monkeypatch):
 
 
 def test_cli_smoke_connect_invokes_remote_tui(monkeypatch):
-    import worker_tui.app as tui_app
-    from worker_core import cli as cli_mod
+    import artel_tui.app as tui_app
+    from artel_core import cli as cli_mod
 
     captured: dict[str, str] = {}
 
@@ -161,8 +161,8 @@ def test_cli_smoke_connect_invokes_remote_tui(monkeypatch):
 
 
 def test_cli_smoke_mcp_show_effective_returns_structured_payload(monkeypatch, tmp_path):
-    from worker_core import cli as cli_mod
-    from worker_core.mcp import LoadedMCPConfig, MCPServerConfig
+    from artel_core import cli as cli_mod
+    from artel_core.mcp import LoadedMCPConfig, MCPServerConfig
 
     class FakeRegistry:
         def load_merged_config(self, project_dir: str):
@@ -181,7 +181,7 @@ def test_cli_smoke_mcp_show_effective_returns_structured_payload(monkeypatch, tm
             )
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("worker_core.mcp.MCPRegistry", FakeRegistry)
+    monkeypatch.setattr("artel_core.mcp.MCPRegistry", FakeRegistry)
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["mcp", "show", "--scope", "effective"])
@@ -194,8 +194,8 @@ def test_cli_smoke_mcp_show_effective_returns_structured_payload(monkeypatch, tm
 
 
 def test_cli_smoke_schedule_list_shows_expected_summary(monkeypatch, tmp_path):
-    from worker_core import cli as cli_mod
-    from worker_core.schedules import ScheduleRecord
+    from artel_core import cli as cli_mod
+    from artel_core.schedules import ScheduleRecord
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -225,8 +225,8 @@ def test_cli_smoke_schedule_list_shows_expected_summary(monkeypatch, tmp_path):
 
 
 def test_cli_smoke_rules_list_shows_expected_summary(monkeypatch, tmp_path):
-    from worker_core import cli as cli_mod
-    from worker_core.rules import RuleRecord
+    from artel_core import cli as cli_mod
+    from artel_core.rules import RuleRecord
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
@@ -251,11 +251,11 @@ def test_cli_smoke_rules_list_shows_expected_summary(monkeypatch, tmp_path):
 
 
 def test_cli_smoke_ext_list_shows_expected_entries(monkeypatch):
-    from worker_core import cli as cli_mod
-    from worker_core.extensions_admin import ExtensionInfo
+    from artel_core import cli as cli_mod
+    from artel_core.extensions_admin import ExtensionInfo
 
     monkeypatch.setattr(
-        "worker_core.extensions_admin.list_installed_extensions",
+        "artel_core.extensions_admin.list_installed_extensions",
         lambda: [
             ExtensionInfo(name="artel-mcp", version="bundled", source="bundled"),
             ExtensionInfo(

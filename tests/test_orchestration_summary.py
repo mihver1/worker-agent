@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from worker_core.delegation.formatting import format_run_list
-from worker_core.delegation.registry import get_registry, reset_registry
+from artel_core.delegation.formatting import format_run_list
+from artel_core.delegation.registry import get_registry, reset_registry
 
 
 def test_format_run_list_includes_counts_and_latest_updates() -> None:

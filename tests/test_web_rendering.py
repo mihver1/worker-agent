@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_REPO_ROOT / "packages/worker-core/src"))
-sys.path.insert(0, str(_REPO_ROOT / "packages/worker-web/src"))
+sys.path.insert(0, str(_REPO_ROOT / "packages/artel-core/src"))
+sys.path.insert(0, str(_REPO_ROOT / "packages/artel-web/src"))
 
 
 @dataclass(slots=True)
@@ -136,7 +136,7 @@ class StubRawConfig:
 
 
 def test_render_message_markdown_includes_reasoning_and_tools() -> None:
-    from worker_web.rendering import render_message_markdown, render_tool_activity_markdown
+    from artel_web.rendering import render_message_markdown, render_tool_activity_markdown
 
     message = StubMessage(
         role="assistant",
@@ -157,7 +157,7 @@ def test_render_message_markdown_includes_reasoning_and_tools() -> None:
 
 
 def test_render_follow_workspace_helpers_surface_task_file_diff_terminal_and_activity() -> None:
-    from worker_web.rendering import (
+    from artel_web.rendering import (
         render_follow_diff_markdown,
         render_follow_file_markdown,
         render_follow_task_markdown,
@@ -173,14 +173,14 @@ def test_render_follow_workspace_helpers_surface_task_file_diff_terminal_and_act
         thinking_level="medium",
     )
     messages = [
-        StubMessage(role="user", content="Implement the follow-first workspace in worker-web."),
+        StubMessage(role="user", content="Implement the follow-first workspace in artel-web."),
         StubMessage(
             role="assistant",
             content="Opened the current file.",
             tool_calls=[
                 {
                     "name": "read_files",
-                    "arguments": '{"files":[{"path":"packages/worker-web/src/worker_web/app.py"}]}',
+                    "arguments": '{"files":[{"path":"packages/artel-web/src/artel_web/app.py"}]}',
                 }
             ],
             tool_result={"content": "56| with ui.column().classes(...)", "is_error": False},
@@ -203,10 +203,10 @@ def test_render_follow_workspace_helpers_surface_task_file_diff_terminal_and_act
     assert "Follow-first workspace" in task_markdown
     assert "/srv/project" in task_markdown
     assert "openai/gpt-4.1" in task_markdown
-    assert "packages/worker-web/src/worker_web/app.py" in file_markdown
+    assert "packages/artel-web/src/artel_web/app.py" in file_markdown
     assert "read_files" in file_markdown
     assert "56| with ui.column().classes(...)" in file_markdown
-    assert "+ packages/worker-web/src/worker_web/app.py" in diff_markdown
+    assert "+ packages/artel-web/src/artel_web/app.py" in diff_markdown
     assert "uv run pytest tests/test_web_phase8.py" in terminal_markdown
     assert "26 passed in 0.39s" in terminal_markdown
     assert "read_files" in activity_markdown
@@ -214,10 +214,10 @@ def test_render_follow_workspace_helpers_surface_task_file_diff_terminal_and_act
 
 
 def test_has_follow_workspace_context_distinguishes_task_first_from_follow_first() -> None:
-    from worker_web.rendering import has_follow_workspace_context
+    from artel_web.rendering import has_follow_workspace_context
 
     task_first_messages = [
-        StubMessage(role="user", content="Plan the worker-web refactor."),
+        StubMessage(role="user", content="Plan the artel-web refactor."),
         StubMessage(role="assistant", content="I can outline the next steps."),
     ]
     follow_messages = [
@@ -240,7 +240,7 @@ def test_has_follow_workspace_context_distinguishes_task_first_from_follow_first
 
 
 def test_render_follow_task_markdown_modes() -> None:
-    from worker_web.rendering import render_follow_task_markdown
+    from artel_web.rendering import render_follow_task_markdown
 
     task_first = render_follow_task_markdown(
         StubSession(
@@ -298,15 +298,15 @@ def test_render_follow_task_markdown_modes() -> None:
 
 
 def test_render_follow_file_and_updates() -> None:
-    from worker_web.rendering import (
+    from artel_web.rendering import (
         collect_follow_update_messages,
         render_follow_file_markdown,
         render_follow_update_markdown,
         render_follow_updates_note,
     )
 
-    controller_args = '{"files":[{"path":"packages/worker-web/src/worker_web/controller.py"}]}'
-    app_args = '{"files":[{"path":"packages/worker-web/src/worker_web/app.py"}]}'
+    controller_args = '{"files":[{"path":"packages/artel-web/src/artel_web/controller.py"}]}'
+    app_args = '{"files":[{"path":"packages/artel-web/src/artel_web/app.py"}]}'
     file_rendered = render_follow_file_markdown(
         [
             StubMessage(
@@ -352,8 +352,8 @@ def test_render_follow_file_and_updates() -> None:
     updates = collect_follow_update_messages(messages)
 
     assert "working set" in file_rendered
-    assert "packages/worker-web/src/worker_web/controller.py" in file_rendered
-    assert "packages/worker-web/src/worker_web/app.py" in file_rendered
+    assert "packages/artel-web/src/artel_web/controller.py" in file_rendered
+    assert "packages/artel-web/src/artel_web/app.py" in file_rendered
     assert len(updates) == 3
     assert "Follow-first mode" in render_follow_updates_note(len(updates), limit=4)
     assert "Inspecting files" in render_follow_update_markdown(updates[0])
@@ -362,7 +362,7 @@ def test_render_follow_file_and_updates() -> None:
 
 
 def test_render_diff_models_and_admin_helpers() -> None:
-    from worker_web.rendering import (
+    from artel_web.rendering import (
         render_config_paths_markdown,
         render_effective_config_markdown,
         render_extension_batch_update_markdown,
@@ -382,12 +382,12 @@ def test_render_diff_models_and_admin_helpers() -> None:
         [],
         git_snapshot_loaded=True,
         git_snapshot_command=(
-            "git --no-pager diff --stat -- packages/worker-web/src/worker_web/app.py"
+            "git --no-pager diff --stat -- packages/artel-web/src/artel_web/app.py"
         ),
         git_snapshot_output=(
-            " M packages/worker-web/src/worker_web/app.py\n1 file changed, 10 insertions(+)"
+            " M packages/artel-web/src/artel_web/app.py\n1 file changed, 10 insertions(+)"
         ),
-        git_snapshot_paths=["packages/worker-web/src/worker_web/app.py"],
+        git_snapshot_paths=["packages/artel-web/src/artel_web/app.py"],
     )
     models = render_models_markdown(
         [
@@ -447,13 +447,13 @@ def test_render_diff_models_and_admin_helpers() -> None:
     installed = render_installed_extensions_markdown(
         [
             StubInstalledExtension(
-                name="worker-ext-demo", version="1.0.0", source="git+https://example.com/demo.git"
+                name="artel-ext-demo", version="1.0.0", source="git+https://example.com/demo.git"
             )
         ]
     )
     updates = render_extension_batch_update_markdown(
         StubBatchUpdateResult(
-            results=[StubBatchUpdateEntry(name="worker-ext-demo", ok=True, message="updated")]
+            results=[StubBatchUpdateEntry(name="artel-ext-demo", ok=True, message="updated")]
         )
     )
     providers = render_providers_markdown(
@@ -472,6 +472,6 @@ def test_render_diff_models_and_admin_helpers() -> None:
     assert "review" in prompts
     assert "python" in skills
     assert "/echo" in commands
-    assert "worker-ext-demo" in installed
+    assert "artel-ext-demo" in installed
     assert "updated" in updates
     assert "OpenAI" in providers

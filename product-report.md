@@ -64,28 +64,28 @@ Today, based on inspectable source:
 Artel is a real multi-package Python workspace:
 
 - root workspace: `pyproject.toml:1-62`
-- core: `packages/worker-core/pyproject.toml:1-26`
-- server: `packages/worker-server/pyproject.toml:1-22`
+- core: `packages/artel-core/pyproject.toml:1-26`
+- server: `packages/artel-server/pyproject.toml:1-22`
 
 Confirmed runtime modes in CLI/docs:
 
-- one-shot prompt mode: `packages/worker-core/src/worker_core/cli.py:29-77`
-- local TUI path: `packages/worker-core/src/worker_core/cli.py:78-90`
-- headless server: `packages/worker-core/src/worker_core/cli.py:104-120`
-- remote connect: `packages/worker-core/src/worker_core/cli.py:132-147`
-- web command exposed: `packages/worker-core/src/worker_core/cli.py:150-189`
-- MCP commands: `packages/worker-core/src/worker_core/cli.py:192-327`
-- schedule commands: `packages/worker-core/src/worker_core/cli.py:330-536`
-- extension commands: `packages/worker-core/src/worker_core/cli.py:539-672`
-- config/rpc/acp/login/rules commands: `packages/worker-core/src/worker_core/cli.py:675-720` and below
+- one-shot prompt mode: `packages/artel-core/src/artel_core/cli.py:29-77`
+- local TUI path: `packages/artel-core/src/artel_core/cli.py:78-90`
+- headless server: `packages/artel-core/src/artel_core/cli.py:104-120`
+- remote connect: `packages/artel-core/src/artel_core/cli.py:132-147`
+- web command exposed: `packages/artel-core/src/artel_core/cli.py:150-189`
+- MCP commands: `packages/artel-core/src/artel_core/cli.py:192-327`
+- schedule commands: `packages/artel-core/src/artel_core/cli.py:330-536`
+- extension commands: `packages/artel-core/src/artel_core/cli.py:539-672`
+- config/rpc/acp/login/rules commands: `packages/artel-core/src/artel_core/cli.py:675-720` and below
 - command list confirmed at runtime: `['acp', 'config', 'connect', 'ext', 'init', 'login', 'mcp', 'rpc', 'rule', 'rules', 'schedule', 'serve', 'server-tray', 'web']`
 
 ### 2. Strong explicit server/control-plane surface
 
 Artel server exposes a large HTTP/WebSocket API surface for config, providers, prompts, skills, rules, extensions, MCP, sessions, delegates, tasks, notes, bash, worktree, and more:
 
-- route registration: `packages/worker-server/src/worker_server/server.py:2604-2667`
-- server startup: `packages/worker-server/src/worker_server/server.py:2677-2755`
+- route registration: `packages/artel-server/src/artel_server/server.py:2604-2667`
+- server startup: `packages/artel-server/src/artel_server/server.py:2677-2755`
 
 This remains a genuine differentiator versus simpler terminal-only tools.
 
@@ -94,41 +94,41 @@ This remains a genuine differentiator versus simpler terminal-only tools.
 Evidence:
 
 - README rules section: `README.md:20-29`, `README.md:102-147`
-- CLI rule commands: `packages/worker-core/src/worker_core/cli.py:555-672`
+- CLI rule commands: `packages/artel-core/src/artel_core/cli.py:555-672`
 - tests: `tests/test_rules_cli.py:6-66`
 
 ### 4. Provider breadth is strong and explicit in code
 
 Provider specs include hosted APIs, OpenAI-compatible backends, cloud providers, and local runtimes:
 
-- provider specs: `packages/worker-ai/src/worker_ai/provider_specs.py:23-257`
-- provider implementations: `packages/worker-ai/src/worker_ai/providers/*.py`
+- provider specs: `packages/artel-ai/src/artel_ai/provider_specs.py:23-257`
+- provider implementations: `packages/artel-ai/src/artel_ai/providers/*.py`
 - README provider summary: `README.md:149-164`
 
 ### 5. MCP config/runtime exists and is tested
 
 Evidence:
 
-- registry and merge logic: `packages/worker-core/src/worker_core/mcp.py:17-280`
-- CLI: `packages/worker-core/src/worker_core/cli.py:192-327`
+- registry and merge logic: `packages/artel-core/src/artel_core/mcp.py:17-280`
+- CLI: `packages/artel-core/src/artel_core/cli.py:192-327`
 - tests: `tests/test_builtin_capabilities.py:8-76`, `tests/test_mcp_cli_and_runtime.py:35-140`
 
 ### 6. Worktree support exists and is tested
 
 Evidence:
 
-- worktree manager: `packages/worker-core/src/worker_core/worktree.py:1-320`
-- built-in tool: `packages/worker-core/src/worker_core/tools/builtins.py:521-580`
+- worktree manager: `packages/artel-core/src/artel_core/worktree.py:1-320`
+- built-in tool: `packages/artel-core/src/artel_core/tools/builtins.py:521-580`
 - tests: `tests/test_worktree.py:1-208`, `tests/test_worktree_integration.py:20-70`
 
 ### 7. Delegation/subagent runtime exists
 
 Evidence:
 
-- delegation service: `packages/worker-core/src/worker_core/delegation/service.py:1-239`
-- orchestration module is a public alias layer over delegation: `packages/worker-core/src/worker_core/orchestration.py:1-25`
-- tools registered by default: `packages/worker-core/src/worker_core/tools/builtins.py:583-616`
-- server endpoints: `packages/worker-server/src/worker_server/server.py:2041-2053`, `packages/worker-server/src/worker_server/server.py:2643-2645`
+- delegation service: `packages/artel-core/src/artel_core/delegation/service.py:1-239`
+- orchestration module is a public alias layer over delegation: `packages/artel-core/src/artel_core/orchestration.py:1-25`
+- tools registered by default: `packages/artel-core/src/artel_core/tools/builtins.py:583-616`
+- server endpoints: `packages/artel-server/src/artel_server/server.py:2041-2053`, `packages/artel-server/src/artel_server/server.py:2643-2645`
 - tests: `tests/test_delegation_tools.py:28-70`, `tests/test_delegation_server_api.py:12-55`, `tests/test_orchestration_surface.py:4-25`
 
 ### 8. Scheduling/automation is implemented and tested
@@ -138,17 +138,17 @@ This is now part of the actual product surface and should be counted.
 Evidence:
 
 - README scheduled tasks section: `README.md:23`, `README.md:63-64`, `README.md:203-245`
-- CLI schedule commands: `packages/worker-core/src/worker_core/cli.py:330-536`
-- server scheduler service: `packages/worker-server/src/worker_server/server.py:262-347`
+- CLI schedule commands: `packages/artel-core/src/artel_core/cli.py:330-536`
+- server scheduler service: `packages/artel-server/src/artel_server/server.py:262-347`
 - tests: `tests/test_schedule_cli.py:8-80`, `tests/test_schedule_service.py`, `tests/test_schedule_server_api.py`, `tests/test_schedule_storage.py`
 
 ### 9. Web search/fetch tools have explicit safety guardrails
 
 Evidence:
 
-- search tool: `packages/worker-core/src/worker_core/tools/web_search.py:1-240`
-- fetch tool: `packages/worker-core/src/worker_core/tools/web_fetch.py:1-245`
-- built-in registration: `packages/worker-core/src/worker_core/tools/builtins.py:598-616`
+- search tool: `packages/artel-core/src/artel_core/tools/web_search.py:1-240`
+- fetch tool: `packages/artel-core/src/artel_core/tools/web_fetch.py:1-245`
+- built-in registration: `packages/artel-core/src/artel_core/tools/builtins.py:598-616`
 
 ## Verified weaknesses
 
@@ -156,7 +156,7 @@ Evidence:
 
 Artel’s bundled capability registry currently returns only one built-in capability:
 
-- `artel-mcp`: `packages/worker-core/src/worker_core/builtin_capabilities.py:25-34`
+- `artel-mcp`: `packages/artel-core/src/artel_core/builtin_capabilities.py:25-34`
 - tests assert only that: `tests/test_builtin_capabilities.py:8-20`
 
 So although worktree/delegation are in-tree, the bundled capability story is still immature compared with stronger peers.
@@ -173,7 +173,7 @@ Artel has config + runtime + CLI status/reload/set/remove, but I did not find:
 
 The current public orchestration layer is effectively a naming wrapper over delegation:
 
-- `packages/worker-core/src/worker_core/orchestration.py:1-25`
+- `packages/artel-core/src/artel_core/orchestration.py:1-25`
 
 That is fine as a substrate, but it is much thinner than Gemini CLI’s agent registry/subagent system or Goose’s richer agent/session/recipe stack.
 
@@ -188,11 +188,11 @@ That leaves Artel behind OpenCode in IDE-like code intelligence support.
 Even though web is no longer a main comparison axis here, this is still an important factual note because it affects current product reality.
 
 - README still says experimental web UI exists: `README.md:29`, `README.md:69-70`, `README.md:86`
-- actual entrypoint raises: `packages/worker-web/src/worker_web/app.py:1-17`
+- actual entrypoint raises: `packages/artel-web/src/artel_web/app.py:1-17`
 
 ### 6. cmux gating is not part of current runtime behavior
 
-- `command_requires_cmux()` always returns `False`: `packages/worker-core/src/worker_core/artel_bootstrap.py:25-32`
+- `command_requires_cmux()` always returns `False`: `packages/artel-core/src/artel_core/artel_bootstrap.py:25-32`
 - README explicitly documents local TUI with no cmux required: `README.md:51-52`, `README.md:80-86`
 
 This matters mainly because some older backlog framing is no longer the product reality.
@@ -726,8 +726,8 @@ Compared with OpenCode/Gemini CLI/Goose, Artel’s orchestration layer is still 
 
 Current evidence:
 
-- `packages/worker-core/src/worker_core/orchestration.py:1-25`
-- `packages/worker-core/src/worker_core/delegation/service.py:1-239`
+- `packages/artel-core/src/artel_core/orchestration.py:1-25`
+- `packages/artel-core/src/artel_core/delegation/service.py:1-239`
 
 Needed direction:
 
@@ -745,8 +745,8 @@ Compared with OpenCode and Gemini CLI, Artel needs:
 
 Current evidence:
 
-- `packages/worker-core/src/worker_core/mcp.py:17-280`
-- `packages/worker-core/src/worker_core/cli.py:192-327`
+- `packages/artel-core/src/artel_core/mcp.py:17-280`
+- `packages/artel-core/src/artel_core/cli.py:192-327`
 
 ### 3. Decide whether Artel wants to remain Python-platform-first or become full product suite
 
@@ -776,7 +776,7 @@ Artel currently has search/read/edit/bash/worktree/MCP, but no visible LSP layer
 Most important currently visible mismatch:
 
 - README still advertises experimental web UI
-- current checkout’s `worker_web/app.py` is placeholder-only
+- current checkout’s `artel_web/app.py` is placeholder-only
 
 ---
 
@@ -815,18 +815,18 @@ That gap is most visible against **OpenCode** and **Gemini CLI**.
 
 - `README.md`
 - `pyproject.toml`
-- `packages/worker-core/src/worker_core/cli.py`
-- `packages/worker-core/src/worker_core/artel_bootstrap.py`
-- `packages/worker-core/src/worker_core/builtin_capabilities.py`
-- `packages/worker-core/src/worker_core/delegation/service.py`
-- `packages/worker-core/src/worker_core/orchestration.py`
-- `packages/worker-core/src/worker_core/mcp.py`
-- `packages/worker-core/src/worker_core/worktree.py`
-- `packages/worker-core/src/worker_core/tools/builtins.py`
-- `packages/worker-core/src/worker_core/tools/web_search.py`
-- `packages/worker-core/src/worker_core/tools/web_fetch.py`
-- `packages/worker-server/src/worker_server/server.py`
-- `packages/worker-web/src/worker_web/app.py`
+- `packages/artel-core/src/artel_core/cli.py`
+- `packages/artel-core/src/artel_core/artel_bootstrap.py`
+- `packages/artel-core/src/artel_core/builtin_capabilities.py`
+- `packages/artel-core/src/artel_core/delegation/service.py`
+- `packages/artel-core/src/artel_core/orchestration.py`
+- `packages/artel-core/src/artel_core/mcp.py`
+- `packages/artel-core/src/artel_core/worktree.py`
+- `packages/artel-core/src/artel_core/tools/builtins.py`
+- `packages/artel-core/src/artel_core/tools/web_search.py`
+- `packages/artel-core/src/artel_core/tools/web_fetch.py`
+- `packages/artel-server/src/artel_server/server.py`
+- `packages/artel-web/src/artel_web/app.py`
 - `tests/test_builtin_capabilities.py`
 - `tests/test_delegation_tools.py`
 - `tests/test_delegation_server_api.py`

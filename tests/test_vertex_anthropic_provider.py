@@ -6,10 +6,10 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from worker_ai.models import Done, ImageAttachment, Message, Role, ToolCallDelta, ToolDef, ToolParam
-from worker_ai.providers import create_default_registry
-from worker_ai.providers.anthropic import AnthropicProvider
-from worker_ai.providers.anthropic_vertex import AnthropicVertexProvider
+from artel_ai.models import Done, ImageAttachment, Message, Role, ToolCallDelta, ToolDef, ToolParam
+from artel_ai.providers import create_default_registry
+from artel_ai.providers.anthropic import AnthropicProvider
+from artel_ai.providers.anthropic_vertex import AnthropicVertexProvider
 
 
 def _test_tool() -> ToolDef:

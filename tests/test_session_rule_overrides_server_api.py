@@ -6,16 +6,16 @@ from aiohttp.test_utils import TestClient, TestServer
 
 @pytest.mark.asyncio
 async def test_session_rule_override_endpoints(tmp_path, monkeypatch):
-    from worker_core import config as cfg_mod
-    from worker_core.config import WorkerConfig
-    from worker_server.server import ServerState, _create_rest_app
+    from artel_core import config as cfg_mod
+    from artel_core.config import ArtelConfig
+    from artel_server.server import ServerState, _create_rest_app
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
     project_dir = tmp_path / "project"
     (project_dir / ".artel").mkdir(parents=True)
 
-    state = ServerState(config=WorkerConfig(), default_project_dir=str(project_dir))
+    state = ServerState(config=ArtelConfig(), default_project_dir=str(project_dir))
     app = _create_rest_app(state, "test_token")
     headers = {"Authorization": "Bearer test_token"}
 

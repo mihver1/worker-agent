@@ -6,9 +6,9 @@ import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from worker_ai.models import Done, Message, Role, TextDelta
-from worker_ai.providers import create_default_registry
-from worker_ai.providers.ollama import OllamaProvider
+from artel_ai.models import Done, Message, Role, TextDelta
+from artel_ai.providers import create_default_registry
+from artel_ai.providers.ollama import OllamaProvider
 
 
 def _sse_lines(events: list[dict]) -> list[str]:

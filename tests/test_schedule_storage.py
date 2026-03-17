@@ -6,8 +6,8 @@ import pytest
 
 
 def test_schedule_storage_add_update_delete_and_merge(tmp_path, monkeypatch):
-    from worker_core import config as cfg_mod
-    from worker_core.schedules import (
+    from artel_core import config as cfg_mod
+    from artel_core.schedules import (
         ScheduleRegistry,
         add_schedule,
         delete_schedule,
@@ -68,7 +68,7 @@ def test_schedule_storage_add_update_delete_and_merge(tmp_path, monkeypatch):
     ],
 )
 def test_next_schedule_time_for_cron(cron, expected):
-    from worker_core.schedules import ScheduleRecord, next_schedule_time
+    from artel_core.schedules import ScheduleRecord, next_schedule_time
 
     schedule = ScheduleRecord(
         id="job",
@@ -91,7 +91,7 @@ def test_next_schedule_time_for_cron(cron, expected):
 
 
 def test_render_prompt_variables_supports_key_value_and_input():
-    from worker_core.schedules import render_prompt_variables
+    from artel_core.schedules import render_prompt_variables
 
     assert render_prompt_variables("hello world") == {"input": "hello world"}
     assert render_prompt_variables("repo=backend branch=main") == {

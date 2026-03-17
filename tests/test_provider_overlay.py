@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from worker_server.provider_overlay import load_provider_overlay
+from artel_server.provider_overlay import load_provider_overlay
 
 
 class TestProviderOverlay:

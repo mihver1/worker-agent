@@ -6,8 +6,8 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from worker_ai.models import Done, Message, Role, ToolCall, ToolCallDelta, ToolDef, ToolParam
-from worker_ai.providers.anthropic import AnthropicProvider
+from artel_ai.models import Done, Message, Role, ToolCall, ToolCallDelta, ToolDef, ToolParam
+from artel_ai.providers.anthropic import AnthropicProvider
 
 
 def _sse_lines(events: list[dict]) -> list[str]:

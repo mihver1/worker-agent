@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import pytest
-from conftest import MockProvider
-from worker_ai.models import Done, TextDelta
-from worker_core.agent import AgentSession
-from worker_core.execution import ToolExecutionContext, bind_tool_execution_context
-from worker_core.tools.builtins import create_builtin_tools
-from worker_core.tools.web_fetch import WebFetchTool
-from worker_core.tools.web_guard import (
+from artel_ai.models import Done, TextDelta
+from artel_core.agent import AgentSession
+from artel_core.execution import ToolExecutionContext, bind_tool_execution_context
+from artel_core.tools.builtins import create_builtin_tools
+from artel_core.tools.web_fetch import WebFetchTool
+from artel_core.tools.web_guard import (
     assess_untrusted_web_content,
     detect_prompt_injection_signals,
     llm_safe_summarize_untrusted_web_content,
@@ -17,7 +16,8 @@ from worker_core.tools.web_guard import (
     validate_web_url_access,
     wrap_untrusted_web_content,
 )
-from worker_core.tools.web_search import WebSearchTool, parse_search_results
+from artel_core.tools.web_search import WebSearchTool, parse_search_results
+from conftest import MockProvider
 
 _SEARCH_HTML = """
 <html>
@@ -52,7 +52,7 @@ async def test_web_search_execute_formats_results(monkeypatch):
         assert query == "artel agent"
         return _SEARCH_HTML
 
-    monkeypatch.setattr("worker_core.tools.web_search._fetch_search_results_html", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_search._fetch_search_results_html", fake_fetch)
 
     tool = WebSearchTool()
     result = await tool.execute(query="artel agent", limit=2)
@@ -85,7 +85,7 @@ async def test_web_fetch_extracts_title_and_text(monkeypatch):
         assert url == "https://example.com/docs"
         return _Response()
 
-    monkeypatch.setattr("worker_core.tools.web_fetch._fetch_url", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_fetch._fetch_url", fake_fetch)
 
     tool = WebFetchTool()
     result = await tool.execute(url="https://example.com/docs")
@@ -116,7 +116,7 @@ async def test_web_fetch_truncates_output(monkeypatch):
     async def fake_fetch(url: str):
         return _Response()
 
-    monkeypatch.setattr("worker_core.tools.web_fetch._fetch_url", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_fetch._fetch_url", fake_fetch)
 
     tool = WebFetchTool()
     result = await tool.execute(url="https://example.com/huge", max_chars=100)
@@ -138,7 +138,7 @@ async def test_web_fetch_summary_mode_redacts_suspicious_lines(monkeypatch):
     async def fake_fetch(url: str):
         return _Response()
 
-    monkeypatch.setattr("worker_core.tools.web_fetch._fetch_url", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_fetch._fetch_url", fake_fetch)
 
     tool = WebFetchTool()
     result = await tool.execute(url="https://example.com/summary", mode="summary")
@@ -154,7 +154,7 @@ async def test_web_fetch_respects_domain_allowlist(monkeypatch):
     async def fake_fetch(url: str):
         raise AssertionError("network fetch should not happen when domain is blocked")
 
-    monkeypatch.setattr("worker_core.tools.web_fetch._fetch_url", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_fetch._fetch_url", fake_fetch)
 
     tool = WebFetchTool()
     result = await tool.execute(
@@ -196,7 +196,7 @@ async def test_web_search_filters_results_by_domain(monkeypatch):
     async def fake_fetch(query: str) -> str:
         return _SEARCH_HTML
 
-    monkeypatch.setattr("worker_core.tools.web_search._fetch_search_results_html", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_search._fetch_search_results_html", fake_fetch)
 
     tool = WebSearchTool()
     result = await tool.execute(query="artel agent", allow_domains="example.com")
@@ -210,7 +210,7 @@ async def test_web_search_blocks_denied_domains(monkeypatch):
     async def fake_fetch(query: str) -> str:
         return _SEARCH_HTML
 
-    monkeypatch.setattr("worker_core.tools.web_search._fetch_search_results_html", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_search._fetch_search_results_html", fake_fetch)
 
     tool = WebSearchTool()
     result = await tool.execute(query="artel agent", deny_domains="example.com")
@@ -223,7 +223,7 @@ async def test_web_search_llm_summary_mode_uses_small_model(monkeypatch):
     async def fake_fetch(query: str) -> str:
         return _SEARCH_HTML
 
-    monkeypatch.setattr("worker_core.tools.web_search._fetch_search_results_html", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_search._fetch_search_results_html", fake_fetch)
 
     provider = MockProvider(
         responses=[
@@ -262,7 +262,7 @@ async def test_web_fetch_strict_mode_uses_safe_summary(monkeypatch):
     async def fake_fetch(url: str):
         return _Response()
 
-    monkeypatch.setattr("worker_core.tools.web_fetch._fetch_url", fake_fetch)
+    monkeypatch.setattr("artel_core.tools.web_fetch._fetch_url", fake_fetch)
 
     provider = MockProvider(responses=[[TextDelta(content="- Facts only"), Done()]])
     session = AgentSession(

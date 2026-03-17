@@ -8,10 +8,10 @@ from aiohttp.test_utils import TestClient, TestServer
 
 @pytest.mark.asyncio
 async def test_schedule_rest_crud_and_run(tmp_path, monkeypatch):
-    from worker_core import config as cfg_mod
-    from worker_core.config import WorkerConfig
-    from worker_server import server as server_mod
-    from worker_server.server import ScheduleService, ServerState, _create_rest_app
+    from artel_core import config as cfg_mod
+    from artel_core.config import ArtelConfig
+    from artel_server import server as server_mod
+    from artel_server.server import ScheduleService, ServerState, _create_rest_app
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -19,7 +19,7 @@ async def test_schedule_rest_crud_and_run(tmp_path, monkeypatch):
     project_dir.mkdir()
     (project_dir / ".artel").mkdir()
 
-    state = ServerState(config=WorkerConfig(), default_project_dir=str(project_dir))
+    state = ServerState(config=ArtelConfig(), default_project_dir=str(project_dir))
     state.schedule_service = ScheduleService(state)
     await state.schedule_service.reload()
 

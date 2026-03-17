@@ -5,17 +5,17 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_local_undo_uses_last_ai_changed_paths(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     app._session = type("_Session", (), {"messages": [object()]})()
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
     monkeypatch.setattr(
-        "worker_tui.app.collect_last_ai_changed_paths", lambda msgs: ["a.py", "b.py"]
+        "artel_tui.app.collect_last_ai_changed_paths", lambda msgs: ["a.py", "b.py"]
     )
     monkeypatch.setattr(
-        "worker_tui.app.restore_paths",
+        "artel_tui.app.restore_paths",
         lambda *, cwd, paths: "Restored 2 files:\n  - a.py\n  - b.py",
     )
 
@@ -28,9 +28,9 @@ async def test_local_undo_uses_last_ai_changed_paths(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_local_rewind_forks_and_resumes(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     app._session = type("_Session", (), {"session_id": "s1"})()
     app._store = type("_Store", (), {})()
     calls: list[tuple[str, object]] = []
@@ -55,9 +55,9 @@ async def test_local_rewind_forks_and_resumes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_remote_rewind_forks_and_switches(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp(remote_url="ws://127.0.0.1:7432")
+    app = ArtelApp(remote_url="ws://127.0.0.1:7432")
     app._remote_session_id = "s1"
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]

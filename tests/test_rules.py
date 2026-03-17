@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import pytest
-from worker_ai.models import Done, ToolCallDelta, Usage
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.rules import (
+from artel_ai.models import Done, ToolCallDelta, Usage
+from artel_core.agent import AgentEventType, AgentSession
+from artel_core.rules import (
     add_rule,
     delete_rule,
     format_rules_for_system_prompt,
@@ -11,7 +11,7 @@ from worker_core.rules import (
     list_rules,
     update_rule,
 )
-from worker_core.tools.builtins import BashTool, EditTool
+from artel_core.tools.builtins import BashTool, EditTool
 
 
 class _Provider:
@@ -33,7 +33,7 @@ class _Provider:
 
 @pytest.mark.asyncio
 async def test_system_prompt_includes_active_rules(tmp_path, monkeypatch):
-    from worker_core import config as cfg_mod
+    from artel_core import config as cfg_mod
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -51,7 +51,7 @@ async def test_system_prompt_includes_active_rules(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_rule_blocks_forbidden_bash_tool(tmp_path, monkeypatch):
-    from worker_core import config as cfg_mod
+    from artel_core import config as cfg_mod
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -79,7 +79,7 @@ async def test_rule_blocks_forbidden_bash_tool(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_rule_blocks_edit_of_read_only_path(tmp_path, monkeypatch):
-    from worker_core import config as cfg_mod
+    from artel_core import config as cfg_mod
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -118,7 +118,7 @@ async def test_rule_blocks_edit_of_read_only_path(tmp_path, monkeypatch):
 
 
 def test_rule_crud_and_scope(tmp_path, monkeypatch):
-    from worker_core import config as cfg_mod
+    from artel_core import config as cfg_mod
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)

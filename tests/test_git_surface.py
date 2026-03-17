@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
-from worker_core.git_surface import render_git_diff, render_git_status, restore_all, restore_path
+from artel_core.git_surface import render_git_diff, render_git_status, restore_all, restore_path
 
 
 def test_render_git_status_groups_entries(monkeypatch, tmp_path):

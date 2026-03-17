@@ -307,9 +307,9 @@ done
 
 @pytest.mark.asyncio
 async def test_lsp_tools_use_fake_server_and_render_semantic_results(tmp_path: Path) -> None:
-    from worker_core.config import LspConfig, LspServerConfig, WorkerConfig
-    from worker_core.extensions import ExtensionContext
-    from worker_core.lsp_runtime import LspRuntimeManager
+    from artel_core.config import ArtelConfig, LspConfig, LspServerConfig
+    from artel_core.extensions import ExtensionContext
+    from artel_core.lsp_runtime import LspRuntimeManager
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -318,7 +318,7 @@ async def test_lsp_tools_use_fake_server_and_render_semantic_results(tmp_path: P
     (repo / "helpers.py").write_text("def helper():\n    return 42\n", encoding="utf-8")
 
     server_path = _write_fake_server(tmp_path / "fake_lsp_server.py")
-    config = WorkerConfig(
+    config = ArtelConfig(
         lsp=LspConfig(
             servers={
                 "python": LspServerConfig(
@@ -396,9 +396,9 @@ async def test_lsp_runtime_auto_installs_builtin_server_on_first_use(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    from worker_core.config import LspConfig, WorkerConfig
-    from worker_core.extensions import ExtensionContext
-    from worker_core.lsp_runtime import LspRuntimeManager
+    from artel_core.config import ArtelConfig, LspConfig
+    from artel_core.extensions import ExtensionContext
+    from artel_core.lsp_runtime import LspRuntimeManager
 
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -412,7 +412,7 @@ async def test_lsp_runtime_auto_installs_builtin_server_on_first_use(
     install_log = tmp_path / "npm-install.log"
     _write_fake_npm(bin_dir / "npm", server_path=fake_server, log_path=install_log)
     monkeypatch.setenv("PATH", str(bin_dir))
-    config = WorkerConfig(
+    config = ArtelConfig(
         lsp=LspConfig(
             enabled=True,
             auto_install=True,
@@ -467,8 +467,8 @@ async def test_lsp_runtime_auto_installs_builtin_server_on_first_use(
 
 
 def test_lsp_status_command_renders_runtime_status(monkeypatch, tmp_path: Path) -> None:
-    from worker_core import cli as cli_mod
-    from worker_core.config import WorkerConfig
+    from artel_core import cli as cli_mod
+    from artel_core.config import ArtelConfig
 
     class _Runtime:
         async def load(self, context):
@@ -484,12 +484,12 @@ def test_lsp_status_command_renders_runtime_status(monkeypatch, tmp_path: Path) 
             return None
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("worker_core.cli.load_config", lambda project_dir=None: WorkerConfig())
+    monkeypatch.setattr("artel_core.cli.load_config", lambda project_dir=None: ArtelConfig())
     monkeypatch.setattr(
-        "worker_core.artel_bootstrap.bootstrap_artel",
+        "artel_core.artel_bootstrap.bootstrap_artel",
         lambda *args, **kwargs: type("Bootstrap", (), {"project_dir": str(tmp_path)})(),
     )
-    monkeypatch.setattr("worker_core.lsp_runtime.LspRuntimeManager", _Runtime)
+    monkeypatch.setattr("artel_core.lsp_runtime.LspRuntimeManager", _Runtime)
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["lsp", "status"])

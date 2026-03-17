@@ -5,8 +5,8 @@ from click.testing import CliRunner
 
 
 def test_rule_ordering_and_move_in_storage(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_core.rules import add_rule, list_rules, move_rule
+    from artel_core import config as cfg_mod
+    from artel_core.rules import add_rule, list_rules, move_rule
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -43,8 +43,8 @@ def test_rule_ordering_and_move_in_storage(monkeypatch, tmp_path):
 def test_rule_cli_move(monkeypatch, tmp_path):
     import importlib
 
-    from worker_core import config as cfg_mod
-    from worker_core.rules import add_rule
+    from artel_core import config as cfg_mod
+    from artel_core.rules import add_rule
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -54,7 +54,7 @@ def test_rule_cli_move(monkeypatch, tmp_path):
     add_rule(scope="project", text="First", project_dir=str(tmp_path))
     second = add_rule(scope="project", text="Second", project_dir=str(tmp_path))
 
-    cli_mod = importlib.import_module("worker_core.cli")
+    cli_mod = importlib.import_module("artel_core.cli")
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["rule", "move", second.id, "--to", "1"])
     assert result.exit_code == 0
@@ -68,9 +68,9 @@ def test_rule_cli_move(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_tui_rule_move_local(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_core.rules import add_rule, list_rules
-    from worker_tui.app import WorkerApp
+    from artel_core import config as cfg_mod
+    from artel_core.rules import add_rule, list_rules
+    from artel_tui.app import ArtelApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -80,7 +80,7 @@ async def test_tui_rule_move_local(monkeypatch, tmp_path):
     add_rule(scope="project", text="First", project_dir=str(tmp_path))
     second = add_rule(scope="project", text="Second", project_dir=str(tmp_path))
 
-    app = WorkerApp()
+    app = ArtelApp()
     seen: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen.append((content, role))  # type: ignore[method-assign]
 

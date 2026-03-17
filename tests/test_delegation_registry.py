@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from worker_core.delegation.registry import get_registry, reset_registry
+from artel_core.delegation.registry import get_registry, reset_registry
 
 
 def test_registry_tracks_run_lifecycle() -> None:

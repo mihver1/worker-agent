@@ -2,7 +2,7 @@ from click.testing import CliRunner
 
 
 def test_web_help_marks_surface_unavailable_in_current_checkout():
-    from worker_core import cli as cli_mod
+    from artel_core import cli as cli_mod
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["web", "--help"])
@@ -13,7 +13,7 @@ def test_web_help_marks_surface_unavailable_in_current_checkout():
 
 
 def test_top_level_help_does_not_advertise_web_as_working_ui():
-    from worker_core import cli as cli_mod
+    from artel_core import cli as cli_mod
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["--help"])

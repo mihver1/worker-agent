@@ -6,9 +6,9 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from worker_ai.models import Done, Message, Role, TextDelta
-from worker_ai.providers import create_default_registry
-from worker_ai.providers.google import GoogleProvider, GoogleVertexProvider
+from artel_ai.models import Done, Message, Role, TextDelta
+from artel_ai.providers import create_default_registry
+from artel_ai.providers.google import GoogleProvider, GoogleVertexProvider
 
 
 class TestGoogleProviderSplit:

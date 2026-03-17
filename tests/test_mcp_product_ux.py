@@ -6,8 +6,8 @@ import pytest
 
 
 def test_mcp_cli_status_and_reload(monkeypatch, tmp_path):
+    from artel_core import cli as cli_mod
     from click.testing import CliRunner
-    from worker_core import cli as cli_mod
 
     class _Runtime:
         available = True
@@ -63,7 +63,7 @@ def test_mcp_cli_status_and_reload(monkeypatch, tmp_path):
             }
 
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr("worker_core.mcp_runtime.McpRuntimeManager", _Runtime)
+    monkeypatch.setattr("artel_core.mcp_runtime.McpRuntimeManager", _Runtime)
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["mcp", "status"])
@@ -85,10 +85,10 @@ def test_mcp_cli_status_and_reload(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_mcp_server_config_endpoints_support_server_upsert_and_delete(tmp_path):
     from aiohttp.test_utils import TestClient, TestServer
-    from worker_core.config import WorkerConfig
-    from worker_server.server import ServerState, _create_rest_app
+    from artel_core.config import ArtelConfig
+    from artel_server.server import ServerState, _create_rest_app
 
-    state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+    state = ServerState(config=ArtelConfig(), default_project_dir=str(tmp_path))
     app = _create_rest_app(state, "test_token")
     async with TestClient(TestServer(app)) as client:
         resp = await client.put(
@@ -132,7 +132,7 @@ async def test_mcp_server_config_endpoints_support_server_upsert_and_delete(tmp_
 
 @pytest.mark.asyncio
 async def test_tui_mcp_command_remote_uses_control_plane(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     class _RemoteClient:
         async def request(self, method: str, path: str, *, json_data=None):
@@ -147,7 +147,7 @@ async def test_tui_mcp_command_remote_uses_control_plane(monkeypatch):
                 return {"status": status}
             raise AssertionError((method, path, json_data))
 
-    app = WorkerApp(remote_url="ws://localhost:7432")
+    app = ArtelApp(remote_url="ws://localhost:7432")
     app._remote_control_client = _RemoteClient()
     seen_messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen_messages.append((content, role))  # type: ignore[method-assign]

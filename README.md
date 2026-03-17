@@ -118,7 +118,7 @@ Artel uses layered configuration:
 
 Run `artel init` to generate commented templates.
 Use `artel config` to inspect config locations and `artel config print` to see the merged effective configuration.
-On first run, Artel also migrates legacy Worker config and project state when it finds them.
+On first run, Artel also migrates legacy Artel config and project state when it finds them.
 
 Rules can be managed from the CLI and TUI:
 

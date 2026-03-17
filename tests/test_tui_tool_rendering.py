@@ -5,7 +5,7 @@ from textual.containers import VerticalScroll
 
 
 def test_rendered_write_tool_result_uses_diff_markdown():
-    from worker_core.tool_display import build_file_diff_display, format_tool_result_display
+    from artel_core.tool_display import build_file_diff_display, format_tool_result_display
 
     display = format_tool_result_display(
         tool_name="write",
@@ -24,7 +24,7 @@ def test_rendered_write_tool_result_uses_diff_markdown():
 
 
 def test_tool_card_set_result_accepts_status_variant():
-    from worker_tui.app import ToolCard
+    from artel_tui.app import ToolCard
 
     card = ToolCard("⚙ write demo.py")
 
@@ -44,8 +44,8 @@ def test_tool_card_set_result_accepts_status_variant():
 
 @pytest.mark.asyncio
 async def test_tool_card_composes_result_row_with_status_variant():
+    from artel_tui.app import ToolCard
     from textual.app import App, ComposeResult
-    from worker_tui.app import ToolCard
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -70,10 +70,10 @@ async def test_tool_card_composes_result_row_with_status_variant():
 
 @pytest.mark.asyncio
 async def test_tool_card_result_row_stays_compact_inside_collapsible():
+    from artel_tui.app import ToolCard
     from textual.app import App, ComposeResult
     from textual.containers import Vertical
     from textual.widgets import Collapsible
-    from worker_tui.app import ToolCard
 
     class TestApp(App[None]):
         CSS = """
@@ -112,8 +112,8 @@ async def test_tool_card_result_row_stays_compact_inside_collapsible():
 
 @pytest.mark.asyncio
 async def test_tool_card_uses_scrollable_container_for_long_result_body():
+    from artel_tui.app import ToolCard
     from textual.app import App, ComposeResult
-    from worker_tui.app import ToolCard
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -135,9 +135,9 @@ async def test_tool_card_uses_scrollable_container_for_long_result_body():
 
 @pytest.mark.asyncio
 async def test_tool_card_block_result_preserves_newlines_in_scrollable_body():
+    from artel_tui.app import ToolCard
     from textual.app import App, ComposeResult
     from textual.widgets import Static
-    from worker_tui.app import ToolCard
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -161,9 +161,9 @@ async def test_tool_card_block_result_preserves_newlines_in_scrollable_body():
 
 @pytest.mark.asyncio
 async def test_tool_card_body_treats_rich_text_repr_as_plain_text():
+    from artel_tui.app import ToolCard, _highlight_diff_code_text, _resolve_diff_lexer
     from textual.app import App, ComposeResult
     from textual.widgets import Static
-    from worker_tui.app import ToolCard, _highlight_diff_code_text, _resolve_diff_lexer
 
     lexer = _resolve_diff_lexer("demo.py", "+def foo():\n")
     highlighted_repr = repr(_highlight_diff_code_text("def foo():", lexer))

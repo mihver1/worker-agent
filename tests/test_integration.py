@@ -7,16 +7,16 @@ import json
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
+import artel_server.server as server_mod
 import pytest
-import worker_server.server as server_mod
+from artel_ai.models import Done, TextDelta, Usage
+from artel_ai.oauth import OAuthToken, RemoteOAuthChallenge, TokenStore
+from artel_core.agent import AgentSession
+from artel_core.config import ArtelConfig, ProviderConfig, ProviderModelConfig
+from artel_core.extensions import HookDispatcher, discover_extensions
+from artel_core.sessions import SessionStore
+from artel_server.server import ServerState, _create_rest_app, handle_client
 from conftest import MockProvider
-from worker_ai.models import Done, TextDelta, Usage
-from worker_ai.oauth import OAuthToken, RemoteOAuthChallenge, TokenStore
-from worker_core.agent import AgentSession
-from worker_core.config import ProviderConfig, ProviderModelConfig, WorkerConfig
-from worker_core.extensions import HookDispatcher, discover_extensions
-from worker_core.sessions import SessionStore
-from worker_server.server import ServerState, _create_rest_app, handle_client
 
 # ── OAuth Token Store ─────────────────────────────────────────────
 
@@ -72,7 +72,7 @@ class TestTokenStore:
 class TestOAuthProviderRefresh:
     @pytest.mark.asyncio
     async def test_get_token_refreshes_and_persists(self, tmp_path, monkeypatch):
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         store = TokenStore(path=tmp_path / "auth.json")
         store.save(
@@ -109,14 +109,14 @@ class TestOAuthProviderRefresh:
 class TestRuntimeBootstrap:
     @pytest.mark.asyncio
     async def test_bootstrap_runtime_supports_kimi(self, tmp_path, monkeypatch):
-        from worker_ai.providers.kimi import KimiProvider
-        from worker_core.bootstrap import bootstrap_runtime
-        from worker_core.cli import _resolve_api_key
+        from artel_ai.providers.kimi import KimiProvider
+        from artel_core.bootstrap import bootstrap_runtime
+        from artel_core.cli import _resolve_api_key
 
         monkeypatch.setenv("MOONSHOT_API_KEY", "moonshot_env_token")
 
         runtime = await bootstrap_runtime(
-            WorkerConfig(),
+            ArtelConfig(),
             "kimi",
             "kimi-k2.5",
             project_dir=str(tmp_path),
@@ -134,14 +134,14 @@ class TestRuntimeBootstrap:
 
     @pytest.mark.asyncio
     async def test_bootstrap_runtime_supports_github_copilot_alias(self, tmp_path, monkeypatch):
-        from worker_ai.providers.github_copilot import GitHubCopilotProvider
-        from worker_core.bootstrap import bootstrap_runtime
-        from worker_core.cli import _resolve_api_key
+        from artel_ai.providers.github_copilot import GitHubCopilotProvider
+        from artel_core.bootstrap import bootstrap_runtime
+        from artel_core.cli import _resolve_api_key
 
         monkeypatch.setenv("GH_TOKEN", "gho_env_token")
 
         runtime = await bootstrap_runtime(
-            WorkerConfig(),
+            ArtelConfig(),
             "github-copilot",
             "gpt-4.1",
             project_dir=str(tmp_path),
@@ -159,14 +159,14 @@ class TestRuntimeBootstrap:
 
     @pytest.mark.asyncio
     async def test_bootstrap_runtime_supports_ollama_cloud_alias(self, tmp_path, monkeypatch):
-        from worker_ai.providers.ollama import OllamaProvider
-        from worker_core.bootstrap import bootstrap_runtime
-        from worker_core.cli import _resolve_api_key
+        from artel_ai.providers.ollama import OllamaProvider
+        from artel_core.bootstrap import bootstrap_runtime
+        from artel_core.cli import _resolve_api_key
 
         monkeypatch.setenv("OLLAMA_API_KEY", "ollama_cloud_token")
 
         runtime = await bootstrap_runtime(
-            WorkerConfig(
+            ArtelConfig(
                 providers={
                     "ollama_cloud": ProviderConfig(
                         models={
@@ -194,12 +194,12 @@ class TestRuntimeBootstrap:
 
     @pytest.mark.asyncio
     async def test_bootstrap_runtime_supports_lm_studio_alias(self, tmp_path):
-        from worker_ai.providers.lmstudio import LMStudioProvider
-        from worker_core.bootstrap import bootstrap_runtime
-        from worker_core.cli import _resolve_api_key
+        from artel_ai.providers.lmstudio import LMStudioProvider
+        from artel_core.bootstrap import bootstrap_runtime
+        from artel_core.cli import _resolve_api_key
 
         runtime = await bootstrap_runtime(
-            WorkerConfig(
+            ArtelConfig(
                 providers={
                     "lmstudio": ProviderConfig(
                         models={
@@ -229,8 +229,8 @@ class TestRuntimeBootstrap:
 class TestAzureFoundryIntegration:
     @pytest.mark.asyncio
     async def test_agent_session_uses_non_stream_fallback_for_empty_foundry_stream(self):
-        from worker_ai.providers.azure_openai import AzureOpenAIProvider
-        from worker_core.agent import AgentEventType, AgentSession
+        from artel_ai.providers.azure_openai import AzureOpenAIProvider
+        from artel_core.agent import AgentEventType, AgentSession
 
         provider = AzureOpenAIProvider(
             api_key="azure-key",
@@ -307,14 +307,14 @@ class TestAzureFoundryIntegration:
 
 
 class TestCliLogin:
-    def test_worker_login_uses_github_copilot_oauth_broker(self, tmp_path, monkeypatch):
-        import worker_ai.oauth as oauth_mod
+    def test_artel_login_uses_github_copilot_oauth_broker(self, tmp_path, monkeypatch):
+        import artel_ai.oauth as oauth_mod
+        from artel_ai.oauth import TokenStore
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_ai.oauth import TokenStore
-        from worker_core import cli as cli_mod
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
-        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: WorkerConfig())
+        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: ArtelConfig())
 
         async def fake_run_command(args: list[str]) -> int:
             assert args == ["gh", "auth", "login", "--web", "--clipboard", "--skip-ssh-key"]
@@ -348,11 +348,11 @@ class TestCliLogin:
         assert saved is not None
         assert saved.access_token == "gho_cli_login_token"
 
-    def test_worker_login_reports_api_key_hint_for_kimi(self, monkeypatch):
+    def test_artel_login_reports_api_key_hint_for_kimi(self, monkeypatch):
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
-        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: WorkerConfig())
+        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: ArtelConfig())
 
         runner = CliRunner()
         result = runner.invoke(cli_mod.cli, ["login", "kimi"])
@@ -361,13 +361,13 @@ class TestCliLogin:
         assert "OAuth not supported for 'kimi'." in result.output
         assert "Use MOONSHOT_API_KEY or [providers.kimi].api_key." in result.output
 
-    def test_worker_login_without_gh_shows_install_hint(self, tmp_path, monkeypatch):
-        import worker_ai.oauth as oauth_mod
+    def test_artel_login_without_gh_shows_install_hint(self, tmp_path, monkeypatch):
+        import artel_ai.oauth as oauth_mod
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
-        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: WorkerConfig())
+        monkeypatch.setattr(cli_mod, "load_config", lambda cwd: ArtelConfig())
 
         async def fake_create_subprocess_exec(*args, **kwargs):
             raise OSError("gh not found")
@@ -397,10 +397,10 @@ class TestCliLogin:
 
 
 class TestCliConnect:
-    def test_worker_connect_passes_forward_credentials(self, monkeypatch):
-        import worker_tui.app as tui_app
+    def test_artel_connect_passes_forward_credentials(self, monkeypatch):
+        import artel_tui.app as tui_app
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
         calls: list[dict[str, str]] = []
 
@@ -433,18 +433,18 @@ class TestCliConnect:
 
 
 class TestCliDefaultMode:
-    def test_worker_default_starts_local_tui_without_cmux_bootstrap(self, monkeypatch):
-        import worker_tui.app as tui_app
-        import worker_tui.local_server as local_server_mod
+    def test_artel_default_starts_local_tui_without_cmux_bootstrap(self, monkeypatch):
+        import artel_tui.app as tui_app
+        import artel_tui.local_server as local_server_mod
+        from artel_core import cli as cli_mod
+        from artel_core.artel_bootstrap import ArtelBootstrapResult
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
-        from worker_core.artel_bootstrap import ArtelBootstrapResult
 
         expected_project_dir = str(Path("/tmp/project").resolve())
 
         monkeypatch.setattr(cli_mod.os, "getcwd", lambda: "/tmp/project")
         monkeypatch.setattr(
-            "worker_core.artel_bootstrap.bootstrap_artel",
+            "artel_core.artel_bootstrap.bootstrap_artel",
             lambda project_dir=None, command_name=None, prompt=None: ArtelBootstrapResult(
                 project_dir=expected_project_dir,
                 cmux_required=False,
@@ -496,10 +496,10 @@ class TestCliDefaultMode:
             "resume_id": "sess-123",
         }
 
-    def test_worker_prompt_mode_skips_cmux_preflight(self, monkeypatch):
+    def test_artel_prompt_mode_skips_cmux_preflight(self, monkeypatch):
+        from artel_core import cli as cli_mod
+        from artel_core.artel_bootstrap import ArtelBootstrapResult
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
-        from worker_core.artel_bootstrap import ArtelBootstrapResult
 
         captured: dict[str, object] = {}
 
@@ -516,7 +516,7 @@ class TestCliDefaultMode:
 
         monkeypatch.setattr(cli_mod.os, "getcwd", lambda: "/tmp/project")
         monkeypatch.setattr(
-            "worker_core.artel_bootstrap.bootstrap_artel",
+            "artel_core.artel_bootstrap.bootstrap_artel",
             lambda project_dir=None, command_name=None, prompt=None: ArtelBootstrapResult(
                 project_dir=str(Path("/tmp/project").resolve()),
                 cmux_required=False,
@@ -536,10 +536,10 @@ class TestCliDefaultMode:
 
 
 class TestCliServe:
-    def test_worker_serve_passes_stdout_announcer(self, monkeypatch):
-        import worker_server.server as server_mod
+    def test_artel_serve_passes_stdout_announcer(self, monkeypatch):
+        import artel_server.server as server_mod
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
         captured: dict[str, object] = {}
 
@@ -569,10 +569,10 @@ class TestCliServe:
         assert "Artel server starting" in result.output
         assert "Auth token: artel_test_token" in result.output
 
-    def test_worker_serve_passes_hidden_auth_token(self, monkeypatch):
-        import worker_server.server as server_mod
+    def test_artel_serve_passes_hidden_auth_token(self, monkeypatch):
+        import artel_server.server as server_mod
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
         captured: dict[str, object] = {}
 
@@ -597,11 +597,11 @@ class TestCliServe:
 
 
 class TestCliAcp:
-    def test_worker_acp_runs_acp_entrypoint(self, monkeypatch):
-        import worker_core.migrations as migrations_mod
-        import worker_server.acp as acp_mod
+    def test_artel_acp_runs_acp_entrypoint(self, monkeypatch):
+        import artel_core.migrations as migrations_mod
+        import artel_server.acp as acp_mod
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
         seen: list[bool] = []
 
@@ -628,9 +628,9 @@ class TestCliAcp:
 
 class TestCliExtensions:
     def test_ext_install_uses_no_sources(self, monkeypatch, tmp_path):
+        from artel_core import cli as cli_mod
+        from artel_core import ext_manifest
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
-        from worker_core import ext_manifest
 
         calls: list[list[str]] = []
 
@@ -657,9 +657,9 @@ class TestCliExtensions:
     def test_ext_install_resolves_name_from_registry(self, monkeypatch, tmp_path):
         from unittest.mock import patch as _patch
 
+        from artel_core import cli as cli_mod
+        from artel_core import ext_manifest, ext_registry
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
-        from worker_core import ext_manifest, ext_registry
 
         calls: list[list[str]] = []
 
@@ -672,14 +672,14 @@ class TestCliExtensions:
 
         fake_entries = [
             ext_registry.RegistryEntry(
-                name="worker-ext-mcp",
-                repo="git+https://github.com/mihver1/worker-ext-mcp.git",
+                name="artel-ext-mcp",
+                repo="git+https://github.com/mihver1/artel-ext-mcp.git",
                 registry_name="official",
             ),
         ]
         with _patch.object(ext_registry, "list_all", return_value=fake_entries):
             runner = CliRunner()
-            result = runner.invoke(cli_mod.cli, ["ext", "install", "worker-ext-mcp"])
+            result = runner.invoke(cli_mod.cli, ["ext", "install", "artel-ext-mcp"])
 
         assert result.exit_code == 0
         assert "Resolved" in result.output
@@ -689,14 +689,14 @@ class TestCliExtensions:
                 "pip",
                 "install",
                 "--no-sources",
-                "git+https://github.com/mihver1/worker-ext-mcp.git",
+                "git+https://github.com/mihver1/artel-ext-mcp.git",
             ]
         ]
 
     def test_ext_update_uses_no_sources(self, monkeypatch):
+        from artel_core import cli as cli_mod
+        from artel_core import ext_manifest
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
-        from worker_core import ext_manifest
 
         calls: list[list[str]] = []
 
@@ -708,10 +708,10 @@ class TestCliExtensions:
         monkeypatch.setattr(ext_manifest, "list_entries", lambda: [])
 
         runner = CliRunner()
-        result = runner.invoke(cli_mod.cli, ["ext", "update", "worker-ext-mcp"])
+        result = runner.invoke(cli_mod.cli, ["ext", "update", "artel-ext-mcp"])
 
         assert result.exit_code == 0
-        assert calls == [["uv", "pip", "install", "--no-sources", "--upgrade", "worker-ext-mcp"]]
+        assert calls == [["uv", "pip", "install", "--no-sources", "--upgrade", "artel-ext-mcp"]]
 
 
 # ── REST API ──────────────────────────────────────────────────────
@@ -722,7 +722,7 @@ class TestRemoteControlClient:
     async def test_request_uses_same_port_api_path_when_remote_url_has_ws_suffix(self):
         from aiohttp import web
         from aiohttp.test_utils import TestClient, TestServer
-        from worker_tui.remote_control import RemoteControlClient
+        from artel_tui.remote_control import RemoteControlClient
 
         async def handle_health(request):
             return web.json_response({"path": request.path})
@@ -740,25 +740,25 @@ class TestRemoteControlClient:
     async def test_request_uses_nested_api_path_for_prefixed_remote_url(self):
         from aiohttp import web
         from aiohttp.test_utils import TestClient, TestServer
-        from worker_tui.remote_control import RemoteControlClient
+        from artel_tui.remote_control import RemoteControlClient
 
         async def handle_health(request):
             return web.json_response({"path": request.path})
 
         app = web.Application()
-        app.router.add_get("/worker/api/health", handle_health)
+        app.router.add_get("/artel/api/health", handle_health)
 
         async with TestClient(TestServer(app)) as client:
-            remote_url = str(client.make_url("/worker/ws")).replace("http://", "ws://", 1)
+            remote_url = str(client.make_url("/artel/ws")).replace("http://", "ws://", 1)
             payload = await RemoteControlClient(remote_url).request("GET", "/api/health")
 
-        assert payload == {"path": "/worker/api/health"}
+        assert payload == {"path": "/artel/api/health"}
 
 
 class TestRESTAPI:
     @pytest.fixture
     def state(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         return ServerState(config=config)
 
     @pytest.mark.asyncio
@@ -811,7 +811,7 @@ class TestRESTAPI:
     @pytest.mark.asyncio
     async def test_delete_session_closes_provider(self, state):
         from aiohttp.test_utils import TestClient, TestServer
-        from worker_core.agent import AgentSession
+        from artel_core.agent import AgentSession
 
         class _ClosableMockProvider(MockProvider):
             def __init__(self):
@@ -853,7 +853,7 @@ class TestRESTAPI:
     async def test_session_get_returns_default_project_before_creation(self, tmp_path):
         from aiohttp.test_utils import TestClient, TestServer
 
-        state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+        state = ServerState(config=ArtelConfig(), default_project_dir=str(tmp_path))
         app = _create_rest_app(state, "test_token")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get(
@@ -868,7 +868,7 @@ class TestRESTAPI:
     async def test_server_info_returns_default_project_and_model(self, tmp_path):
         from aiohttp.test_utils import TestClient, TestServer
 
-        state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+        state = ServerState(config=ArtelConfig(), default_project_dir=str(tmp_path))
         app = _create_rest_app(state, "test_token")
         async with TestClient(TestServer(app)) as client:
             resp = await client.get(
@@ -898,7 +898,7 @@ class TestRESTAPI:
         )
 
         state = ServerState(
-            config=WorkerConfig(
+            config=ArtelConfig(
                 providers={
                     "openai": ProviderConfig(
                         api_key="secret-key", base_url="https://api.openai.com/v1"
@@ -956,7 +956,7 @@ class TestRESTAPI:
 
     @pytest.mark.asyncio
     async def test_config_init_endpoint_creates_config_files(self, tmp_path, monkeypatch):
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
         from aiohttp.test_utils import TestClient, TestServer
 
         global_dir = tmp_path / "global"
@@ -968,7 +968,7 @@ class TestRESTAPI:
         monkeypatch.setattr(server_mod, "CONFIG_DIR", global_dir)
         monkeypatch.setattr(server_mod, "GLOBAL_CONFIG", global_dir / "config.toml")
 
-        state = ServerState(config=WorkerConfig(), default_project_dir=str(project_dir))
+        state = ServerState(config=ArtelConfig(), default_project_dir=str(project_dir))
         app = _create_rest_app(state, "test_token")
         async with TestClient(TestServer(app)) as client:
             resp = await client.post(
@@ -1003,10 +1003,10 @@ class TestRESTAPI:
     @pytest.mark.asyncio
     async def test_session_commands_endpoint_lists_and_executes_extension_commands(self, state):
         from aiohttp.test_utils import TestClient, TestServer
-        from worker_core.extensions import Extension
+        from artel_core.extensions import CommandHandler, Extension
 
         class _CommandExtension(Extension):
-            def get_commands(self):
+            def get_commands(self) -> dict[str, CommandHandler]:
                 return {"echo": self._cmd_echo}
 
             async def _cmd_echo(self, arg: str) -> str:
@@ -1094,7 +1094,7 @@ class TestRESTAPI:
         project_a.mkdir()
         project_b.mkdir()
 
-        state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+        state = ServerState(config=ArtelConfig(), default_project_dir=str(tmp_path))
         app = _create_rest_app(state, "test_token")
         async with TestClient(TestServer(app)) as client:
             resp = await client.put(
@@ -1137,7 +1137,7 @@ class TestRESTAPI:
     @pytest.mark.asyncio
     async def test_sessions_list_includes_persisted_remote_sessions(self, tmp_path):
         from aiohttp.test_utils import TestClient, TestServer
-        from worker_ai.models import Message, Role
+        from artel_ai.models import Message, Role
 
         store = SessionStore(str(tmp_path / "sessions.db"))
         await store.open()
@@ -1156,7 +1156,7 @@ class TestRESTAPI:
             )
 
             state = ServerState(
-                config=WorkerConfig(),
+                config=ArtelConfig(),
                 default_project_dir=str(tmp_path),
                 store=store,
             )
@@ -1186,7 +1186,7 @@ class TestRESTAPI:
     @pytest.mark.asyncio
     async def test_session_messages_endpoint_reads_persisted_history(self, tmp_path):
         from aiohttp.test_utils import TestClient, TestServer
-        from worker_ai.models import Message, Role
+        from artel_ai.models import Message, Role
 
         store = SessionStore(str(tmp_path / "sessions.db"))
         await store.open()
@@ -1205,7 +1205,7 @@ class TestRESTAPI:
                 Message(role=Role.ASSISTANT, content="world"),
             )
 
-            state = ServerState(config=WorkerConfig(), store=store)
+            state = ServerState(config=ArtelConfig(), store=store)
             app = _create_rest_app(state, "test_token")
             async with TestClient(TestServer(app)) as client:
                 resp = await client.get(
@@ -1225,7 +1225,7 @@ class TestRESTAPI:
     @pytest.mark.asyncio
     async def test_session_fork_endpoint_uses_requested_message_index(self, tmp_path):
         from aiohttp.test_utils import TestClient, TestServer
-        from worker_ai.models import Message, Role
+        from artel_ai.models import Message, Role
 
         store = SessionStore(str(tmp_path / "sessions.db"))
         await store.open()
@@ -1246,7 +1246,7 @@ class TestRESTAPI:
             )
 
             state = ServerState(
-                config=WorkerConfig(),
+                config=ArtelConfig(),
                 default_project_dir=str(tmp_path),
                 store=store,
             )
@@ -1291,7 +1291,7 @@ class TestRESTAPI:
         await store.open()
         try:
             state = ServerState(
-                config=WorkerConfig(),
+                config=ArtelConfig(),
                 default_project_dir=str(tmp_path),
                 store=store,
             )
@@ -1321,17 +1321,17 @@ class TestRESTAPI:
         tmp_path,
         monkeypatch,
     ):
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
         from aiohttp.test_utils import TestClient, TestServer
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
-        saved_overlays: list[dict[str, object]] = []
+        saved_overlays: list[dict[str, ProviderConfig]] = []
         monkeypatch.setattr(
             server_mod,
             "save_provider_overlay",
             lambda overlay: saved_overlays.append(dict(overlay)),
         )
-        monkeypatch.setattr(server_mod, "load_config", lambda project_dir=None: WorkerConfig())
+        monkeypatch.setattr(server_mod, "load_config", lambda project_dir=None: ArtelConfig())
 
         app = server_mod._create_rest_app(state, "test_token")
         async with TestClient(TestServer(app)) as client:
@@ -1383,18 +1383,18 @@ class TestRESTAPI:
         tmp_path,
         monkeypatch,
     ):
-        import worker_ai.oauth as oauth_mod
-        import worker_server.server as server_mod
+        import artel_ai.oauth as oauth_mod
+        import artel_server.server as server_mod
         from aiohttp.test_utils import TestClient, TestServer
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
-        saved_overlays: list[dict[str, object]] = []
+        saved_overlays: list[dict[str, ProviderConfig]] = []
         monkeypatch.setattr(
             server_mod,
             "save_provider_overlay",
             lambda overlay: saved_overlays.append(dict(overlay)),
         )
-        monkeypatch.setattr(server_mod, "load_config", lambda project_dir=None: WorkerConfig())
+        monkeypatch.setattr(server_mod, "load_config", lambda project_dir=None: ArtelConfig())
 
         state.provider_overlay["openai"] = ProviderConfig(
             api_key="sk-remote",
@@ -1439,18 +1439,18 @@ class TestRESTAPI:
         tmp_path,
         monkeypatch,
     ):
-        import worker_ai.oauth as oauth_mod
-        import worker_server.server as server_mod
+        import artel_ai.oauth as oauth_mod
+        import artel_server.server as server_mod
         from aiohttp.test_utils import TestClient, TestServer
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
-        saved_overlays: list[dict[str, object]] = []
+        saved_overlays: list[dict[str, ProviderConfig]] = []
         monkeypatch.setattr(
             server_mod,
             "save_provider_overlay",
             lambda overlay: saved_overlays.append(dict(overlay)),
         )
-        monkeypatch.setattr(server_mod, "load_config", lambda project_dir=None: WorkerConfig())
+        monkeypatch.setattr(server_mod, "load_config", lambda project_dir=None: ArtelConfig())
 
         state.provider_overlay["openai"] = ProviderConfig(
             api_key="forwarded_openai_key_123",
@@ -1498,7 +1498,7 @@ class TestRESTAPI:
 
     @pytest.mark.asyncio
     async def test_oauth_broker_start_and_complete(self, state, tmp_path, monkeypatch):
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
         from aiohttp.test_utils import TestClient, TestServer
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
@@ -1607,11 +1607,11 @@ class TestWebSocketProtocol:
                 [TextDelta(content="Hello!"), Done(usage=Usage(input_tokens=5, output_tokens=3))],
             ]
         )
-        config = WorkerConfig()
+        config = ArtelConfig()
         state = ServerState(config=config)
 
         # Pre-inject a mock session
-        from worker_core.agent import AgentSession
+        from artel_core.agent import AgentSession
 
         session = AgentSession(provider=provider, model="test", tools=[])
         state.sessions["test_session"] = session
@@ -1644,7 +1644,7 @@ class TestWebSocketProtocol:
 
     @pytest.mark.asyncio
     async def test_empty_message_error(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         state = ServerState(config=config)
 
         ws = FakeWebSocket()
@@ -1659,7 +1659,7 @@ class TestWebSocketProtocol:
 
     @pytest.mark.asyncio
     async def test_invalid_json(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         state = ServerState(config=config)
 
         ws = FakeWebSocket()
@@ -1674,7 +1674,7 @@ class TestWebSocketProtocol:
 
     @pytest.mark.asyncio
     async def test_unknown_type(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         state = ServerState(config=config)
 
         ws = FakeWebSocket()
@@ -1689,9 +1689,9 @@ class TestWebSocketProtocol:
 
     @pytest.mark.asyncio
     async def test_max_sessions_enforced_for_new_session(self):
-        from worker_core.agent import AgentSession
+        from artel_core.agent import AgentSession
 
-        config = WorkerConfig()
+        config = ArtelConfig()
         config.server.max_sessions = 1
         state = ServerState(config=config)
         state.sessions["existing"] = AgentSession(
@@ -1720,8 +1720,8 @@ class TestWebSocketProtocol:
 
     @pytest.mark.asyncio
     async def test_create_server_session_rehydrates_persisted_messages(self, tmp_path, monkeypatch):
-        import worker_server.server as server_mod
-        from worker_ai.models import Message, Role
+        import artel_server.server as server_mod
+        from artel_ai.models import Message, Role
 
         store = SessionStore(str(tmp_path / "sessions.db"))
         await store.open()
@@ -1743,7 +1743,7 @@ class TestWebSocketProtocol:
                 Message(role=Role.ASSISTANT, content="world"),
             )
 
-            config = WorkerConfig()
+            config = ArtelConfig()
             state = ServerState(
                 config=config,
                 default_project_dir=str(tmp_path),
@@ -1767,7 +1767,7 @@ class TestWebSocketProtocol:
                 session_id,
                 **_kwargs,
             ):
-                from worker_core.agent import AgentSession
+                from artel_core.agent import AgentSession
 
                 return AgentSession(
                     provider=runtime.provider,
@@ -1796,7 +1796,7 @@ class TestWebSocketProtocol:
 
     @pytest.mark.asyncio
     async def test_websocket_steer_queues_message_without_breaking_run(self):
-        from worker_core.agent import AgentSession
+        from artel_core.agent import AgentSession
 
         started = asyncio.Event()
         finish = asyncio.Event()
@@ -1807,10 +1807,11 @@ class TestWebSocketProtocol:
                 steered.append(message)
                 super().steer(message)
 
-            async def run(self, content: str):
-                from worker_core.agent import AgentEvent, AgentEventType
+            async def run(self, user_message: str, *, attachments=None):
+                from artel_core.agent import AgentEvent, AgentEventType
 
-                assert content == "hi"
+                del attachments
+                assert user_message == "hi"
                 started.set()
                 await finish.wait()
                 yield AgentEvent(type=AgentEventType.TEXT_DELTA, content="done")
@@ -1819,7 +1820,7 @@ class TestWebSocketProtocol:
                     usage=Usage(input_tokens=1, output_tokens=1),
                 )
 
-        state = ServerState(config=WorkerConfig())
+        state = ServerState(config=ArtelConfig())
         state.sessions["test_session"] = _SteerableSession(
             provider=MockProvider(),
             model="test",
@@ -1858,20 +1859,26 @@ class TestWebSocketProtocol:
         assert any(m.get("type") == "status" and m.get("state") == "steer queued" for m in messages)
 
     async def test_background_session_run_survives_client_disconnect(self):
-        from worker_core.agent import AgentSession
+        from artel_core.agent import AgentSession
 
         started = asyncio.Event()
         finish = asyncio.Event()
 
         class _DetachedSession(AgentSession):
-            async def run(self, content: str):
-                assert content == "hi"
+            async def run(self, user_message: str, *, attachments=None):
+                from artel_core.agent import AgentEvent, AgentEventType
+
+                del attachments
+                assert user_message == "hi"
                 started.set()
                 await finish.wait()
-                yield TextDelta(content="still running")
-                yield Done(usage=Usage(input_tokens=1, output_tokens=1))
+                yield AgentEvent(type=AgentEventType.TEXT_DELTA, content="still running")
+                yield AgentEvent(
+                    type=AgentEventType.DONE,
+                    usage=Usage(input_tokens=1, output_tokens=1),
+                )
 
-        state = ServerState(config=WorkerConfig())
+        state = ServerState(config=ArtelConfig())
         state.sessions["test_session"] = _DetachedSession(
             provider=MockProvider(),
             model="test",

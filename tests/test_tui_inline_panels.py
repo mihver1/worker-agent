@@ -3,23 +3,26 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-
-from worker_tui.app import InlineInputSubmitted
+from artel_tui.app import InlineInputSubmitted
 
 
 def _patch_tui_test_context(monkeypatch):
-    import worker_tui.app as tui_app
     from types import SimpleNamespace
+
+    import artel_tui.app as tui_app
 
     monkeypatch.setattr(
         tui_app,
         "load_config",
-        lambda _: SimpleNamespace(ui=SimpleNamespace(theme="dark"), keybindings=SimpleNamespace(bindings={})),
+        lambda _: SimpleNamespace(
+            ui=SimpleNamespace(theme="dark"),
+            keybindings=SimpleNamespace(bindings={}),
+        ),
     )
     monkeypatch.setattr(tui_app, "load_prompts", lambda _: {})
     monkeypatch.setattr(tui_app, "load_skills", lambda _: {})
     monkeypatch.setattr(
-        tui_app.WorkerApp,
+        tui_app.ArtelApp,
         "_apply_theme",
         lambda self, name: setattr(self, "_active_theme", name),
     )
@@ -27,15 +30,15 @@ def _patch_tui_test_context(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_remote_oauth_code_uses_inline_input(monkeypatch, tmp_path):
-    import worker_tui.app as tui_app
-    from worker_tui.app import WorkerApp
+    import artel_tui.app as tui_app
+    from artel_tui.app import ArtelApp
 
     _patch_tui_test_context(monkeypatch)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
-    monkeypatch.setattr("worker_tui.app.WorkerApp._init_local_session", AsyncMock())
+    monkeypatch.setattr("artel_tui.app.ArtelApp._init_local_session", AsyncMock())
 
-    app = WorkerApp(remote_url="ws://prod:7432", auth_token="tok")
+    app = ArtelApp(remote_url="ws://prod:7432", auth_token="tok")
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from worker_core.tool_display import (
+from artel_core.tool_display import (
     build_file_diff_display,
     format_tool_call_display,
     format_tool_result_display,

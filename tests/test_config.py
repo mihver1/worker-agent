@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import tomllib
 
-from worker_core.bootstrap import (
+from artel_core.bootstrap import (
     provider_requires_api_key,
     resolve_provider_runtime_config,
 )
-from worker_core.config import (
+from artel_core.config import (
+    ArtelConfig,
     ProviderConfig,
-    WorkerConfig,
     _deep_merge,
     generate_global_config,
     generate_project_config,
@@ -22,21 +22,21 @@ from worker_core.config import (
 
 class TestResolveModel:
     def test_provider_slash_model(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         config.agent.model = "openai/gpt-4.1"
         provider, model = resolve_model(config)
         assert provider == "openai"
         assert model == "gpt-4.1"
 
     def test_default_anthropic(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         config.agent.model = "claude-sonnet-4-20250514"
         provider, model = resolve_model(config)
         assert provider == "anthropic"
         assert model == "claude-sonnet-4-20250514"
 
     def test_deep_provider_id(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         config.agent.model = "google/gemini-2.5-pro"
         provider, model = resolve_model(config)
         assert provider == "google"
@@ -62,19 +62,19 @@ class TestDeepMerge:
 
 class TestProviderRuntimeConfig:
     def test_provider_section_name_used_when_type_omitted(self):
-        config = WorkerConfig(providers={"openai": ProviderConfig(api_key="sk-test")})
+        config = ArtelConfig(providers={"openai": ProviderConfig(api_key="sk-test")})
         provider_type, kwargs = resolve_provider_runtime_config(config, "openai")
         assert provider_type == "openai"
         assert kwargs == {}
 
     def test_openai_compat_alias_gets_default_base_url(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         provider_type, kwargs = resolve_provider_runtime_config(config, "groq")
         assert provider_type == "openai_compat"
         assert kwargs["base_url"] == "https://api.groq.com/openai/v1"
 
     def test_provider_config_overrides_runtime_settings(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "groq": ProviderConfig(
                     type="openai_compat",
@@ -91,16 +91,16 @@ class TestProviderRuntimeConfig:
         assert kwargs["api_version"] == "2025-01-01"
 
     def test_provider_requires_api_key_false_for_ollama(self):
-        assert provider_requires_api_key(WorkerConfig(), "ollama") is False
+        assert provider_requires_api_key(ArtelConfig(), "ollama") is False
 
     def test_ollama_uses_local_defaults_and_optional_env_key(self):
-        provider_type, kwargs = resolve_provider_runtime_config(WorkerConfig(), "ollama")
+        provider_type, kwargs = resolve_provider_runtime_config(ArtelConfig(), "ollama")
         assert provider_type == "ollama"
         assert kwargs["base_url"] == "http://localhost:11434/v1"
-        assert provider_requires_api_key(WorkerConfig(), "ollama") is False
+        assert provider_requires_api_key(ArtelConfig(), "ollama") is False
 
     def test_ollama_cloud_alias_uses_hosted_defaults(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
 
         for provider_name in ("ollama_cloud", "ollama-cloud"):
             provider_type, kwargs = resolve_provider_runtime_config(config, provider_name)
@@ -109,7 +109,7 @@ class TestProviderRuntimeConfig:
             assert provider_requires_api_key(config, provider_name) is True
 
     def test_lmstudio_aliases_are_keyless_with_local_defaults(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
 
         for provider_name in ("lmstudio", "lm-studio"):
             provider_type, kwargs = resolve_provider_runtime_config(config, provider_name)
@@ -118,7 +118,7 @@ class TestProviderRuntimeConfig:
             assert provider_requires_api_key(config, provider_name) is False
 
     def test_llamacpp_aliases_are_keyless_with_local_defaults(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
 
         for provider_name in ("llama.cpp", "llamacpp"):
             provider_type, kwargs = resolve_provider_runtime_config(config, provider_name)
@@ -127,7 +127,7 @@ class TestProviderRuntimeConfig:
             assert provider_requires_api_key(config, provider_name) is False
 
     def test_long_tail_openai_compat_specs_get_default_base_urls(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
 
         expected = {
             "302ai": "https://api.302.ai/v1",
@@ -146,7 +146,7 @@ class TestProviderRuntimeConfig:
             assert provider_requires_api_key(config, provider_name) is True
 
     def test_minimax_uses_anthropic_runtime_defaults(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
 
         provider_type, kwargs = resolve_provider_runtime_config(config, "minimax")
 
@@ -155,7 +155,7 @@ class TestProviderRuntimeConfig:
         assert provider_requires_api_key(config, "minimax") is True
 
     def test_openai_compat_aliases_resolve_to_canonical_specs(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
 
         expected = {
             "togetherai": "https://api.together.xyz/v1",
@@ -173,10 +173,10 @@ class TestProviderRuntimeConfig:
             assert kwargs["base_url"] == base_url
 
     def test_provider_requires_api_key_true_for_openai_compat_alias(self):
-        assert provider_requires_api_key(WorkerConfig(), "groq") is True
+        assert provider_requires_api_key(ArtelConfig(), "groq") is True
 
     def test_anthropic_runtime_options_are_passthrough(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "anthropic": ProviderConfig(
                     options={
@@ -194,7 +194,7 @@ class TestProviderRuntimeConfig:
         assert kwargs["fine_grained_tool_streaming"] is True
 
     def test_google_vertex_runtime_settings_are_passthrough(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "google_vertex": ProviderConfig(
                     project="demo-project",
@@ -216,13 +216,13 @@ class TestProviderRuntimeConfig:
         assert provider_requires_api_key(config, "google_vertex") is False
 
     def test_google_vertex_alias_resolves_to_canonical_spec(self):
-        provider_type, kwargs = resolve_provider_runtime_config(WorkerConfig(), "google-vertex")
+        provider_type, kwargs = resolve_provider_runtime_config(ArtelConfig(), "google-vertex")
         assert provider_type == "google_vertex"
         assert kwargs["base_url"] == "https://{location}-aiplatform.googleapis.com"
-        assert provider_requires_api_key(WorkerConfig(), "google-vertex") is False
+        assert provider_requires_api_key(ArtelConfig(), "google-vertex") is False
 
     def test_vertex_anthropic_runtime_settings_are_passthrough(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "vertex_anthropic": ProviderConfig(
                     project="demo-project",
@@ -245,15 +245,15 @@ class TestProviderRuntimeConfig:
 
     def test_vertex_anthropic_alias_resolves_to_canonical_spec(self):
         provider_type, kwargs = resolve_provider_runtime_config(
-            WorkerConfig(),
+            ArtelConfig(),
             "anthropic_vertex",
         )
         assert provider_type == "vertex_anthropic"
         assert kwargs["base_url"] == "https://{location}-aiplatform.googleapis.com"
-        assert provider_requires_api_key(WorkerConfig(), "anthropic_vertex") is False
+        assert provider_requires_api_key(ArtelConfig(), "anthropic_vertex") is False
 
     def test_azure_openai_runtime_settings_are_passthrough(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "azure_openai": ProviderConfig(
                     base_url="https://demo.openai.azure.com",
@@ -270,7 +270,7 @@ class TestProviderRuntimeConfig:
         assert provider_requires_api_key(config, "azure_openai") is True
 
     def test_bedrock_runtime_settings_are_passthrough(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "bedrock": ProviderConfig(
                     region="us-east-1",
@@ -295,13 +295,13 @@ class TestProviderRuntimeConfig:
         assert provider_requires_api_key(config, "bedrock") is False
 
     def test_github_copilot_runtime_uses_builtin_defaults(self):
-        provider_type, kwargs = resolve_provider_runtime_config(WorkerConfig(), "github_copilot")
+        provider_type, kwargs = resolve_provider_runtime_config(ArtelConfig(), "github_copilot")
         assert provider_type == "github_copilot"
         assert kwargs["base_url"] == "https://api.githubcopilot.com"
-        assert provider_requires_api_key(WorkerConfig(), "github_copilot") is True
+        assert provider_requires_api_key(ArtelConfig(), "github_copilot") is True
 
     def test_github_copilot_enterprise_alias_resolves_canonical_config(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "github_copilot_enterprise": ProviderConfig(
                     options={"github_host": "octo.ghe.com"},
@@ -318,7 +318,7 @@ class TestProviderRuntimeConfig:
         assert provider_requires_api_key(config, "github-copilot-enterprise") is True
 
     def test_provider_runtime_config_includes_headers_timeout_and_options(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "openrouter": ProviderConfig(
                     headers={"HTTP-Referer": "https://example.com"},
@@ -335,7 +335,7 @@ class TestProviderRuntimeConfig:
         assert kwargs["include_usage"] is True
 
     def test_provider_requires_api_key_respects_override(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "localproxy": ProviderConfig(
                     type="openai_compat",
@@ -350,7 +350,7 @@ class TestProviderRuntimeConfig:
 class TestLoadConfig:
     def test_default_config(self, tmp_path, monkeypatch):
         """Loading from a dir with no config files → defaults."""
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "config.toml")
         monkeypatch.setattr(cfg_mod, "LEGACY_GLOBAL_CONFIG", tmp_path / "legacy-config.toml")
@@ -362,7 +362,7 @@ class TestLoadConfig:
 
     def test_project_overlay(self, tmp_path, monkeypatch):
         """Project config merges over global defaults."""
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "global.toml")
         monkeypatch.setattr(cfg_mod, "LEGACY_GLOBAL_CONFIG", tmp_path / "legacy-global.toml")
@@ -378,16 +378,16 @@ class TestLoadConfig:
         # Other fields stay at defaults
         assert config.permissions.bash == "ask"
 
-    def test_project_overlay_falls_back_to_legacy_worker_dir(self, tmp_path, monkeypatch):
-        """Legacy .worker/config.toml is still readable until migration runs."""
-        import worker_core.config as cfg_mod
+    def test_project_overlay_uses_artel_dir(self, tmp_path, monkeypatch):
+        """Project .artel/config.toml is readable."""
+        import artel_core.config as cfg_mod
 
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "global.toml")
         monkeypatch.setattr(cfg_mod, "LEGACY_GLOBAL_CONFIG", tmp_path / "legacy-global.toml")
 
-        worker_dir = tmp_path / ".worker"
-        worker_dir.mkdir()
-        (worker_dir / "config.toml").write_text(
+        artel_dir = tmp_path / ".artel"
+        artel_dir.mkdir()
+        (artel_dir / "config.toml").write_text(
             '[agent]\nmodel = "openai/gpt-4.1-mini"\n',
             encoding="utf-8",
         )
@@ -398,7 +398,7 @@ class TestLoadConfig:
 
 class TestGenerateConfig:
     def test_generate_global(self, tmp_path, monkeypatch):
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "config.toml")
@@ -417,7 +417,7 @@ class TestGenerateConfig:
 
     def test_no_overwrite(self, tmp_path, monkeypatch):
         """Generating global config shouldn't overwrite existing."""
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "config.toml")
@@ -428,7 +428,7 @@ class TestGenerateConfig:
 
 class TestPersistServerAuthToken:
     def test_creates_global_config_when_missing(self, tmp_path, monkeypatch):
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "config.toml")
@@ -442,7 +442,7 @@ class TestPersistServerAuthToken:
         assert load_config("/nonexistent/path").server.auth_token == "artel_first_run_token"
 
     def test_updates_global_config_when_no_project_override(self, tmp_path, monkeypatch):
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", tmp_path)
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", tmp_path / "config.toml")
@@ -457,7 +457,7 @@ class TestPersistServerAuthToken:
         assert load_config("/nonexistent/path").server.auth_token == "artel_test_token"
 
     def test_updates_project_config_when_it_explicitly_owns_auth_token(self, tmp_path, monkeypatch):
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         global_dir = tmp_path / "global"
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", global_dir)
@@ -477,22 +477,17 @@ class TestPersistServerAuthToken:
         assert saved["server"]["auth_token"] == "artel_project_token"
         assert load_config(str(project_dir)).server.auth_token == "artel_project_token"
 
-    def test_updates_artel_global_config_even_when_only_legacy_worker_config_exists(
-        self,
-        tmp_path,
-        monkeypatch,
-    ):
-        import worker_core.config as cfg_mod
+    def test_updates_artel_global_config(self, tmp_path, monkeypatch):
+        import artel_core.config as cfg_mod
 
         artel_dir = tmp_path / "artel"
-        legacy_dir = tmp_path / "worker"
         monkeypatch.setattr(cfg_mod, "CONFIG_DIR", artel_dir)
         monkeypatch.setattr(cfg_mod, "GLOBAL_CONFIG", artel_dir / "config.toml")
-        monkeypatch.setattr(cfg_mod, "LEGACY_CONFIG_DIR", legacy_dir)
-        monkeypatch.setattr(cfg_mod, "LEGACY_GLOBAL_CONFIG", legacy_dir / "config.toml")
+        monkeypatch.setattr(cfg_mod, "LEGACY_CONFIG_DIR", artel_dir)
+        monkeypatch.setattr(cfg_mod, "LEGACY_GLOBAL_CONFIG", artel_dir / "config.toml")
 
-        legacy_dir.mkdir(parents=True)
-        (legacy_dir / "config.toml").write_text(
+        artel_dir.mkdir(parents=True)
+        (artel_dir / "config.toml").write_text(
             '[agent]\nmodel = "openai/gpt-4.1"\n',
             encoding="utf-8",
         )
@@ -505,9 +500,9 @@ class TestPersistServerAuthToken:
         assert saved["server"]["auth_token"] == "artel_migrated_token"
 
 
-class TestWorkerConfigDefaults:
+class TestArtelConfigDefaults:
     def test_all_defaults(self):
-        config = WorkerConfig()
+        config = ArtelConfig()
         assert config.agent.max_turns == 50
         assert config.server.host == "127.0.0.1"
         assert config.sessions.auto_compact is True

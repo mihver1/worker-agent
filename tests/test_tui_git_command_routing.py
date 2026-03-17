@@ -5,9 +5,9 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_handle_command_routes_git_aliases(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     seen: list[tuple[str, str]] = []
 
     async def fake_cmd_git(cmd: str, arg: str) -> None:

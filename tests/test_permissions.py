@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from worker_core.config import PermissionsConfig
-from worker_core.permissions import PermissionPolicy
+from artel_core.config import PermissionsConfig
+from artel_core.permissions import PermissionPolicy
 
 
 @pytest.mark.asyncio

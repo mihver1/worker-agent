@@ -2,7 +2,7 @@ from __future__ import annotations
 
 
 def test_orchestration_module_reexports_delegation_surface() -> None:
-    from worker_core.orchestration import (
+    from artel_core.orchestration import (
         OrchestrationRegistry,
         OrchestrationRun,
         OrchestrationService,

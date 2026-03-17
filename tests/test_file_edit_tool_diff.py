@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import pytest
-from worker_core.execution import ToolExecutionContext, bind_tool_execution_context
-from worker_core.tools.builtins import EditTool, WriteTool
+from artel_core.execution import ToolExecutionContext, bind_tool_execution_context
+from artel_core.tools.builtins import EditTool, WriteTool
 
 
 class _SessionStub:

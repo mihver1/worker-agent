@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import pytest
-from worker_ai.models import Done, ToolCallDelta, Usage
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.rules import add_rule
-from worker_core.tools.builtins import BashTool
+from artel_ai.models import Done, ToolCallDelta, Usage
+from artel_core.agent import AgentEventType, AgentSession
+from artel_core.rules import add_rule
+from artel_core.tools.builtins import BashTool
 
 
 class _Provider:
@@ -24,8 +24,8 @@ class _Provider:
 
 @pytest.mark.asyncio
 async def test_local_session_rule_disable_override_allows_tool(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_tui.app import WorkerApp
+    from artel_core import config as cfg_mod
+    from artel_tui.app import ArtelApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -40,7 +40,7 @@ async def test_local_session_rule_disable_override_allows_tool(monkeypatch, tmp_
         provider=provider, model="test", tools=[BashTool(str(tmp_path))], project_dir=str(tmp_path)
     )
 
-    app = WorkerApp()
+    app = ArtelApp()
     app._session = session
     seen: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen.append((content, role))  # type: ignore[method-assign]
@@ -56,8 +56,8 @@ async def test_local_session_rule_disable_override_allows_tool(monkeypatch, tmp_
 
 @pytest.mark.asyncio
 async def test_local_session_rule_reset_restores_enforcement(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_tui.app import WorkerApp
+    from artel_core import config as cfg_mod
+    from artel_tui.app import ArtelApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
@@ -72,7 +72,7 @@ async def test_local_session_rule_reset_restores_enforcement(monkeypatch, tmp_pa
         provider=provider, model="test", tools=[BashTool(str(tmp_path))], project_dir=str(tmp_path)
     )
 
-    app = WorkerApp()
+    app = ArtelApp()
     app._session = session
     app._add_message = lambda content, role="assistant": None  # type: ignore[method-assign]
 

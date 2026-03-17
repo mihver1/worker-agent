@@ -8,7 +8,7 @@ import asyncio
 def test_kill_managed_server_processes_includes_registry_pid_when_discovery_empty(
     tmp_path, monkeypatch
 ):
-    import worker_tui.local_server as local_server_mod
+    import artel_tui.local_server as local_server_mod
 
     killed: list[tuple[int, int]] = []
     monkeypatch.setattr(local_server_mod, "_managed_server_processes", lambda project_dir: [])
@@ -21,7 +21,7 @@ def test_kill_managed_server_processes_includes_registry_pid_when_discovery_empt
 
 
 async def _run_stop(tmp_path, monkeypatch):
-    import worker_tui.local_server as local_server_mod
+    import artel_tui.local_server as local_server_mod
 
     existing = local_server_mod.LocalServerHandle(
         remote_url="ws://127.0.0.1:9011",

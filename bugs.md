@@ -19,12 +19,12 @@
 ## Что уже видно по коду
 
 ### Основные места
-- `packages/worker-tui/src/worker_tui/app.py`
+- `packages/artel-tui/src/artel_tui/app.py`
   - основной ввод сейчас сделан через `Input`, а не через multiline-виджет
   - сообщения агента рендерятся через `MessageWidget(Static)` + `Markdown/Text`
 - `tests/test_tui_phase5.py`
   - тут уже есть покрытие для фокуса инпута, автокомплита и части TUI поведения
-- `packages/worker-ai/src/worker_ai/models.py`
+- `packages/artel-ai/src/artel_ai/models.py`
   - сообщения пока текстовые, без полноценной модели вложений / изображений
 
 Это значит:
@@ -47,7 +47,7 @@
    - copy последнего assistant message
    - copy длинного markdown ответа
    - copy code block без потери форматирования
-3. В `packages/worker-tui/src/worker_tui/app.py` добавить модель “active/focused message”:
+3. В `packages/artel-tui/src/artel_tui/app.py` добавить модель “active/focused message”:
    - хранить id/индекс текущего сообщения
    - дать навигацию по сообщениям
 4. Добавить action для копирования текста сообщения в clipboard:
@@ -77,7 +77,7 @@
 
 ## Пошаговый план
 1. Составить список всех текущих хоткеев:
-   - из `WorkerApp.BINDINGS`
+   - из `ArtelApp.BINDINGS`
    - из кастомных keybindings в config
    - из ручной обработки `on_key`
 2. Разделить хоткеи на 2 класса:
@@ -154,7 +154,7 @@
 1. Определить MVP:
    - вариант A: вставка изображения как attachment
    - вариант B: сначала сохранять изображение в файл и прикладывать как path/reference
-2. Расширить доменную модель сообщений в `packages/worker-ai/src/worker_ai/models.py`:
+2. Расширить доменную модель сообщений в `packages/artel-ai/src/artel_ai/models.py`:
    - добавить attachments / content parts
    - не ограничиваться только `content: str`
 3. Обновить provider adapters:
@@ -195,7 +195,7 @@
    - multiline paste сохраняет переносы строк
    - ручной ввод позволяет вставить newline
    - отправка multiline сообщения работает корректно
-2. Заменить основной `#input-bar` в `packages/worker-tui/src/worker_tui/app.py`:
+2. Заменить основной `#input-bar` в `packages/artel-tui/src/artel_tui/app.py`:
    - с `Input(...)`
    - на `TextArea` или отдельный multiline composer widget
 3. Переопределить UX отправки:

@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from worker_ai.models import ImageAttachment, Message, Role, ToolCall, ToolResult
-from worker_core.sessions import SessionStore
+from artel_ai.models import ImageAttachment, Message, Role, ToolCall, ToolResult
+from artel_core.sessions import SessionStore
 
 
 @pytest.fixture

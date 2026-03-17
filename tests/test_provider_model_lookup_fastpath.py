@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import pytest
-from worker_core.config import ProviderConfig, ProviderModelConfig, WorkerConfig
+from artel_core.config import ArtelConfig, ProviderConfig, ProviderModelConfig
 
 
 class TestEffectiveModelLookupFastPath:
     @pytest.fixture(autouse=True)
     def _reset_catalog(self):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         ModelsCatalog._data = None
         yield
@@ -15,8 +15,8 @@ class TestEffectiveModelLookupFastPath:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_fast_path_uses_catalog_entry(self, monkeypatch):
-        import worker_core.provider_resolver as resolver_mod
-        from worker_ai.models_catalog import ModelsCatalog
+        import artel_core.provider_resolver as resolver_mod
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return {
@@ -46,7 +46,7 @@ class TestEffectiveModelLookupFastPath:
             resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build
         )
 
-        model = await resolver_mod.get_effective_model_info(WorkerConfig(), "openai", "gpt-fast")
+        model = await resolver_mod.get_effective_model_info(ArtelConfig(), "openai", "gpt-fast")
 
         assert model is not None
         assert model.provider == "openai"
@@ -59,8 +59,8 @@ class TestEffectiveModelLookupFastPath:
         self,
         monkeypatch,
     ):
-        import worker_core.provider_resolver as resolver_mod
-        from worker_ai.models_catalog import ModelsCatalog
+        import artel_core.provider_resolver as resolver_mod
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return {
@@ -90,7 +90,7 @@ class TestEffectiveModelLookupFastPath:
             resolver_mod, "get_effective_provider_catalog", _unexpected_catalog_build
         )
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "openai": ProviderConfig(
                     models={
@@ -114,10 +114,10 @@ class TestEffectiveModelLookupFastPath:
         self,
         monkeypatch,
     ):
-        import worker_core.provider_resolver as resolver_mod
-        from worker_ai.models import ModelInfo
-        from worker_ai.models_catalog import ModelsCatalog
-        from worker_ai.providers.lmstudio import LMStudioProvider
+        import artel_core.provider_resolver as resolver_mod
+        from artel_ai.models import ModelInfo
+        from artel_ai.models_catalog import ModelsCatalog
+        from artel_ai.providers.lmstudio import LMStudioProvider
 
         async def _fake_fetch(cls):
             return {}
@@ -144,7 +144,7 @@ class TestEffectiveModelLookupFastPath:
         )
 
         model = await resolver_mod.get_effective_model_info(
-            WorkerConfig(), "lm-studio", "qwen-fast"
+            ArtelConfig(), "lm-studio", "qwen-fast"
         )
 
         assert model is not None

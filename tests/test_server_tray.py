@@ -8,13 +8,13 @@ from types import SimpleNamespace
 
 
 def test_tray_registry_path_uses_artel_dir(tmp_path):
-    from worker_tui.server_tray import tray_registry_path
+    from artel_tui.server_tray import tray_registry_path
 
     assert tray_registry_path(str(tmp_path)) == tmp_path / ".artel" / "server-tray.json"
 
 
 def test_launch_agent_plist_path_uses_launchagents_dir(monkeypatch, tmp_path):
-    import worker_tui.server_tray as tray_mod
+    import artel_tui.server_tray as tray_mod
 
     monkeypatch.setattr(tray_mod.Path, "home", lambda: tmp_path)
     assert (
@@ -24,7 +24,7 @@ def test_launch_agent_plist_path_uses_launchagents_dir(monkeypatch, tmp_path):
 
 
 def test_ensure_server_tray_bootstraps_launch_agent_on_macos(tmp_path, monkeypatch):
-    import worker_tui.server_tray as tray_mod
+    import artel_tui.server_tray as tray_mod
 
     monkeypatch.setattr(tray_mod.sys, "platform", "darwin")
     monkeypatch.delenv(tray_mod._ARTEL_SERVER_TRAY_ACTIVE_ENV, raising=False)
@@ -55,7 +55,7 @@ def test_ensure_server_tray_bootstraps_launch_agent_on_macos(tmp_path, monkeypat
 
 
 def test_ensure_server_tray_skips_start_when_server_not_running(tmp_path, monkeypatch):
-    import worker_tui.server_tray as tray_mod
+    import artel_tui.server_tray as tray_mod
 
     monkeypatch.setattr(tray_mod.sys, "platform", "darwin")
     monkeypatch.delenv(tray_mod._ARTEL_SERVER_TRAY_ACTIVE_ENV, raising=False)
@@ -75,7 +75,7 @@ def test_ensure_server_tray_skips_start_when_server_not_running(tmp_path, monkey
 
 
 def test_stop_server_tray_boots_out_and_removes_registry(tmp_path, monkeypatch):
-    import worker_tui.server_tray as tray_mod
+    import artel_tui.server_tray as tray_mod
 
     monkeypatch.setattr(tray_mod.sys, "platform", "darwin")
     monkeypatch.setattr(tray_mod.Path, "home", lambda: tmp_path)
@@ -102,18 +102,18 @@ def test_stop_server_tray_boots_out_and_removes_registry(tmp_path, monkeypatch):
 
 
 def test_server_status_text_reports_duplicate_processes(tmp_path, monkeypatch):
-    import worker_tui.server_tray as tray_mod
+    import artel_tui.server_tray as tray_mod
 
     monkeypatch.setattr(
-        "worker_tui.local_server._managed_server_processes", lambda project_dir: [111, 222]
+        "artel_tui.local_server._managed_server_processes", lambda project_dir: [111, 222]
     )
-    monkeypatch.setattr("worker_tui.local_server._load_registry", lambda project_dir: None)
+    monkeypatch.setattr("artel_tui.local_server._load_registry", lambda project_dir: None)
 
     assert tray_mod._server_status_text(str(tmp_path)) == "Server: duplicate processes detected (2)"
 
 
 def test_clean_duplicate_managed_servers_kills_all_but_one(tmp_path, monkeypatch):
-    import worker_tui.local_server as local_server_mod
+    import artel_tui.local_server as local_server_mod
 
     monkeypatch.setattr(
         local_server_mod, "_managed_server_processes", lambda project_dir: [100, 200, 300]
@@ -141,7 +141,7 @@ def test_clean_duplicate_managed_servers_kills_all_but_one(tmp_path, monkeypatch
 
 
 def test_ensure_managed_local_server_bootstraps_tray_on_macos(tmp_path, monkeypatch):
-    import worker_tui.local_server as local_server_mod
+    import artel_tui.local_server as local_server_mod
 
     config = SimpleNamespace(server=SimpleNamespace(auth_token="artel_configured", port=7432))
     started_trays: list[str] = []

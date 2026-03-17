@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from worker_core.session_rewind import collect_last_ai_changed_paths
+from artel_core.session_rewind import collect_last_ai_changed_paths
 
 
 class _Role:

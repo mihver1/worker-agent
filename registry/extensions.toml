@@ -3,29 +3,29 @@
 # ═══════════════════════════════════════════════════════════════
 
 [[extensions]]
-name = "worker-ext-subagents"
+name = "artel-ext-subagents"
 description = "Subagent orchestration for parallel task execution"
-repo = "git+https://github.com/mihver1/worker-ext-subagents.git"
+repo = "git+https://github.com/mihver1/artel-ext-subagents.git"
 tags = ["agent", "parallel", "orchestration"]
 author = "mihver1"
 
 [[extensions]]
-name = "worker-ext-worktree"
+name = "artel-ext-worktree"
 description = "Git worktree slash commands for parallel sessions"
-repo = "git+https://github.com/mihver1/worker-ext-worktree.git"
+repo = "git+https://github.com/mihver1/artel-ext-worktree.git"
 tags = ["git", "worktree"]
 author = "mihver1"
 
 [[extensions]]
-name = "worker-ext-mcp"
+name = "artel-ext-mcp"
 description = "Model Context Protocol (MCP) client — connect to MCP servers for tools and resources"
-repo = "git+https://github.com/mihver1/worker-ext-mcp.git"
+repo = "git+https://github.com/mihver1/artel-ext-mcp.git"
 tags = ["mcp", "tools", "integration"]
 author = "mihver1"
 
 [[extensions]]
 name = "artel-ext-example"
 description = "Example Artel extension — demonstrates tools and hooks"
-repo = "git+https://github.com/mihver1/worker-agent.git#subdirectory=extensions/worker-ext-example"
+repo = "git+https://github.com/mihver1/artel.git#subdirectory=extensions/artel-ext-example"
 tags = ["example", "demo"]
 author = "mihver1"

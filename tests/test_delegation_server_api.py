@@ -3,9 +3,9 @@ from __future__ import annotations
 import asyncio
 
 from aiohttp.test_utils import TestClient, TestServer
-from worker_core.config import WorkerConfig
-from worker_core.delegation.registry import get_registry, reset_registry
-from worker_server.server import ServerState, _create_rest_app
+from artel_core.config import ArtelConfig
+from artel_core.delegation.registry import get_registry, reset_registry
+from artel_server.server import ServerState, _create_rest_app
 
 
 async def test_server_lists_gets_and_cancels_delegates() -> None:
@@ -30,7 +30,7 @@ async def test_server_lists_gets_and_cancels_delegates() -> None:
 
     registry.bind_task(run.id, asyncio.create_task(_running_job()))
 
-    state = ServerState(config=WorkerConfig(), default_project_dir="/tmp/project")
+    state = ServerState(config=ArtelConfig(), default_project_dir="/tmp/project")
     app = _create_rest_app(state, "test_token")
 
     async with TestClient(TestServer(app)) as client:

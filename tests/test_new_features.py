@@ -5,11 +5,11 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from artel_ai.models import Done, TextDelta, Usage
+from artel_ai.oauth import OAuthToken, TokenStore
+from artel_core.agent import AgentSession
+from artel_core.extensions import Extension, HookDispatcher, hook
 from conftest import MockProvider
-from worker_ai.models import Done, TextDelta, Usage
-from worker_ai.oauth import OAuthToken, TokenStore
-from worker_core.agent import AgentSession
-from worker_core.extensions import Extension, HookDispatcher, hook
 
 # ── AGENTS.md loading ─────────────────────────────────────────────
 
@@ -17,7 +17,7 @@ from worker_core.extensions import Extension, HookDispatcher, hook
 class TestAgentsMdLoading:
     @pytest.fixture(autouse=True)
     def _isolate_global_context_files(self, tmp_path, monkeypatch):
-        import worker_core.config as cfg_mod
+        import artel_core.config as cfg_mod
 
         global_dir = tmp_path / "global"
         monkeypatch.setattr(cfg_mod, "GLOBAL_AGENTS_FILE", global_dir / "AGENTS.md")
@@ -77,10 +77,10 @@ class TestAgentsMdLoading:
         # Empty content should not add extra sections
         assert prompt.count("\n\n") == 0 or "Artel" in prompt
 
-    def test_system_prompt_legacy_worker_agents_md_still_loads(self, tmp_path):
-        worker_dir = tmp_path / ".worker"
-        worker_dir.mkdir()
-        (worker_dir / "AGENTS.md").write_text("Legacy rule: keep compatibility.\n")
+    def test_system_prompt_legacy_artel_agents_md_still_loads(self, tmp_path):
+        artel_dir = tmp_path / ".artel"
+        artel_dir.mkdir()
+        (artel_dir / "AGENTS.md").write_text("Legacy rule: keep compatibility.\n")
 
         prompt = AgentSession._build_system_prompt("", str(tmp_path))
         assert "Legacy rule: keep compatibility." in prompt
@@ -171,8 +171,8 @@ class TestHookDispatcher:
 class TestOAuthFallback:
     @pytest.mark.asyncio
     async def test_oauth_token_used_when_no_key(self, tmp_path, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
@@ -185,19 +185,19 @@ class TestOAuthFallback:
             )
         )
 
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
 
-        config = WorkerConfig()
+        config = ArtelConfig()
         key, auth_type = await _resolve_api_key(config, "anthropic")
         assert key == "oauth_token_123"
         assert auth_type == "oauth"
 
     @pytest.mark.asyncio
     async def test_config_key_takes_priority(self, tmp_path, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import ProviderConfig, WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig, ProviderConfig
 
         store = TokenStore(path=tmp_path / "auth.json")
         store.save(
@@ -208,20 +208,20 @@ class TestOAuthFallback:
             )
         )
 
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
 
-        config = WorkerConfig(providers={"anthropic": ProviderConfig(api_key="sk-config-key")})
+        config = ArtelConfig(providers={"anthropic": ProviderConfig(api_key="sk-config-key")})
         key, auth_type = await _resolve_api_key(config, "anthropic")
         assert key == "sk-config-key"
         assert auth_type == "api"
 
     @pytest.mark.asyncio
     async def test_env_key_takes_priority_over_oauth(self, tmp_path, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         store = TokenStore(path=tmp_path / "auth.json")
         store.save(
@@ -232,20 +232,20 @@ class TestOAuthFallback:
             )
         )
 
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-env-key")
 
-        config = WorkerConfig()
+        config = ArtelConfig()
         key, auth_type = await _resolve_api_key(config, "anthropic")
         assert key == "sk-env-key"
         assert auth_type == "api"
 
     @pytest.mark.asyncio
     async def test_expired_oauth_token_is_refreshed(self, tmp_path, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         store = TokenStore(path=tmp_path / "auth.json")
         store.save(
@@ -257,7 +257,7 @@ class TestOAuthFallback:
             )
         )
 
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -273,7 +273,7 @@ class TestOAuthFallback:
 
         monkeypatch.setattr(oauth_mod.AnthropicOAuth, "refresh", fake_refresh)
 
-        key, auth_type = await _resolve_api_key(WorkerConfig(), "anthropic")
+        key, auth_type = await _resolve_api_key(ArtelConfig(), "anthropic")
 
         assert key == "refreshed_token"
         assert auth_type == "oauth"
@@ -288,8 +288,8 @@ class TestOAuthFallback:
         tmp_path,
         monkeypatch,
     ):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         store = TokenStore(path=tmp_path / "auth.json")
         store.save(
@@ -300,24 +300,24 @@ class TestOAuthFallback:
             )
         )
 
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         monkeypatch.setattr(oauth_mod, "_DEFAULT_AUTH_PATH", tmp_path / "auth.json")
         monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
 
-        key, auth_type = await _resolve_api_key(WorkerConfig(), "kimi")
+        key, auth_type = await _resolve_api_key(ArtelConfig(), "kimi")
 
         assert key is None
         assert auth_type == "api"
 
     @pytest.mark.asyncio
     async def test_custom_provider_env_list_is_used(self, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import ProviderConfig, WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig, ProviderConfig
 
         monkeypatch.setenv("CUSTOM_OPENAI_API_KEY", "env_token_123")
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "localproxy": ProviderConfig(
                     type="openai_compat",
@@ -331,42 +331,42 @@ class TestOAuthFallback:
 
     @pytest.mark.asyncio
     async def test_ollama_cloud_reads_api_key_from_builtin_env(self, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         monkeypatch.setenv("OLLAMA_API_KEY", "ollama_env_token")
 
-        key, auth_type = await _resolve_api_key(WorkerConfig(), "ollama-cloud")
+        key, auth_type = await _resolve_api_key(ArtelConfig(), "ollama-cloud")
         assert key == "ollama_env_token"
         assert auth_type == "api"
 
     @pytest.mark.asyncio
     async def test_zai_alias_reads_api_key_from_builtin_env(self, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         monkeypatch.setenv("ZHIPU_API_KEY", "zhipu_env_token")
 
-        key, auth_type = await _resolve_api_key(WorkerConfig(), "z.ai")
+        key, auth_type = await _resolve_api_key(ArtelConfig(), "z.ai")
         assert key == "zhipu_env_token"
         assert auth_type == "api"
 
     @pytest.mark.asyncio
     async def test_minimax_reads_api_key_from_builtin_env(self, monkeypatch):
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         monkeypatch.setenv("MINIMAX_API_KEY", "minimax_env_token")
 
-        key, auth_type = await _resolve_api_key(WorkerConfig(), "minimax")
+        key, auth_type = await _resolve_api_key(ArtelConfig(), "minimax")
         assert key == "minimax_env_token"
         assert auth_type == "api"
 
     @pytest.mark.asyncio
     async def test_github_copilot_reads_token_from_config_file(self, tmp_path, monkeypatch):
-        import worker_ai.oauth as oauth_mod
-        import worker_core.cli as cli_mod
-        from worker_core.config import ProviderConfig, WorkerConfig
+        import artel_ai.oauth as oauth_mod
+        import artel_core.cli as cli_mod
+        from artel_core.config import ArtelConfig, ProviderConfig
 
         token_path = tmp_path / ".copilot" / "config.json"
         token_path.parent.mkdir(parents=True)
@@ -388,7 +388,7 @@ class TestOAuthFallback:
             _unexpected_gh_cli,
         )
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "github_copilot_enterprise": ProviderConfig(
                     options={"github_host": "octo.ghe.com"},
@@ -403,9 +403,9 @@ class TestOAuthFallback:
 
     @pytest.mark.asyncio
     async def test_github_copilot_gh_cli_fallback_uses_resolved_host(self, monkeypatch):
-        import worker_ai.oauth as oauth_mod
-        import worker_core.cli as cli_mod
-        from worker_core.config import ProviderConfig, WorkerConfig
+        import artel_ai.oauth as oauth_mod
+        import artel_core.cli as cli_mod
+        from artel_core.config import ArtelConfig, ProviderConfig
 
         monkeypatch.delenv("COPILOT_GITHUB_TOKEN", raising=False)
         monkeypatch.delenv("GH_TOKEN", raising=False)
@@ -428,7 +428,7 @@ class TestOAuthFallback:
             _fake_gh_cli,
         )
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "github_copilot_enterprise": ProviderConfig(
                     options={"github_host": "octo.ghe.com"},
@@ -446,19 +446,19 @@ class TestOAuthFallback:
         assert seen_hosts == ["octo.ghe.com"]
 
     @pytest.mark.asyncio
-    async def test_github_copilot_worker_oauth_token_takes_priority_over_gh_fallback(
+    async def test_github_copilot_artel_oauth_token_takes_priority_over_gh_fallback(
         self,
         tmp_path,
         monkeypatch,
     ):
-        import worker_ai.oauth as oauth_mod
-        from worker_core.cli import _resolve_api_key
-        from worker_core.config import WorkerConfig
+        import artel_ai.oauth as oauth_mod
+        from artel_core.cli import _resolve_api_key
+        from artel_core.config import ArtelConfig
 
         store = TokenStore(path=tmp_path / "auth.json")
         store.save(
             OAuthToken(
-                access_token="worker_oauth_token",
+                access_token="artel_oauth_token",
                 provider="github_copilot",
             )
         )
@@ -473,9 +473,9 @@ class TestOAuthFallback:
             lambda host: "gho_from_file",
         )
 
-        key, auth_type = await _resolve_api_key(WorkerConfig(), "github_copilot")
+        key, auth_type = await _resolve_api_key(ArtelConfig(), "github_copilot")
 
-        assert key == "worker_oauth_token"
+        assert key == "artel_oauth_token"
         assert auth_type == "oauth"
 
 
@@ -529,7 +529,7 @@ class TestModelsCatalog:
     @pytest.fixture(autouse=True)
     def _reset_catalog(self):
         """Reset in-memory cache before each test."""
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         ModelsCatalog._data = None
         yield
@@ -537,7 +537,7 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_parse_and_filter(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
@@ -559,7 +559,7 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_list_models_by_provider(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
@@ -574,7 +574,7 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_list_models_all(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
@@ -586,7 +586,7 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_get_model(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
@@ -602,7 +602,7 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_get_model_not_found(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
@@ -614,7 +614,7 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_list_providers(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_API_RESPONSE
@@ -627,8 +627,8 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_cache_file(self, tmp_path, monkeypatch):
-        import worker_ai.models_catalog as cat_mod
-        from worker_ai.models_catalog import ModelsCatalog
+        import artel_ai.models_catalog as cat_mod
+        from artel_ai.models_catalog import ModelsCatalog
 
         cache_path = tmp_path / "models.json"
         monkeypatch.setattr(cat_mod, "_CACHE_DIR", tmp_path)
@@ -659,8 +659,8 @@ class TestModelsCatalog:
 
     @pytest.mark.asyncio
     async def test_refresh_clears_cache(self, tmp_path, monkeypatch):
-        import worker_ai.models_catalog as cat_mod
-        from worker_ai.models_catalog import ModelsCatalog
+        import artel_ai.models_catalog as cat_mod
+        from artel_ai.models_catalog import ModelsCatalog
 
         cache_path = tmp_path / "models.json"
         monkeypatch.setattr(cat_mod, "_CACHE_DIR", tmp_path)

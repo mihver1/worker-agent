@@ -7,18 +7,18 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_local_rule_persist_disable_updates_storage(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
-    from worker_core.rules import add_rule, get_rule
-    from worker_tui.app import WorkerApp
+    from artel_core import config as cfg_mod
+    from artel_core.rules import add_rule, get_rule
+    from artel_tui.app import ArtelApp
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
-    monkeypatch.setattr("worker_tui.app.WorkerApp._init_local_session", AsyncMock())
+    monkeypatch.setattr("artel_tui.app.ArtelApp._init_local_session", AsyncMock())
 
     rule = add_rule(scope="project", text="Use pytest.", project_dir=str(tmp_path), enabled=True)
-    app = WorkerApp()
+    app = ArtelApp()
     seen: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen.append((content, role))  # type: ignore[method-assign]
 
@@ -32,7 +32,7 @@ async def test_local_rule_persist_disable_updates_storage(monkeypatch, tmp_path)
 
 @pytest.mark.asyncio
 async def test_remote_rule_persist_enable_uses_edit_rule(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     class _RemoteClient:
         def __init__(self):
@@ -44,7 +44,7 @@ async def test_remote_rule_persist_enable_uses_edit_rule(monkeypatch):
             self.calls.append((rule_id, text, scope, enabled, project_dir))
             return {"rule": {"id": rule_id, "enabled": enabled}}
 
-    app = WorkerApp(remote_url="ws://localhost:7432")
+    app = ArtelApp(remote_url="ws://localhost:7432")
     app._remote_project_dir = "/srv/project"
     client = _RemoteClient()
     app._remote_control_client = client

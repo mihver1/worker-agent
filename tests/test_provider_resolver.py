@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from worker_core.config import ProviderConfig, ProviderModelConfig, WorkerConfig
-from worker_core.provider_resolver import (
+from artel_core.config import ArtelConfig, ProviderConfig, ProviderModelConfig
+from artel_core.provider_resolver import (
     get_effective_model_info,
     get_effective_provider_catalog,
 )
@@ -136,7 +136,7 @@ _SAMPLE_PROVIDER_CATALOG = {
 class TestEffectiveProviderCatalog:
     @pytest.fixture(autouse=True)
     def _reset_catalog(self):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         ModelsCatalog._data = None
         yield
@@ -144,14 +144,14 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_only_supported_or_configured_providers_are_included(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        config = WorkerConfig()
+        config = ArtelConfig()
         providers = await get_effective_provider_catalog(config)
 
         assert "openai" in providers
@@ -172,14 +172,14 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_custom_provider_models_and_overrides_are_merged(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "openai": ProviderConfig(
                     blacklist=["gpt-4o-mini"],
@@ -229,14 +229,14 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_uses_configured_models(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "localproxy": ProviderConfig(
                     type="openai_compat",
@@ -264,14 +264,14 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "ollama_cloud": ProviderConfig(
                     models={
@@ -312,10 +312,10 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models import ModelInfo
-        from worker_ai.models_catalog import ModelsCatalog
-        from worker_ai.providers.lmstudio import LMStudioProvider
-        from worker_ai.providers.ollama import OllamaProvider
+        from artel_ai.models import ModelInfo
+        from artel_ai.models_catalog import ModelsCatalog
+        from artel_ai.providers.lmstudio import LMStudioProvider
+        from artel_ai.providers.ollama import OllamaProvider
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -345,7 +345,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(LMStudioProvider, "list_models_direct", _fake_lmstudio_discovery)
         monkeypatch.setenv("OLLAMA_API_KEY", "ollama-token")
 
-        providers = await get_effective_provider_catalog(WorkerConfig())
+        providers = await get_effective_provider_catalog(ArtelConfig())
 
         assert providers["ollama_cloud"].models[0].id == "gpt-oss:20b"
         assert providers["ollama_cloud"].models[0].provider == "ollama_cloud"
@@ -357,9 +357,9 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models import ModelInfo
-        from worker_ai.models_catalog import ModelsCatalog
-        from worker_ai.providers.azure_openai import AzureOpenAIProvider
+        from artel_ai.models import ModelInfo
+        from artel_ai.models_catalog import ModelsCatalog
+        from artel_ai.providers.azure_openai import AzureOpenAIProvider
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -377,7 +377,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
         monkeypatch.setattr(AzureOpenAIProvider, "list_models_direct", _fake_azure_discovery)
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "azure": ProviderConfig(
                     type="azure_openai",
@@ -394,14 +394,14 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_catalog_aliases_map_models_to_canonical_provider_names(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        providers = await get_effective_provider_catalog(WorkerConfig())
+        providers = await get_effective_provider_catalog(ArtelConfig())
 
         together = providers["together"]
         fireworks = providers["fireworks"]
@@ -413,14 +413,14 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_google_vertex_reuses_google_catalog_models(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        providers = await get_effective_provider_catalog(WorkerConfig())
+        providers = await get_effective_provider_catalog(ArtelConfig())
         google_vertex = providers["google_vertex"]
 
         assert google_vertex.models[0].provider == "google_vertex"
@@ -431,14 +431,14 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        providers = await get_effective_provider_catalog(WorkerConfig())
+        providers = await get_effective_provider_catalog(ArtelConfig())
         vertex_anthropic = providers["vertex_anthropic"]
         vertex_models = {model.id: model for model in vertex_anthropic.models}
 
@@ -451,14 +451,14 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        providers = await get_effective_provider_catalog(WorkerConfig())
+        providers = await get_effective_provider_catalog(ArtelConfig())
         azure_openai = providers["azure_openai"]
         azure_models = {model.id: model for model in azure_openai.models}
 
@@ -471,14 +471,14 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        providers = await get_effective_provider_catalog(WorkerConfig())
+        providers = await get_effective_provider_catalog(ArtelConfig())
         bedrock = providers["bedrock"]
         bedrock_models = {model.id: model for model in bedrock.models}
 
@@ -492,14 +492,14 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        providers = await get_effective_provider_catalog(WorkerConfig())
+        providers = await get_effective_provider_catalog(ArtelConfig())
         github_copilot = providers["github_copilot"]
         copilot_models = {model.id: model for model in github_copilot.models}
 
@@ -509,7 +509,7 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_alias_provider_names(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -517,7 +517,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "fireworks-ai",
             "accounts/fireworks/models/llama-v3p1-8b-instruct",
         )
@@ -527,7 +527,7 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_google_vertex_alias(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -535,7 +535,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "google-vertex",
             "gemini-2.5-pro",
         )
@@ -545,7 +545,7 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_vertex_anthropic_alias(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -553,7 +553,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "anthropic_vertex",
             "claude-sonnet-4@20250514",
         )
@@ -563,7 +563,7 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_azure_openai_provider(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -571,7 +571,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "azure_openai",
             "gpt-4.1",
         )
@@ -581,7 +581,7 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_bedrock_provider(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -589,7 +589,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "bedrock",
             "anthropic.claude-3-7-sonnet-20250219-v1:0",
         )
@@ -599,7 +599,7 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_github_copilot_alias(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -607,7 +607,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "github-copilot",
             "gpt-4.1",
         )
@@ -617,7 +617,7 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_zai_alias(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -625,7 +625,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "z.ai",
             "glm-5",
         )
@@ -635,14 +635,14 @@ class TestEffectiveProviderCatalog:
 
     @pytest.mark.asyncio
     async def test_effective_model_lookup_accepts_ollama_cloud_alias(self, monkeypatch):
-        from worker_ai.models_catalog import ModelsCatalog
+        from artel_ai.models_catalog import ModelsCatalog
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
 
         monkeypatch.setattr(ModelsCatalog, "_fetch_raw", classmethod(_fake_fetch))
 
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "ollama_cloud": ProviderConfig(
                     models={
@@ -669,9 +669,9 @@ class TestEffectiveProviderCatalog:
         self,
         monkeypatch,
     ):
-        from worker_ai.models import ModelInfo
-        from worker_ai.models_catalog import ModelsCatalog
-        from worker_ai.providers.lmstudio import LMStudioProvider
+        from artel_ai.models import ModelInfo
+        from artel_ai.models_catalog import ModelsCatalog
+        from artel_ai.providers.lmstudio import LMStudioProvider
 
         async def _fake_fetch(cls):
             return _SAMPLE_PROVIDER_CATALOG
@@ -690,7 +690,7 @@ class TestEffectiveProviderCatalog:
         monkeypatch.setattr(LMStudioProvider, "list_models_direct", _fake_lmstudio_discovery)
 
         model = await get_effective_model_info(
-            WorkerConfig(),
+            ArtelConfig(),
             "lm-studio",
             "qwen3-32b-instruct",
         )

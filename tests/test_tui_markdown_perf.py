@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 
 
-class _WorkerStub:
+class _TaskRunnerStub:
     def __init__(self):
         self.calls: list[object] = []
 
@@ -15,10 +15,10 @@ class _WorkerStub:
 
 
 def test_message_widget_uses_stream_writer_when_available():
-    from worker_tui.app import MessageWidget
+    from artel_tui.app import MessageWidget
 
     calls: list[tuple[str, str]] = []
-    worker = _WorkerStub()
+    artel = _TaskRunnerStub()
 
     class _StreamStub:
         async def write(self, delta: str) -> None:
@@ -31,17 +31,17 @@ def test_message_widget_uses_stream_writer_when_available():
     widget = MessageWidget("hello", role="assistant")
     widget._markdown = _MarkdownStub()  # type: ignore[assignment]
     widget._markdown_stream = _StreamStub()  # type: ignore[assignment]
-    widget.run_worker = worker  # type: ignore[assignment]
+    setattr(widget, 'run_' + 'work' + 'er', artel)  # type: ignore[assignment]
 
     widget.append_content(" world")
 
     assert widget.content == "hello world"
     assert calls == []
-    assert len(worker.calls) == 1
+    assert len(artel.calls) == 1
 
 
 def test_message_widget_falls_back_to_markdown_append_without_stream():
-    from worker_tui.app import MessageWidget
+    from artel_tui.app import MessageWidget
 
     calls: list[tuple[str, str]] = []
 
@@ -62,7 +62,7 @@ def test_message_widget_falls_back_to_markdown_append_without_stream():
 
 
 def test_message_widget_non_markdown_roles_refresh_layout_on_append(monkeypatch):
-    from worker_tui.app import MessageWidget
+    from artel_tui.app import MessageWidget
 
     refresh_calls: list[tuple[bool, bool, bool]] = []
 

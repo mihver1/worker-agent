@@ -14,8 +14,8 @@ uv.lock
 .artel/
 .cursor/
 .neteragen/
-.worker/*
-!.worker/AGENTS.md
+.artel/*
+!.artel/AGENTS.md
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

@@ -12,7 +12,7 @@ Validate the current repository implementation against `Artel implementation bac
 
 ### Checklist
 1. Read `Artel implementation backlog v0.md`.
-2. Inspect employee/orchestration implementation under `packages/worker-core/src/worker_core/`.
+2. Inspect employee/orchestration implementation under `packages/artel-core/src/artel_core/`.
 3. Inspect tests covering employee lifecycle and CLI.
 4. Inspect docs/README for alignment with backlog claims.
 5. Produce a validation report with:
@@ -23,10 +23,10 @@ Validate the current repository implementation against `Artel implementation bac
 
 ### Useful files
 - `Artel implementation backlog v0.md`
-- `packages/worker-core/src/worker_core/orchestration.py`
-- `packages/worker-core/src/worker_core/cli.py`
-- `packages/worker-core/src/worker_core/cmux.py`
-- `packages/worker-core/src/worker_core/worktree.py`
+- `packages/artel-core/src/artel_core/orchestration.py`
+- `packages/artel-core/src/artel_core/cli.py`
+- `packages/artel-core/src/artel_core/cmux.py`
+- `packages/artel-core/src/artel_core/worktree.py`
 - `tests/test_employee_cli.py`
 - `tests/test_builtin_capabilities.py`
 - `README.md`

@@ -43,17 +43,17 @@ _Дата: 2026-03-10_
 - `docs/cli.md`
 - `docs/acp.md`
 - `docs/web.md`
-- `packages/worker-core/src/worker_core/cli.py`
-- `packages/worker-core/src/worker_core/control.py`
-- `packages/worker-core/src/worker_core/config.py`
-- `packages/worker-core/src/worker_core/worktree.py`
-- `packages/worker-core/src/worker_core/mcp.py`
-- `packages/worker-core/src/worker_core/mcp_runtime.py`
-- `packages/worker-core/src/worker_core/delegation/tools.py`
-- `packages/worker-core/src/worker_core/delegation/service.py`
-- `packages/worker-core/src/worker_core/artel_bootstrap.py`
-- `packages/worker-core/src/worker_core/builtin_capabilities.py`
-- `packages/worker-core/src/worker_core/tools/web_search.py`
+- `packages/artel-core/src/artel_core/cli.py`
+- `packages/artel-core/src/artel_core/control.py`
+- `packages/artel-core/src/artel_core/config.py`
+- `packages/artel-core/src/artel_core/worktree.py`
+- `packages/artel-core/src/artel_core/mcp.py`
+- `packages/artel-core/src/artel_core/mcp_runtime.py`
+- `packages/artel-core/src/artel_core/delegation/tools.py`
+- `packages/artel-core/src/artel_core/delegation/service.py`
+- `packages/artel-core/src/artel_core/artel_bootstrap.py`
+- `packages/artel-core/src/artel_core/builtin_capabilities.py`
+- `packages/artel-core/src/artel_core/tools/web_search.py`
 - `Artel implementation backlog v0.md`
 
 Подтверждающие тесты:
@@ -97,20 +97,20 @@ Artel уже поддерживает несколько режимов:
 - JSON-RPC: `artel rpc`
 - ACP agent: `artel acp`
 
-Это прямо зафиксировано в `README.md`, `docs/cli.md`, `PRODUCT_SCOPE.md`, а CLI подтверждается в `packages/worker-core/src/worker_core/cli.py`.
+Это прямо зафиксировано в `README.md`, `docs/cli.md`, `PRODUCT_SCOPE.md`, а CLI подтверждается в `packages/artel-core/src/artel_core/cli.py`.
 
 ### 2) Сильная интеграционная история
 У проекта уже есть:
 
-- **MCP config/store**: `packages/worker-core/src/worker_core/mcp.py`
-- **MCP runtime**: `packages/worker-core/src/worker_core/mcp_runtime.py`
+- **MCP config/store**: `packages/artel-core/src/artel_core/mcp.py`
+- **MCP runtime**: `packages/artel-core/src/artel_core/mcp_runtime.py`
 - **ACP support**: `docs/acp.md` + соответствующие тесты
-- **REST control plane**: `packages/worker-core/src/worker_core/control.py`, server API tests
+- **REST control plane**: `packages/artel-core/src/artel_core/control.py`, server API tests
 
 На фоне многих coding agents это делает Artel заметно более пригодным как **backend/agent runtime**, а не только как локальный терминальный помощник.
 
 ### 3) Очень широкая provider story
-По `README.md`, `docs/providers.md` и дереву `packages/worker-ai/src/worker_ai/providers/` проект поддерживает:
+По `README.md`, `docs/providers.md` и дереву `packages/artel-ai/src/artel_ai/providers/` проект поддерживает:
 
 - Anthropic
 - OpenAI / compatible providers
@@ -127,9 +127,9 @@ Artel уже поддерживает несколько режимов:
 ### 4) Встроенные операционные primitives
 В текущем checkout уже есть:
 
-- **git worktree management**: `packages/worker-core/src/worker_core/worktree.py`
-- **delegation tools**: `packages/worker-core/src/worker_core/delegation/tools.py`
-- **in-process delegation runtime**: `packages/worker-core/src/worker_core/delegation/service.py`
+- **git worktree management**: `packages/artel-core/src/artel_core/worktree.py`
+- **delegation tools**: `packages/artel-core/src/artel_core/delegation/tools.py`
+- **in-process delegation runtime**: `packages/artel-core/src/artel_core/delegation/service.py`
 - **rules / rule enforcement**
 - **schedules**
 - **web search / web fetch with prompt-injection guardrails**
@@ -144,7 +144,7 @@ Artel — один из немногих сравниваемых проекто
 - built-in capabilities + extension-like boundary
 - admin flows для extensions
 
-См. `docs/extensions.md`, `packages/worker-core/src/worker_core/extensions_admin.py`, `packages/worker-core/src/worker_core/builtin_capabilities.py`.
+См. `docs/extensions.md`, `packages/artel-core/src/artel_core/extensions_admin.py`, `packages/artel-core/src/artel_core/builtin_capabilities.py`.
 
 ---
 
@@ -179,14 +179,14 @@ Artel — один из немногих сравниваемых проекто
 
 Но текущий код показывает более раннее состояние:
 
-- `packages/worker-core/src/worker_core/orchestration.py` — по сути re-export delegation surface
-- `packages/worker-core/src/worker_core/delegation/service.py` — in-process delegated runs
-- `packages/worker-core/src/worker_core/artel_bootstrap.py` — `command_requires_cmux()` возвращает `False`
+- `packages/artel-core/src/artel_core/orchestration.py` — по сути re-export delegation surface
+- `packages/artel-core/src/artel_core/delegation/service.py` — in-process delegated runs
+- `packages/artel-core/src/artel_core/artel_bootstrap.py` — `command_requires_cmux()` возвращает `False`
 
 То есть **архитектурный вектор есть, но finished multi-agent workspace продукта пока нет**.
 
 ### 4) Built-in capabilities ещё не выглядят как fully realized default stack
-В `packages/worker-core/src/worker_core/builtin_capabilities.py` сейчас встроенные bundled capabilities — это прежде всего:
+В `packages/artel-core/src/artel_core/builtin_capabilities.py` сейчас встроенные bundled capabilities — это прежде всего:
 
 - `artel-mcp`
 - `artel-lsp`
@@ -194,7 +194,7 @@ Artel — один из немногих сравниваемых проекто
 Это полезно, но всё ещё выглядит как **foundation layer**, а не как мощный набор first-party productized subsystems.
 
 ### 5) Rename/migration transition ещё заметен
-В проекте ещё есть заметные compatibility следы `worker_*`:
+В проекте ещё есть заметные compatibility следы `artel_*`:
 
 - package paths
 - internal imports

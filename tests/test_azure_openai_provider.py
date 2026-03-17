@@ -6,10 +6,10 @@ import json
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from worker_ai.models import Done, ImageAttachment, Message, ReasoningDelta, Role, TextDelta
-from worker_ai.providers import create_default_registry
-from worker_ai.providers.azure_openai import AzureOpenAIProvider
-from worker_ai.providers.openai_compat import OpenAIProvider
+from artel_ai.models import Done, ImageAttachment, Message, ReasoningDelta, Role, TextDelta
+from artel_ai.providers import create_default_registry
+from artel_ai.providers.azure_openai import AzureOpenAIProvider
+from artel_ai.providers.openai_compat import OpenAIProvider
 
 
 def _sse_lines(events: list[dict]) -> list[str]:

@@ -8,9 +8,9 @@ set -euo pipefail
 # ── Defaults ──────────────────────────────────────────────
 REPO="https://github.com/mihver1/artel.git"
 BRANCH="main"
-INSTALL_DIR="${ARTEL_INSTALL_DIR:-${WORKER_INSTALL_DIR:-$HOME/.local/share/artel-agent}}"
-BIN_DIR="${ARTEL_BIN_DIR:-${WORKER_BIN_DIR:-$HOME/.local/bin}}"
-CONFIG_DIR="${ARTEL_CONFIG_DIR:-${WORKER_CONFIG_DIR:-$HOME/.config/artel}}"
+INSTALL_DIR="${ARTEL_INSTALL_DIR:-${ARTEL_INSTALL_DIR:-$HOME/.local/share/artel-agent}}"
+BIN_DIR="${ARTEL_BIN_DIR:-${ARTEL_BIN_DIR:-$HOME/.local/bin}}"
+CONFIG_DIR="${ARTEL_CONFIG_DIR:-${ARTEL_CONFIG_DIR:-$HOME/.config/artel}}"
 MIN_PYTHON="3.12"
 
 # ── Colors ────────────────────────────────────────────────
@@ -111,7 +111,7 @@ else
 fi
 
 # ── Step 5: Materialize repository ───────────────────────
-if [[ -f "$SCRIPT_DIR/pyproject.toml" ]] && [[ -d "$SCRIPT_DIR/packages/worker-core/src/worker_core" ]]; then
+if [[ -f "$SCRIPT_DIR/pyproject.toml" ]] && [[ -d "$SCRIPT_DIR/packages/artel-core/src/artel_core" ]]; then
     if [[ "$SCRIPT_DIR" == "$INSTALL_DIR" ]]; then
         die "ARTEL_INSTALL_DIR must not point to the current source checkout."
     fi
@@ -183,7 +183,6 @@ fi
 # ── Step 7: Create wrapper scripts ───────────────────────
 mkdir -p "$BIN_DIR"
 ARTEL_WRAPPER="$BIN_DIR/artel"
-LEGACY_WRAPPER="$BIN_DIR/worker"
 
 cat > "$ARTEL_WRAPPER" <<WRAPPER_EOF
 #!/usr/bin/env bash
@@ -191,14 +190,7 @@ cat > "$ARTEL_WRAPPER" <<WRAPPER_EOF
 exec uv run --project "$INSTALL_DIR" artel "\$@"
 WRAPPER_EOF
 chmod +x "$ARTEL_WRAPPER"
-
-cat > "$LEGACY_WRAPPER" <<WRAPPER_EOF
-#!/usr/bin/env bash
-# Worker — legacy compatibility launcher
-exec uv run --project "$INSTALL_DIR" worker "\$@"
-WRAPPER_EOF
-chmod +x "$LEGACY_WRAPPER"
-ok "Launchers created: $ARTEL_WRAPPER (primary) and $LEGACY_WRAPPER (compatibility alias)"
+ok "Launcher created: $ARTEL_WRAPPER"
 
 # ── Step 8: Ensure BIN_DIR is in PATH ───────────────────
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
@@ -223,7 +215,7 @@ CONFIG_FILE="$CONFIG_DIR/config.toml"
 if [[ ! -f "$CONFIG_FILE" ]]; then
     info "Creating global config..."
     uv run --project "$INSTALL_DIR" python -c \
-        'from worker_core.config import generate_global_config; generate_global_config()' \
+        'from artel_core.config import generate_global_config; generate_global_config()' \
         >/dev/null 2>&1 || true
     if [[ -f "$CONFIG_FILE" ]]; then
         ok "Config created: $CONFIG_FILE"
@@ -245,5 +237,5 @@ echo "  Update:"
 echo "    curl -fsSL https://raw.githubusercontent.com/mihver1/artel/main/install.sh | bash"
 echo ""
 echo "  Uninstall:"
-echo "    rm -rf $INSTALL_DIR $ARTEL_WRAPPER $LEGACY_WRAPPER"
+echo "    rm -rf $INSTALL_DIR $ARTEL_WRAPPER"
 echo ""

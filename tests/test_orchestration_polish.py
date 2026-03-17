@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from worker_core.delegation.registry import get_registry, reset_registry
+from artel_core.delegation.registry import get_registry, reset_registry
 
 
 def test_registry_publishes_latest_update_and_completion_events() -> None:
@@ -41,9 +41,9 @@ def test_registry_publishes_latest_update_and_completion_events() -> None:
 
 @pytest.mark.asyncio
 async def test_tui_auto_surfaces_completed_delegation(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     seen_messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
         app, "_add_message", lambda content, role="assistant": seen_messages.append((content, role))
@@ -72,7 +72,7 @@ async def test_tui_auto_surfaces_completed_delegation(monkeypatch):
 
 
 def test_widget_renders_latest_update() -> None:
-    from worker_tui.delegation_widget import DelegationStatusWidget
+    from artel_tui.delegation_widget import DelegationStatusWidget
 
     widget = DelegationStatusWidget(
         SimpleNamespace(remote_url="", _session=SimpleNamespace(session_id="s1"))

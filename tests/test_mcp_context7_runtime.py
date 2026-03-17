@@ -7,9 +7,9 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_mcp_runtime_can_connect_to_context7_streamable_http(tmp_path, monkeypatch):
-    from worker_core.config import WorkerConfig
-    from worker_core.extensions import ExtensionContext
-    from worker_core.mcp_runtime import McpRuntimeManager
+    from artel_core.config import ArtelConfig
+    from artel_core.extensions import ExtensionContext
+    from artel_core.mcp_runtime import McpRuntimeManager
 
     api_key = "ctx7sk-6b558bf0-48fb-4ad5-af92-336363ebea07"
 
@@ -19,7 +19,7 @@ async def test_mcp_runtime_can_connect_to_context7_streamable_http(tmp_path, mon
     project_dir.mkdir()
     (project_dir / ".artel").mkdir()
 
-    import worker_core.config as cfg_mod
+    import artel_core.config as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", global_dir)
     monkeypatch.setattr(cfg_mod, "GLOBAL_MCP_PATH", global_dir / "mcp.json")
@@ -44,7 +44,7 @@ async def test_mcp_runtime_can_connect_to_context7_streamable_http(tmp_path, mon
 
     runtime = McpRuntimeManager()
     await runtime.load(
-        ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig())
+        ExtensionContext(project_dir=str(project_dir), runtime="local", config=ArtelConfig())
     )
     try:
         assert runtime.errors == {}, runtime.errors

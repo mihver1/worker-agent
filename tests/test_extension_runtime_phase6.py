@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
+from artel_ai.models import Done, ToolCallDelta, ToolDef, Usage
+from artel_core import extensions as extensions_mod
+from artel_core.agent import AgentEventType, AgentSession
+from artel_core.execution import get_current_tool_execution_context
+from artel_core.extensions import Extension, ExtensionContext, load_extensions_async
+from artel_core.tools import Tool
 from conftest import MockProvider
-from worker_ai.models import Done, ToolCallDelta, ToolDef, Usage
-from worker_core import extensions as extensions_mod
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.execution import get_current_tool_execution_context
-from worker_core.extensions import Extension, ExtensionContext, load_extensions_async
-from worker_core.tools import Tool
 
 
 class ContextAwareTool(Tool):
@@ -42,7 +42,7 @@ async def test_load_extensions_async_binds_runtime_context(monkeypatch):
     monkeypatch.setattr(
         extensions_mod,
         "discover_extensions",
-        lambda group="worker.extensions": {"ctx": ContextExtension},
+        lambda group="artel.extensions": {"ctx": ContextExtension},
     )
 
     context = ExtensionContext(project_dir="/tmp/project", runtime="server")

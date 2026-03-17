@@ -16,15 +16,14 @@ dependencies = [
 
 [project.scripts]
 artel = "artel_core.cli:main"
-worker = "worker_core.cli:main"
 
 [tool.uv.workspace]
 members = [
-    "packages/worker-ai",
-    "packages/worker-core",
-    "packages/worker-server",
-    "packages/worker-tui",
-    "packages/worker-web",
+    "packages/artel-ai",
+    "packages/artel-core",
+    "packages/artel-server",
+    "packages/artel-tui",
+    "packages/artel-web",
 ]
 
 [tool.uv.sources]
@@ -48,7 +47,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/artel", "src/worker"]
+packages = ["src/artel"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

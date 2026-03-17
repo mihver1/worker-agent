@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(_REPO_ROOT / "packages/worker-core/src"))
+sys.path.insert(0, str(_REPO_ROOT / "packages/artel-core/src"))
 
 
 @dataclass(slots=True)
@@ -29,7 +29,7 @@ class StubMessage:
 
 
 def test_summarize_workspace_captures_follow_context() -> None:
-    from worker_core.workspace_summary import summarize_workspace
+    from artel_core.workspace_summary import summarize_workspace
 
     summary = summarize_workspace(
         StubSession(
@@ -96,7 +96,7 @@ def test_summarize_workspace_captures_follow_context() -> None:
 
 
 def test_summarize_recent_update_classifies_commands_and_file_reads() -> None:
-    from worker_core.workspace_summary import summarize_recent_update
+    from artel_core.workspace_summary import summarize_recent_update
 
     command_update = summarize_recent_update(
         StubMessage(
@@ -117,7 +117,7 @@ def test_summarize_recent_update_classifies_commands_and_file_reads() -> None:
             tool_calls=[
                 {
                     "name": "read_files",
-                    "arguments": '{"files":[{"path":"packages/worker-web/src/worker_web/app.py"}]}',
+                    "arguments": '{"files":[{"path":"packages/artel-web/src/artel_web/app.py"}]}',
                 }
             ],
             tool_result={"content": "105|# Center: task-first entry", "is_error": False},
@@ -130,11 +130,11 @@ def test_summarize_recent_update_classifies_commands_and_file_reads() -> None:
 
     assert file_update.actor_status.title == "Inspecting files"
     assert file_update.tool_names == ["read_files"]
-    assert file_update.tool_paths == ["packages/worker-web/src/worker_web/app.py"]
+    assert file_update.tool_paths == ["packages/artel-web/src/artel_web/app.py"]
 
 
 def test_follow_workspace_helpers_delegate_to_shared_logic() -> None:
-    from worker_core.workspace_summary import (
+    from artel_core.workspace_summary import (
         collect_follow_file_paths,
         collect_follow_update_messages,
         format_code_item_preview,
@@ -151,7 +151,7 @@ def test_follow_workspace_helpers_delegate_to_shared_logic() -> None:
             tool_calls=[
                 {
                     "name": "read_files",
-                    "arguments": '{"files":[{"path":"packages/worker-web/src/worker_web/app.py"}]}',
+                    "arguments": '{"files":[{"path":"packages/artel-web/src/artel_web/app.py"}]}',
                 }
             ],
             tool_result={"content": "105|# Center: task-first entry", "is_error": False},
@@ -163,21 +163,21 @@ def test_follow_workspace_helpers_delegate_to_shared_logic() -> None:
     updates = collect_follow_update_messages(messages)
     activity = summarize_tool_activity(messages[1])
 
-    assert collect_follow_file_paths(messages) == ["packages/worker-web/src/worker_web/app.py"]
+    assert collect_follow_file_paths(messages) == ["packages/artel-web/src/artel_web/app.py"]
     assert len(updates) == 3
     assert render_follow_updates_note(len(updates), limit=4).startswith("Follow-first mode")
     assert has_follow_workspace_context(messages) is True
     assert format_code_item_preview(
         [
-            "packages/worker-web/src/worker_web/app.py",
-            "packages/worker-web/src/worker_web/controller.py",
-            "packages/worker-web/src/worker_web/state.py",
+            "packages/artel-web/src/artel_web/app.py",
+            "packages/artel-web/src/artel_web/controller.py",
+            "packages/artel-web/src/artel_web/state.py",
         ],
         limit=2,
     ) == (
-        "`packages/worker-web/src/worker_web/app.py`, "
-        "`packages/worker-web/src/worker_web/controller.py` (+1 more)"
+        "`packages/artel-web/src/artel_web/app.py`, "
+        "`packages/artel-web/src/artel_web/controller.py` (+1 more)"
     )
     assert activity.calls[0].name == "read_files"
-    assert activity.calls[0].paths == ["packages/worker-web/src/worker_web/app.py"]
+    assert activity.calls[0].paths == ["packages/artel-web/src/artel_web/app.py"]
     assert activity.result_content == "105|# Center: task-first entry"

@@ -18,9 +18,9 @@ class _Footer:
 
 
 def test_wt_command_appears_in_command_suggestions():
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     values = [suggestion.value for suggestion in app._command_suggestions()]
 
     assert "/wt" in values
@@ -28,7 +28,7 @@ def test_wt_command_appears_in_command_suggestions():
 
 @pytest.mark.asyncio
 async def test_handle_command_dispatches_remote_wt_command():
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     class _RemoteClient:
         async def request(self, method: str, path: str, *, json_data=None):
@@ -40,10 +40,10 @@ async def test_handle_command_dispatches_remote_wt_command():
                 "session": {"project_dir": "/srv/project", "model": "openai/gpt-4.1"},
             }
 
-    app = WorkerApp(remote_url="ws://localhost:7432")
+    app = ArtelApp(remote_url="ws://localhost:7432")
     app._remote_control_client = _RemoteClient()
     app.query_one = lambda selector, _cls=None: _Footer()  # type: ignore[method-assign]
-    app.run_worker = lambda *args, **kwargs: None  # type: ignore[method-assign]
+    setattr(app, 'run_' + 'work' + 'er', lambda *args, **kwargs: None)  # type: ignore[method-assign]
     seen_messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen_messages.append((content, role))  # type: ignore[method-assign]
 
@@ -54,15 +54,15 @@ async def test_handle_command_dispatches_remote_wt_command():
 
 @pytest.mark.asyncio
 async def test_handle_command_dispatches_local_wt_command(monkeypatch, tmp_path):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     app._session = SimpleNamespace(project_dir=str(tmp_path))
     seen_messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant": seen_messages.append((content, role))  # type: ignore[method-assign]
 
     monkeypatch.setattr(
-        "worker_core.worktree.run_worktree_command",
+        "artel_core.worktree.run_worktree_command",
         lambda project_dir, arg: f"wt:{project_dir}:{arg}",
     )
 

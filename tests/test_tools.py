@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 import pytest
-from worker_core.tools.builtins import (
+from artel_core.tools.builtins import (
     AddTaskTool,
     AppendOperatorNoteTool,
     BashTool,

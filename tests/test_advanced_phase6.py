@@ -15,7 +15,7 @@ from io import StringIO
 from pathlib import Path
 
 import pytest
-from worker_ai.models import Message, Role, ToolCall, ToolResult
+from artel_ai.models import Message, Role, ToolCall, ToolResult
 
 # ── 6.1  RPC helpers ──────────────────────────────────────────────
 
@@ -24,7 +24,7 @@ class TestRpcProtocolHelpers:
     """Test JSON-RPC 2.0 formatting helpers."""
 
     def test_jsonrpc_response(self):
-        from worker_server.rpc import _jsonrpc_response
+        from artel_server.rpc import _jsonrpc_response
 
         raw = _jsonrpc_response(1, {"status": "ok"})
         obj = json.loads(raw)
@@ -33,13 +33,13 @@ class TestRpcProtocolHelpers:
         assert obj["result"] == {"status": "ok"}
 
     def test_jsonrpc_response_null_id(self):
-        from worker_server.rpc import _jsonrpc_response
+        from artel_server.rpc import _jsonrpc_response
 
         obj = json.loads(_jsonrpc_response(None, "pong"))
         assert obj["id"] is None
 
     def test_jsonrpc_error(self):
-        from worker_server.rpc import _jsonrpc_error
+        from artel_server.rpc import _jsonrpc_error
 
         raw = _jsonrpc_error(42, -32601, "Method not found")
         obj = json.loads(raw)
@@ -49,7 +49,7 @@ class TestRpcProtocolHelpers:
         assert obj["error"]["message"] == "Method not found"
 
     def test_jsonrpc_notification(self):
-        from worker_server.rpc import _jsonrpc_notification
+        from artel_server.rpc import _jsonrpc_notification
 
         raw = _jsonrpc_notification("event", {"type": "text_delta", "content": "hi"})
         obj = json.loads(raw)
@@ -64,7 +64,7 @@ class TestRpcServerDispatch:
 
     @pytest.mark.asyncio
     async def test_ping(self):
-        from worker_server.rpc import RpcServer
+        from artel_server.rpc import RpcServer
 
         server = RpcServer()
         written: list[str] = []
@@ -78,7 +78,7 @@ class TestRpcServerDispatch:
 
     @pytest.mark.asyncio
     async def test_unknown_method(self):
-        from worker_server.rpc import RpcServer
+        from artel_server.rpc import RpcServer
 
         server = RpcServer()
         written: list[str] = []
@@ -92,7 +92,7 @@ class TestRpcServerDispatch:
 
     @pytest.mark.asyncio
     async def test_shutdown(self):
-        from worker_server.rpc import RpcServer
+        from artel_server.rpc import RpcServer
 
         server = RpcServer()
         written: list[str] = []
@@ -107,7 +107,7 @@ class TestRpcServerDispatch:
 
     @pytest.mark.asyncio
     async def test_cancel_without_session(self):
-        from worker_server.rpc import RpcServer
+        from artel_server.rpc import RpcServer
 
         server = RpcServer()
         written: list[str] = []
@@ -120,7 +120,7 @@ class TestRpcServerDispatch:
 
     @pytest.mark.asyncio
     async def test_compact_without_session(self):
-        from worker_server.rpc import RpcServer
+        from artel_server.rpc import RpcServer
 
         server = RpcServer()
         written: list[str] = []
@@ -133,7 +133,7 @@ class TestRpcServerDispatch:
 
     @pytest.mark.asyncio
     async def test_message_without_content(self):
-        from worker_server.rpc import RpcServer
+        from artel_server.rpc import RpcServer
 
         server = RpcServer()
         written: list[str] = []
@@ -149,24 +149,24 @@ class TestRpcServerDispatch:
 
 
 class TestSdkPublicApi:
-    """Test that worker_core exposes a clean public API."""
+    """Test that artel_core exposes a clean public API."""
 
     def test_all_exports_importable(self):
-        import worker_core
+        import artel_core
 
-        assert hasattr(worker_core, "AgentSession")
-        assert hasattr(worker_core, "AgentEvent")
-        assert hasattr(worker_core, "AgentEventType")
-        assert hasattr(worker_core, "WorkerConfig")
-        assert hasattr(worker_core, "load_config")
-        assert hasattr(worker_core, "Tool")
-        assert hasattr(worker_core, "Extension")
-        assert hasattr(worker_core, "HookDispatcher")
-        assert hasattr(worker_core, "SessionStore")
-        assert hasattr(worker_core, "export_html")
+        assert hasattr(artel_core, "AgentSession")
+        assert hasattr(artel_core, "AgentEvent")
+        assert hasattr(artel_core, "AgentEventType")
+        assert hasattr(artel_core, "ArtelConfig")
+        assert hasattr(artel_core, "load_config")
+        assert hasattr(artel_core, "Tool")
+        assert hasattr(artel_core, "Extension")
+        assert hasattr(artel_core, "HookDispatcher")
+        assert hasattr(artel_core, "SessionStore")
+        assert hasattr(artel_core, "export_html")
 
     def test_all_list_matches(self):
-        import worker_core
+        import artel_core
 
         expected_subset = {
             "AgentEvent",
@@ -176,15 +176,15 @@ class TestSdkPublicApi:
             "HookDispatcher",
             "SessionStore",
             "Tool",
-            "WorkerConfig",
+            "ArtelConfig",
             "export_html",
             "load_config",
         }
-        assert expected_subset.issubset(set(worker_core.__all__))
+        assert expected_subset.issubset(set(artel_core.__all__))
 
     def test_direct_imports(self):
         """Verify direct imports work."""
-        from worker_core import export_html, load_config
+        from artel_core import export_html, load_config
 
         assert callable(export_html)
         assert callable(load_config)
@@ -199,7 +199,7 @@ class TestPipedStdin:
     def test_stdin_prepended_to_prompt(self, monkeypatch, tmp_path):
         """When stdin is a pipe, its content is prepended to -p prompt."""
 
-        from worker_core import cli as cli_mod
+        from artel_core import cli as cli_mod
 
         monkeypatch.setattr("sys.stdin", StringIO("piped content\nline 2"))
         monkeypatch.setattr("sys.stdin.isatty", lambda: False)
@@ -212,7 +212,7 @@ class TestPipedStdin:
         monkeypatch.setattr(cli_mod, "_print_mode", mock_print_mode)
         monkeypatch.setattr(cli_mod.asyncio, "run", lambda coro: None)
 
-        # Simulate: echo "piped content" | worker -p "explain"
+        # Simulate: echo "piped content" | artel -p "explain"
         # We call the CLI function directly
         from click.testing import CliRunner
 
@@ -245,7 +245,7 @@ class TestPipedStdin:
     def test_no_stdin_when_tty(self, monkeypatch):
         """When stdin is a TTY, prompt is used as-is."""
 
-        from worker_core import cli as cli_mod
+        from artel_core import cli as cli_mod
 
         captured: list[str] = []
 
@@ -282,7 +282,7 @@ class TestExportHtml:
     """Test HTML export rendering."""
 
     def test_default_export_title_uses_artel_session(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         html = export_html([Message(role=Role.USER, content="Hello")])
 
@@ -290,7 +290,7 @@ class TestExportHtml:
         assert "<h1>Artel Session</h1>" in html
 
     def test_basic_export(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         messages = [
             Message(role=Role.USER, content="Hello"),
@@ -305,7 +305,7 @@ class TestExportHtml:
         assert "2 messages" in html
 
     def test_export_escapes_html(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         messages = [
             Message(role=Role.USER, content="<script>alert('xss')</script>"),
@@ -316,7 +316,7 @@ class TestExportHtml:
         assert "&lt;script&gt;" in html
 
     def test_export_code_blocks(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         messages = [
             Message(role=Role.ASSISTANT, content="```python\nprint('hello')\n```"),
@@ -327,7 +327,7 @@ class TestExportHtml:
         assert "print(&#x27;hello&#x27;)" in html or "print(" in html
 
     def test_export_with_model_and_session(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         messages = [
             Message(role=Role.USER, content="test"),
@@ -338,7 +338,7 @@ class TestExportHtml:
         assert "abc12345" in html
 
     def test_export_tool_calls(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         messages = [
             Message(
@@ -352,7 +352,7 @@ class TestExportHtml:
         assert "read_file" in html
 
     def test_export_tool_results(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         messages = [
             Message(
@@ -366,7 +366,7 @@ class TestExportHtml:
         assert "file contents here" in html
 
     def test_export_empty_messages(self):
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         html = export_html([], title="Empty")
 
@@ -374,7 +374,7 @@ class TestExportHtml:
         assert "0 messages" in html
 
     def test_export_role_classes(self):
-        from worker_core.export import _role_class
+        from artel_core.export import _role_class
 
         assert _role_class(Role.USER) == "user"
         assert _role_class(Role.ASSISTANT) == "assistant"
@@ -383,7 +383,7 @@ class TestExportHtml:
 
     def test_export_catalan_theme_styling(self):
         """Verify the Catppuccin Mocha CSS is embedded."""
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         html = export_html([Message(role=Role.USER, content="x")])
 
@@ -398,7 +398,7 @@ class TestMigrations:
     """Test the migration system."""
 
     def test_read_write_state(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -413,7 +413,7 @@ class TestMigrations:
         assert state["extra"] == "data"
 
     def test_get_set_version(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -423,14 +423,14 @@ class TestMigrations:
         assert mig_mod.get_current_version() == 3
 
     def test_migration_decorator(self):
-        from worker_core.migrations import _MIGRATIONS
+        from artel_core.migrations import _MIGRATIONS
 
         # There should be at least the v1 built-in migration
         versions = [m.version for m in _MIGRATIONS]
         assert 1 in versions
 
     def test_pending_migrations(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -441,7 +441,7 @@ class TestMigrations:
         assert all(m.version > 0 for m in pending)
 
     def test_run_migrations(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -454,7 +454,7 @@ class TestMigrations:
         assert mig_mod.get_current_version() >= 1
 
     def test_run_migrations_idempotent(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -466,7 +466,7 @@ class TestMigrations:
         assert len(second) == 0  # Nothing new to apply
 
     def test_check_and_migrate(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -476,7 +476,7 @@ class TestMigrations:
         assert mig_mod.get_current_version() >= mig_mod.CURRENT_VERSION
 
     def test_check_and_migrate_noop_when_current(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -487,7 +487,7 @@ class TestMigrations:
         assert mig_mod.get_current_version() == mig_mod.CURRENT_VERSION
 
     def test_migration_failure_stops_chain(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -526,7 +526,7 @@ class TestMigrations:
             mig_mod._MIGRATIONS.extend(original)
 
     def test_corrupt_state_file(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         state_file = tmp_path / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", state_file)
@@ -536,7 +536,7 @@ class TestMigrations:
         assert mig_mod._read_state() == {}
 
     def test_state_dir_created(self, tmp_path, monkeypatch):
-        from worker_core import migrations as mig_mod
+        from artel_core import migrations as mig_mod
 
         nested = tmp_path / "deep" / "nested" / "state.json"
         monkeypatch.setattr(mig_mod, "_STATE_FILE", nested)
@@ -553,7 +553,7 @@ class TestRpcExportIntegration:
 
     def test_export_roundtrip(self, tmp_path):
         """Generate HTML, write to file, verify file is valid HTML."""
-        from worker_core.export import export_html
+        from artel_core.export import export_html
 
         messages = [
             Message(role=Role.USER, content="What is 2+2?"),

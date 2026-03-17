@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from worker_ai.models import ToolDef
-from worker_ai.providers.anthropic import _build_tools as build_anthropic_tools
-from worker_ai.providers.bedrock import _build_tools as build_bedrock_tools
-from worker_ai.providers.google import _build_tools as build_google_tools
-from worker_ai.providers.openai_compat import (
+from artel_ai.models import ToolDef
+from artel_ai.providers.anthropic import _build_tools as build_anthropic_tools
+from artel_ai.providers.bedrock import _build_tools as build_bedrock_tools
+from artel_ai.providers.google import _build_tools as build_google_tools
+from artel_ai.providers.openai_compat import (
     _build_responses_tools as build_openai_responses_tools,
 )
-from worker_ai.providers.openai_compat import _build_tools as build_openai_tools
-from worker_ai.tool_schema import json_schema_to_gemini_schema, tool_input_schema
+from artel_ai.providers.openai_compat import _build_tools as build_openai_tools
+from artel_ai.tool_schema import json_schema_to_gemini_schema, tool_input_schema
 
 
 def _nested_schema() -> dict:

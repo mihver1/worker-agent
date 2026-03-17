@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from worker_core.tools.builtins import WorktreeTool
-from worker_core.worktree import (
+from artel_core.tools.builtins import WorktreeTool
+from artel_core.worktree import (
     CreateCommand,
     FinishCommand,
     HelpCommand,
@@ -157,7 +157,7 @@ async def test_worktree_tool_without_branch_creates_detached_worktree(
 ) -> None:
     managed_root = tmp_path / "managed"
     repo = tmp_path / "repo"
-    monkeypatch.setenv("WORKER_EXT_WORKTREE_BASE_DIR", str(managed_root))
+    monkeypatch.setenv("ARTEL_EXT_WORKTREE_BASE_DIR", str(managed_root))
     _init_repo(repo)
 
     tool = WorktreeTool(str(repo))
@@ -171,7 +171,7 @@ async def test_worktree_tool_without_branch_creates_detached_worktree(
 async def test_worktree_tool_branch_create_list_remove_finish(monkeypatch, tmp_path: Path) -> None:
     managed_root = tmp_path / "managed"
     repo = tmp_path / "repo"
-    monkeypatch.setenv("WORKER_EXT_WORKTREE_BASE_DIR", str(managed_root))
+    monkeypatch.setenv("ARTEL_EXT_WORKTREE_BASE_DIR", str(managed_root))
     _init_repo(repo)
 
     tool = WorktreeTool(str(repo))
@@ -181,7 +181,7 @@ async def test_worktree_tool_branch_create_list_remove_finish(monkeypatch, tmp_p
     list_output = await tool.execute(action="list")
     assert "feature/demo" in list_output
 
-    from worker_core.worktree import WorktreeManager
+    from artel_core.worktree import WorktreeManager
 
     manager = WorktreeManager(str(repo))
     source_worktree = next(

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from artel_ai.models import Message, Role
+from artel_core.agent import AgentEventType, AgentSession
+from artel_core.sessions import SessionStore
 from conftest import MockProvider
-from worker_ai.models import Message, Role
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.sessions import SessionStore
 
 # ── Fixtures ──────────────────────────────────────────────────────
 

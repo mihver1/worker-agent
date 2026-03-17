@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 
 import pytest
-from worker_core import ext_manifest
-from worker_core.cli import _parse_installed_package_name
+from artel_core import ext_manifest
+from artel_core.cli import _parse_installed_package_name
 
 # ── Fixtures ──────────────────────────────────────────────────────
 
@@ -104,19 +104,19 @@ def test_manifest_persists_to_disk(_isolated_manifest):
 
 class TestParseInstalledPackageName:
     def test_uv_output_with_plus_line(self):
-        stdout = "Resolved 3 packages\n + worker-ext-foo==0.2.1\n + dep==1.0\n"
-        assert _parse_installed_package_name(stdout, "whatever") == "worker-ext-foo"
+        stdout = "Resolved 3 packages\n + artel-ext-foo==0.2.1\n + dep==1.0\n"
+        assert _parse_installed_package_name(stdout, "whatever") == "artel-ext-foo"
 
     def test_fallback_git_https(self):
         assert (
-            _parse_installed_package_name("", "git+https://github.com/user/worker-ext-bar.git")
-            == "worker-ext-bar"
+            _parse_installed_package_name("", "git+https://github.com/user/artel-ext-bar.git")
+            == "artel-ext-bar"
         )
 
     def test_fallback_git_https_with_branch(self):
         assert (
-            _parse_installed_package_name("", "git+https://github.com/user/worker-ext-bar.git@main")
-            == "worker-ext-bar"
+            _parse_installed_package_name("", "git+https://github.com/user/artel-ext-bar.git@main")
+            == "artel-ext-bar"
         )
 
     def test_fallback_git_ssh(self):
@@ -125,7 +125,7 @@ class TestParseInstalledPackageName:
         )
 
     def test_fallback_simple_name(self):
-        assert _parse_installed_package_name("", "worker-ext-hello") == "worker-ext-hello"
+        assert _parse_installed_package_name("", "artel-ext-hello") == "artel-ext-hello"
 
     def test_fallback_local_path(self):
         assert _parse_installed_package_name("", "/home/user/projects/my-ext") == "my-ext"

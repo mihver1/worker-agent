@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from worker_ai.models_catalog import _parse_provider
+from artel_ai.models_catalog import _parse_provider
 
 
 class TestParseProvider:

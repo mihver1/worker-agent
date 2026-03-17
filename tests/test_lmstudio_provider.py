@@ -5,8 +5,8 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-from worker_ai.providers import create_default_registry
-from worker_ai.providers.lmstudio import LMStudioProvider
+from artel_ai.providers import create_default_registry
+from artel_ai.providers.lmstudio import LMStudioProvider
 
 
 class TestLMStudioProviderRegistry:

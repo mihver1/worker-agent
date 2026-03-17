@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import pytest
+from artel_ai.models import Done, TextDelta, ToolCallDelta, Usage
+from artel_core.agent import AgentEventType, AgentSession
 from conftest import MockProvider
-from worker_ai.models import Done, TextDelta, ToolCallDelta, Usage
-from worker_core.agent import AgentEventType, AgentSession
 
 # ── Steering ──────────────────────────────────────────────────────
 
@@ -13,7 +13,7 @@ from worker_core.agent import AgentEventType, AgentSession
 @pytest.mark.asyncio
 async def test_steering_interrupts_tool_execution(tmp_workdir):
     """Steering message should skip remaining tools and be injected."""
-    from worker_core.tools.builtins import create_builtin_tools
+    from artel_core.tools.builtins import create_builtin_tools
 
     provider = MockProvider(
         responses=[
@@ -68,7 +68,7 @@ async def test_follow_up_after_completion():
 @pytest.mark.asyncio
 async def test_abort_stops_loop():
     """Abort should stop the agent loop."""
-    from worker_core.tools.builtins import create_builtin_tools
+    from artel_core.tools.builtins import create_builtin_tools
 
     provider = MockProvider(
         responses=[

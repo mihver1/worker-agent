@@ -12,7 +12,7 @@ import pytest
 def _server_script() -> str:
     return str(
         Path(__file__).resolve().parents[2]
-        / "worker-ext-mcp"
+        / "artel-ext-mcp"
         / "tests"
         / "fixtures"
         / "dummy_mcp_server.py"
@@ -40,9 +40,9 @@ async def _wait_for_port(port: int, *, host: str = "127.0.0.1", timeout: float =
 
 
 def test_mcp_cli_show_and_set_and_remove(tmp_path, monkeypatch):
-    import worker_core.config as cfg_mod
+    import artel_core.config as cfg_mod
+    from artel_core import cli as cli_mod
     from click.testing import CliRunner
-    from worker_core import cli as cli_mod
 
     global_dir = tmp_path / "global"
     project_dir = tmp_path / "project"
@@ -91,9 +91,9 @@ def test_mcp_cli_show_and_set_and_remove(tmp_path, monkeypatch):
 async def test_mcp_runtime_loads_streamable_http_server_from_merged_store(tmp_path, monkeypatch):
     mcp = pytest.importorskip("mcp")
     del mcp
-    from worker_core.config import WorkerConfig
-    from worker_core.extensions import ExtensionContext
-    from worker_core.mcp_runtime import McpRuntimeManager
+    from artel_core.config import ArtelConfig
+    from artel_core.extensions import ExtensionContext
+    from artel_core.mcp_runtime import McpRuntimeManager
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -101,7 +101,7 @@ async def test_mcp_runtime_loads_streamable_http_server_from_merged_store(tmp_pa
     global_dir = tmp_path / "global"
     global_dir.mkdir()
 
-    import worker_core.config as cfg_mod
+    import artel_core.config as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", global_dir)
     monkeypatch.setattr(cfg_mod, "GLOBAL_MCP_PATH", global_dir / "mcp.json")
@@ -140,7 +140,7 @@ async def test_mcp_runtime_loads_streamable_http_server_from_merged_store(tmp_pa
 
         runtime = McpRuntimeManager()
         await runtime.load(
-            ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig())
+            ExtensionContext(project_dir=str(project_dir), runtime="local", config=ArtelConfig())
         )
         try:
             tools = {tool.name: tool for tool in runtime.tools}
@@ -166,10 +166,10 @@ async def test_mcp_runtime_loads_streamable_http_server_from_merged_store(tmp_pa
 
 @pytest.mark.asyncio
 async def test_mcp_runtime_status_payload_marks_disabled_and_timeout(tmp_path):
-    from worker_core.config import WorkerConfig
-    from worker_core.extensions import ExtensionContext
-    from worker_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
-    from worker_core.mcp_runtime import McpRuntimeManager
+    from artel_core.config import ArtelConfig
+    from artel_core.extensions import ExtensionContext
+    from artel_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
+    from artel_core.mcp_runtime import McpRuntimeManager
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -199,7 +199,7 @@ async def test_mcp_runtime_status_payload_marks_disabled_and_timeout(tmp_path):
 
     runtime._connect_server = _fake_connect  # type: ignore[method-assign]
     await runtime.load(
-        ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig())
+        ExtensionContext(project_dir=str(project_dir), runtime="local", config=ArtelConfig())
     )
 
     payload = runtime.status_payload()
@@ -212,10 +212,10 @@ async def test_mcp_runtime_status_payload_marks_disabled_and_timeout(tmp_path):
 
 @pytest.mark.asyncio
 async def test_mcp_runtime_status_payload_marks_needs_auth(tmp_path):
-    from worker_core.config import WorkerConfig
-    from worker_core.extensions import ExtensionContext
-    from worker_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
-    from worker_core.mcp_runtime import McpRuntimeManager
+    from artel_core.config import ArtelConfig
+    from artel_core.extensions import ExtensionContext
+    from artel_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
+    from artel_core.mcp_runtime import McpRuntimeManager
 
     project_dir = tmp_path / "project"
     project_dir.mkdir()
@@ -240,7 +240,7 @@ async def test_mcp_runtime_status_payload_marks_needs_auth(tmp_path):
 
     runtime._connect_server = _fake_connect  # type: ignore[method-assign]
     await runtime.load(
-        ExtensionContext(project_dir=str(project_dir), runtime="local", config=WorkerConfig())
+        ExtensionContext(project_dir=str(project_dir), runtime="local", config=ArtelConfig())
     )
 
     payload = runtime.status_payload()

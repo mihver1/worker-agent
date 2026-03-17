@@ -9,8 +9,8 @@ import sys
 from typing import Any
 
 import pytest
-from worker_ai.models import Message, Role
-from worker_core.sessions import SessionStore
+from artel_ai.models import Message, Role
+from artel_core.sessions import SessionStore
 
 
 async def _send_json(proc: asyncio.subprocess.Process, payload: dict[str, Any]) -> None:
@@ -87,7 +87,7 @@ async def _start_acp_subprocess(
     return await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
-        "worker_core.cli",
+        "artel_core.cli",
         "acp",
         cwd=cwd,
         env=env,
@@ -124,7 +124,7 @@ def _session_updates(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 @pytest.mark.asyncio
-async def test_worker_acp_setters_emit_valid_session_update_notifications(tmp_path):
+async def test_artel_acp_setters_emit_valid_session_update_notifications(tmp_path):
     home_dir = tmp_path / "home"
     home_dir.mkdir()
     env = os.environ.copy()
@@ -236,7 +236,7 @@ async def test_worker_acp_setters_emit_valid_session_update_notifications(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_worker_acp_file_tool_calls_publish_absolute_locations(tmp_path):
+async def test_artel_acp_file_tool_calls_publish_absolute_locations(tmp_path):
     home_dir = tmp_path / "home"
     project_dir = tmp_path / "project"
     support_dir = tmp_path / "support"
@@ -270,8 +270,8 @@ supports_tools = true
         """
 from __future__ import annotations
 
-from worker_ai.models import Done, ModelInfo, TextDelta, ToolCallDelta, Usage
-from worker_ai.provider import Provider
+from artel_ai.models import Done, ModelInfo, TextDelta, ToolCallDelta, Usage
+from artel_ai.provider import Provider
 
 
 class MockRuntimeProvider(Provider):
@@ -321,7 +321,7 @@ class MockRuntimeProvider(Provider):
     (support_dir / "sitecustomize.py").write_text(
         """
 from mock_provider_runtime import MockRuntimeProvider
-import worker_ai.providers as _providers
+import artel_ai.providers as _providers
 
 _original_create_default_registry = _providers.create_default_registry
 
@@ -414,7 +414,7 @@ _providers.create_default_registry = _patched_create_default_registry
 
 
 @pytest.mark.asyncio
-async def test_worker_acp_lists_and_resumes_persisted_sessions_after_restart(tmp_path):
+async def test_artel_acp_lists_and_resumes_persisted_sessions_after_restart(tmp_path):
     home_dir = tmp_path / "home"
     project_dir = tmp_path / "project"
     db_path = home_dir / ".config" / "artel" / "sessions.db"
@@ -592,7 +592,7 @@ async def test_worker_acp_lists_and_resumes_persisted_sessions_after_restart(tmp
 
 
 @pytest.mark.asyncio
-async def test_worker_acp_tool_call_permission_flow_uses_tracked_tool_call_ids(tmp_path):
+async def test_artel_acp_tool_call_permission_flow_uses_tracked_tool_call_ids(tmp_path):
     home_dir = tmp_path / "home"
     project_dir = tmp_path / "project"
     support_dir = tmp_path / "support"
@@ -600,8 +600,8 @@ async def test_worker_acp_tool_call_permission_flow_uses_tracked_tool_call_ids(t
     project_dir.mkdir()
     support_dir.mkdir()
 
-    (project_dir / ".worker").mkdir()
-    (project_dir / ".worker" / "config.toml").write_text(
+    (project_dir / ".artel").mkdir()
+    (project_dir / ".artel" / "config.toml").write_text(
         """
 [agent]
 model = "mock/mock-model"
@@ -622,8 +622,8 @@ supports_tools = true
         """
 from __future__ import annotations
 
-from worker_ai.models import Done, ModelInfo, TextDelta, ToolCallDelta, Usage
-from worker_ai.provider import Provider
+from artel_ai.models import Done, ModelInfo, TextDelta, ToolCallDelta, Usage
+from artel_ai.provider import Provider
 
 
 class MockRuntimeProvider(Provider):
@@ -673,7 +673,7 @@ class MockRuntimeProvider(Provider):
     (support_dir / "sitecustomize.py").write_text(
         """
 from mock_provider_runtime import MockRuntimeProvider
-import worker_ai.providers as _providers
+import artel_ai.providers as _providers
 
 _original_create_default_registry = _providers.create_default_registry
 

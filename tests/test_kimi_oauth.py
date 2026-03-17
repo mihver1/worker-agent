@@ -52,7 +52,7 @@ class TestKimiOAuth:
         tmp_path,
         monkeypatch,
     ):
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         captured_posts: list[tuple[str, dict[str, object]]] = []
         responses = [
@@ -125,7 +125,7 @@ class TestKimiOAuth:
         tmp_path,
         monkeypatch,
     ):
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         captured_posts: list[tuple[str, dict[str, object]]] = []
         responses = [
@@ -177,7 +177,7 @@ class TestKimiOAuth:
 
     @pytest.mark.asyncio
     async def test_refresh_uses_form_encoded_request(self, monkeypatch):
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         captured_posts: list[tuple[str, dict[str, object]]] = []
         responses = [

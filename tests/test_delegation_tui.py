@@ -3,8 +3,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
-from worker_core.delegation.registry import get_registry, reset_registry
-from worker_tui.delegation_widget import DelegationStatusWidget
+from artel_core.delegation.registry import get_registry, reset_registry
+from artel_tui.delegation_widget import DelegationStatusWidget
 
 
 async def test_status_widget_loads_local_session_runs() -> None:
@@ -58,9 +58,9 @@ async def test_status_widget_loads_remote_session_runs() -> None:
 
 
 def test_delegate_commands_appear_in_command_suggestions():
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp()
+    app = ArtelApp()
     values = [suggestion.value for suggestion in app._command_suggestions()]
 
     assert "/delegates" in values
@@ -69,7 +69,7 @@ def test_delegate_commands_appear_in_command_suggestions():
 
 @pytest.mark.asyncio
 async def test_handle_local_agents_command_lists_runs(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     reset_registry()
     registry = get_registry()
@@ -83,7 +83,7 @@ async def test_handle_local_agents_command_lists_runs(monkeypatch):
     )
     registry.mark_completed(run.id, "Done")
 
-    app = WorkerApp()
+    app = ArtelApp()
     app._session = SimpleNamespace(session_id="local-session")
     seen_messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -103,7 +103,7 @@ async def test_handle_local_agents_command_lists_runs(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_remote_agents_command_uses_control_plane(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     class _RemoteClient:
         async def request(self, method: str, path: str, *, json_data=None):
@@ -131,7 +131,7 @@ async def test_handle_remote_agents_command_uses_control_plane(monkeypatch):
                 }
             raise AssertionError((method, path, json_data))
 
-    app = WorkerApp(remote_url="ws://localhost:7432")
+    app = ArtelApp(remote_url="ws://localhost:7432")
     app._remote_session_id = "remote-session"
     app._remote_control_client = _RemoteClient()
     seen_messages: list[tuple[str, str]] = []
@@ -151,7 +151,7 @@ async def test_handle_remote_agents_command_uses_control_plane(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_local_agents_tail_command(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     reset_registry()
     registry = get_registry()
@@ -167,7 +167,7 @@ async def test_handle_local_agents_tail_command(monkeypatch):
     registry.append_event(run.id, "tool read")
     registry.append_event(run.id, "result read: ok")
 
-    app = WorkerApp()
+    app = ArtelApp()
     app._session = SimpleNamespace(session_id="local-session")
     seen_messages: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -189,7 +189,7 @@ async def test_handle_local_agents_tail_command(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_handle_remote_agents_tail_command(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
     class _RemoteClient:
         async def request(self, method: str, path: str, *, json_data=None):
@@ -206,7 +206,7 @@ async def test_handle_remote_agents_tail_command(monkeypatch):
                 }
             raise AssertionError((method, path, json_data))
 
-    app = WorkerApp(remote_url="ws://localhost:7432")
+    app = ArtelApp(remote_url="ws://localhost:7432")
     app._remote_session_id = "remote-session"
     app._remote_control_client = _RemoteClient()
     seen_messages: list[tuple[str, str]] = []

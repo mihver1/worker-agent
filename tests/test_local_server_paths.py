@@ -4,21 +4,21 @@ from __future__ import annotations
 
 import json
 
-from worker_tui.local_server import managed_server_registry_path
+from artel_tui.local_server import managed_server_registry_path
 
 
 class TestLocalServerPaths:
     def test_managed_server_registry_path_uses_artel_dir(self, tmp_path):
         assert managed_server_registry_path(str(tmp_path)) == tmp_path / ".artel" / "server.json"
 
-    def test_load_registry_falls_back_to_legacy_worker_server_json(
+    def test_load_registry_falls_back_to_legacy_artel_server_json(
         self,
         tmp_path,
         monkeypatch,
     ):
-        import worker_tui.local_server as local_server_mod
+        import artel_tui.local_server as local_server_mod
 
-        legacy_registry = tmp_path / ".worker" / "server.json"
+        legacy_registry = tmp_path / ".artel" / "server.json"
         legacy_registry.parent.mkdir(parents=True)
         legacy_registry.write_text(
             json.dumps(

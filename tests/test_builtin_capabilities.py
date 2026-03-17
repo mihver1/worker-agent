@@ -6,9 +6,9 @@ import json
 
 
 def test_load_builtin_capabilities_returns_bundled_capabilities() -> None:
-    from worker_core.builtin_capabilities import load_builtin_capabilities
-    from worker_core.lsp_runtime import LspRuntimeManager
-    from worker_core.mcp import MCPRegistry
+    from artel_core.builtin_capabilities import load_builtin_capabilities
+    from artel_core.lsp_runtime import LspRuntimeManager
+    from artel_core.mcp import MCPRegistry
 
     capabilities = load_builtin_capabilities(project_dir="/tmp/project")
 
@@ -25,8 +25,8 @@ def test_load_builtin_capabilities_returns_bundled_capabilities() -> None:
 
 
 def test_mcp_registry_reads_and_writes_artel_project_config(tmp_path, monkeypatch) -> None:
-    import worker_core.config as cfg_mod
-    from worker_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
+    import artel_core.config as cfg_mod
+    from artel_core.mcp import MCPConfig, MCPRegistry, MCPServerConfig
 
     global_dir = tmp_path / "global-config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", global_dir)
@@ -81,8 +81,8 @@ def test_mcp_registry_reads_and_writes_artel_project_config(tmp_path, monkeypatc
 
 
 def test_mcp_registry_merges_global_and_project_stores(tmp_path, monkeypatch) -> None:
-    import worker_core.config as cfg_mod
-    from worker_core.mcp import MCPRegistry
+    import artel_core.config as cfg_mod
+    from artel_core.mcp import MCPRegistry
 
     global_dir = tmp_path / "global-config"
     global_dir.mkdir()
@@ -142,9 +142,9 @@ def test_mcp_registry_merges_global_and_project_stores(tmp_path, monkeypatch) ->
 
 
 def test_runtime_bootstrap_binds_builtin_capabilities_into_extension_context(monkeypatch, tmp_path):
-    from worker_core.bootstrap import bootstrap_runtime
-    from worker_core.cli import _resolve_api_key
-    from worker_core.config import WorkerConfig
+    from artel_core.bootstrap import bootstrap_runtime
+    from artel_core.cli import _resolve_api_key
+    from artel_core.config import ArtelConfig
 
     seen_contexts = []
 
@@ -155,7 +155,7 @@ def test_runtime_bootstrap_binds_builtin_capabilities_into_extension_context(mon
     async def fake_load_extensions_async(context=None):
         seen_contexts.append(context)
         hook_dispatcher = __import__(
-            "worker_core.extensions",
+            "artel_core.extensions",
             fromlist=["HookDispatcher"],
         ).HookDispatcher()
         return [], hook_dispatcher
@@ -168,18 +168,18 @@ def test_runtime_bootstrap_binds_builtin_capabilities_into_extension_context(mon
         def create(self, provider_type, api_key=None, **kwargs):
             return _Provider()
 
-    monkeypatch.setattr("worker_core.bootstrap.create_default_registry", lambda: _Registry())
+    monkeypatch.setattr("artel_core.bootstrap.create_default_registry", lambda: _Registry())
     monkeypatch.setattr(
-        "worker_core.bootstrap.load_ai_extensions_async",
+        "artel_core.bootstrap.load_ai_extensions_async",
         fake_load_ai_extensions_async,
     )
-    monkeypatch.setattr("worker_core.bootstrap.load_extensions_async", fake_load_extensions_async)
+    monkeypatch.setattr("artel_core.bootstrap.load_extensions_async", fake_load_extensions_async)
     monkeypatch.setattr(
-        "worker_core.bootstrap.resolve_provider_runtime_config",
+        "artel_core.bootstrap.resolve_provider_runtime_config",
         lambda config, provider_name: (provider_name, {}),
     )
     monkeypatch.setattr(
-        "worker_core.bootstrap.fetch_model_runtime_info",
+        "artel_core.bootstrap.fetch_model_runtime_info",
         lambda config, provider_name, model_id: __import__("asyncio").sleep(
             0,
             result=(0, 0.0, 0.0),
@@ -188,7 +188,7 @@ def test_runtime_bootstrap_binds_builtin_capabilities_into_extension_context(mon
 
     runtime = __import__("asyncio").run(
         bootstrap_runtime(
-            WorkerConfig(),
+            ArtelConfig(),
             "openai",
             "gpt-4.1",
             project_dir=str(tmp_path),
@@ -210,22 +210,22 @@ def test_runtime_bootstrap_binds_builtin_capabilities_into_extension_context(mon
 
 
 def test_list_installed_extensions_includes_bundled_capabilities(monkeypatch):
-    from worker_core.extensions_admin import list_installed_extensions
+    from artel_core.extensions_admin import list_installed_extensions
 
     class _Ext:
         version = "1.2.3"
 
     monkeypatch.setattr(
-        "worker_core.extensions_admin.discover_extensions",
-        lambda: {"worker-ext-demo": _Ext},
+        "artel_core.extensions_admin.discover_extensions",
+        lambda: {"artel-ext-demo": _Ext},
     )
     monkeypatch.setattr(
-        "worker_core.extensions_admin.ext_manifest.list_entries",
+        "artel_core.extensions_admin.ext_manifest.list_entries",
         lambda: [
             type(
                 "Entry",
                 (),
-                {"name": "worker-ext-demo", "source": "git+https://example.com/demo.git"},
+                {"name": "artel-ext-demo", "source": "git+https://example.com/demo.git"},
             )()
         ],
     )
@@ -235,7 +235,7 @@ def test_list_installed_extensions_includes_bundled_capabilities(monkeypatch):
 
     assert "artel-lsp" in names
     assert "artel-mcp" in names
-    assert "worker-ext-demo" in names
+    assert "artel-ext-demo" in names
     bundled = {item.name: item for item in result if item.source == "bundled"}
     assert bundled["artel-lsp"].version == "bundled"
     assert bundled["artel-mcp"].version == "bundled"

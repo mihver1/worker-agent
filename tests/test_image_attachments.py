@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import base64
 
-from worker_ai.models import ImageAttachment, Message, Role
-from worker_ai.providers.anthropic import _build_messages as build_anthropic_messages
-from worker_ai.providers.google import _build_contents as build_google_contents
-from worker_ai.providers.openai_compat import _build_messages as build_openai_messages
-from worker_ai.providers.openai_compat import _build_responses_input
+from artel_ai.models import ImageAttachment, Message, Role
+from artel_ai.providers.anthropic import _build_messages as build_anthropic_messages
+from artel_ai.providers.google import _build_contents as build_google_contents
+from artel_ai.providers.openai_compat import _build_messages as build_openai_messages
+from artel_ai.providers.openai_compat import _build_responses_input
 
 
 def _png_attachment(tmp_path):

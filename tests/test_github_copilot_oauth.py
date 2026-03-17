@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from worker_ai.oauth import (
+from artel_ai.oauth import (
     GitHubCopilotEnterpriseOAuth,
     GitHubCopilotOAuth,
     TokenStore,
     get_oauth_provider,
 )
-from worker_core.config import ProviderConfig, WorkerConfig
+from artel_core.config import ArtelConfig, ProviderConfig
 
 
 class TestGitHubCopilotOAuthProviderResolution:
@@ -20,7 +20,7 @@ class TestGitHubCopilotOAuthProviderResolution:
         assert provider.name == "github_copilot"
 
     def test_get_oauth_provider_reads_enterprise_host_from_config(self):
-        config = WorkerConfig(
+        config = ArtelConfig(
             providers={
                 "github_copilot_enterprise": ProviderConfig(
                     options={"github_host": "octo.ghe.com"},
@@ -38,7 +38,7 @@ class TestGitHubCopilotOAuthProviderResolution:
 class TestGitHubCopilotOAuthBroker:
     @pytest.mark.asyncio
     async def test_login_runs_gh_auth_and_persists_token(self, tmp_path, monkeypatch):
-        import worker_ai.oauth as oauth_mod
+        import artel_ai.oauth as oauth_mod
 
         seen_commands: list[list[str]] = []
 
@@ -84,8 +84,8 @@ class TestGitHubCopilotOAuthBroker:
 
     @pytest.mark.asyncio
     async def test_refresh_reloads_token_from_gh_cli(self, tmp_path, monkeypatch):
-        import worker_ai.oauth as oauth_mod
-        from worker_ai.oauth import OAuthToken
+        import artel_ai.oauth as oauth_mod
+        from artel_ai.oauth import OAuthToken
 
         async def fake_load_token(github_host: str) -> str | None:
             assert github_host == "octo.ghe.com"

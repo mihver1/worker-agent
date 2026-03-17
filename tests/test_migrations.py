@@ -1,17 +1,17 @@
-"""Tests for Artel first-run bootstrap and Worker state migration."""
+"""Tests for Artel first-run bootstrap and Artel state migration."""
 
 from __future__ import annotations
 
 import json
 
-from worker_core.migrations import CURRENT_VERSION, check_and_migrate
+from artel_core.migrations import CURRENT_VERSION, check_and_migrate
 
 
 def _patch_config_paths(monkeypatch, tmp_path):
-    import worker_core.config as cfg_mod
+    import artel_core.config as cfg_mod
 
     artel_root = tmp_path / ".config" / "artel"
-    legacy_root = tmp_path / ".config" / "worker"
+    legacy_root = tmp_path / ".config" / "artel"
 
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", artel_root)
     monkeypatch.setattr(cfg_mod, "LEGACY_CONFIG_DIR", legacy_root)
@@ -78,14 +78,14 @@ def _patch_config_paths(monkeypatch, tmp_path):
 
 
 class TestMigrations:
-    def test_check_and_migrate_copies_global_and_project_worker_state(
+    def test_check_and_migrate_copies_global_and_project_artel_state(
         self,
         tmp_path,
         monkeypatch,
     ):
         artel_root, legacy_root = _patch_config_paths(monkeypatch, tmp_path)
         project_dir = tmp_path / "project"
-        legacy_project_dir = project_dir / ".worker"
+        legacy_project_dir = project_dir / ".artel"
 
         legacy_root.mkdir(parents=True)
         (legacy_root / "config.toml").write_text(
@@ -178,7 +178,7 @@ class TestMigrations:
         state = json.loads((artel_root / "state.json").read_text(encoding="utf-8"))
         assert state["config_version"] == CURRENT_VERSION
         assert state["legacy_marker"] == "present"
-        assert "config.toml" in state["artel_migrations"]["worker_global_to_artel"]["copied"]
+        assert "config.toml" in state["artel_migrations"]["artel_global_to_artel"]["copied"]
         assert str(project_dir.resolve()) in state["artel_project_migrations"]
 
         # Idempotent re-run.
@@ -194,7 +194,7 @@ class TestArtelBootstrap:
         tmp_path,
         monkeypatch,
     ):
-        import worker_core.artel_bootstrap as bootstrap_mod
+        import artel_core.artel_bootstrap as bootstrap_mod
 
         seen: list[str | None] = []
         monkeypatch.setattr(
@@ -214,7 +214,7 @@ class TestArtelBootstrap:
     def test_bootstrap_artel_skips_cmux_preflight_for_non_interactive_command(
         self, tmp_path, monkeypatch
     ):
-        import worker_core.artel_bootstrap as bootstrap_mod
+        import artel_core.artel_bootstrap as bootstrap_mod
 
         seen: list[str | None] = []
         monkeypatch.setattr(
@@ -234,7 +234,7 @@ class TestArtelBootstrap:
         assert seen == [result.project_dir]
 
     def test_bootstrap_artel_skips_cmux_preflight_for_connect_command(self, tmp_path, monkeypatch):
-        import worker_core.artel_bootstrap as bootstrap_mod
+        import artel_core.artel_bootstrap as bootstrap_mod
 
         monkeypatch.setattr(
             bootstrap_mod,

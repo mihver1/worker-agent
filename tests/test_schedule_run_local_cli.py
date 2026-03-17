@@ -8,14 +8,14 @@ from click.testing import CliRunner
 def test_schedule_cli_run_uses_managed_local_server_when_remote_not_provided(monkeypatch, tmp_path):
     import importlib
 
-    from worker_core import config as cfg_mod
+    from artel_core import config as cfg_mod
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".artel").mkdir()
 
-    cli_mod = importlib.import_module("worker_core.cli")
+    cli_mod = importlib.import_module("artel_core.cli")
 
     class _Handle:
         remote_url = "ws://127.0.0.1:7432"
@@ -36,9 +36,9 @@ def test_schedule_cli_run_uses_managed_local_server_when_remote_not_provided(mon
             return {"schedule_id": schedule_id, "ok": True}
 
     monkeypatch.setattr(
-        "worker_tui.local_server.ensure_managed_local_server", fake_ensure_managed_local_server
+        "artel_tui.local_server.ensure_managed_local_server", fake_ensure_managed_local_server
     )
-    monkeypatch.setattr("worker_core.control.RemoteWorkerControl", _FakeControl)
+    monkeypatch.setattr("artel_core.control.RemoteArtelControl", _FakeControl)
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["schedule", "run", "heartbeat"])

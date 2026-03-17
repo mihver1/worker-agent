@@ -1,0 +1,33 @@
+{
+  "include": [
+    "packages",
+    "extensions",
+    "src",
+    "tests"
+  ],
+  "exclude": [
+    "**/__pycache__",
+    ".git",
+    ".venv",
+    ".warp",
+    ".pytest_cache",
+    ".ruff_cache",
+    "site"
+  ],
+  "venvPath": ".",
+  "venv": ".venv",
+  "executionEnvironments": [
+    {
+      "root": ".",
+      "extraPaths": [
+        "src",
+        "packages/artel-ai/src",
+        "packages/artel-core/src",
+        "packages/artel-server/src",
+        "packages/artel-tui/src",
+        "packages/artel-web/src",
+        "extensions/artel-ext-example/src"
+      ]
+    }
+  ]
+}

@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import Mock
 
 import pytest
-from worker_ai.models import (
+from artel_ai.models import (
     Done,
     ImageAttachment,
     Message,
@@ -16,9 +16,9 @@ from worker_ai.models import (
     ToolDef,
     ToolParam,
 )
-from worker_ai.providers import create_default_registry
-from worker_ai.providers.bedrock import BedrockProvider, _build_messages
-from worker_ai.providers.openai_compat import OpenAIProvider
+from artel_ai.providers import create_default_registry
+from artel_ai.providers.bedrock import BedrockProvider, _build_messages
+from artel_ai.providers.openai_compat import OpenAIProvider
 
 
 def _test_tool() -> ToolDef:

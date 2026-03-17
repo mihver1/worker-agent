@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from worker_server.server import _tool_locations
+from artel_server.server import _tool_locations
 
 
 def test_tool_locations_resolve_read_paths_and_default_to_first_line(tmp_path):

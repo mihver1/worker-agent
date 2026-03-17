@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+from artel_ai.models import Done, TextDelta, Usage
+from artel_core.agent import AgentSession
+from artel_core.bootstrap import RuntimeBootstrap
+from artel_core.config import ArtelConfig
+from artel_core.delegation.registry import get_registry, reset_registry
+from artel_core.execution import ToolExecutionContext, bind_tool_execution_context
+from artel_core.extensions import ExtensionContext, HookDispatcher
 from conftest import MockProvider
-from worker_ai.models import Done, TextDelta, Usage
-from worker_core.agent import AgentSession
-from worker_core.bootstrap import RuntimeBootstrap
-from worker_core.config import WorkerConfig
-from worker_core.delegation.registry import get_registry, reset_registry
-from worker_core.execution import ToolExecutionContext, bind_tool_execution_context
-from worker_core.extensions import ExtensionContext, HookDispatcher
 
 
 async def _fake_bootstrap_runtime(*args, **kwargs) -> RuntimeBootstrap:
@@ -27,9 +27,9 @@ async def _fake_bootstrap_runtime(*args, **kwargs) -> RuntimeBootstrap:
 
 
 async def test_delegate_tools_run_and_wait(tmp_path, monkeypatch) -> None:
-    import worker_core.delegation.service as service_mod
-    from worker_core.delegation.service import DelegationService
-    from worker_core.delegation.tools import (
+    import artel_core.delegation.service as service_mod
+    from artel_core.delegation.service import DelegationService
+    from artel_core.delegation.tools import (
         CancelDelegateTool,
         DelegateTaskTool,
         GetDelegateTool,
@@ -41,7 +41,7 @@ async def test_delegate_tools_run_and_wait(tmp_path, monkeypatch) -> None:
 
     def service_factory():
         return DelegationService(
-            ExtensionContext(project_dir=str(tmp_path), runtime="local", config=WorkerConfig())
+            ExtensionContext(project_dir=str(tmp_path), runtime="local", config=ArtelConfig())
         )  # noqa: E731
 
     spawn_tool = DelegateTaskTool(service_factory)

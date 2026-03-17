@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import pytest
-from conftest import MockProvider
-from worker_ai.models import Done, Message, Role, TextDelta, ToolCallDelta, ToolDef, Usage
-from worker_core import extensions as extensions_mod
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.extensions import (
+from artel_ai.models import Done, Message, Role, TextDelta, ToolCallDelta, ToolDef, Usage
+from artel_core import extensions as extensions_mod
+from artel_core.agent import AgentEventType, AgentSession
+from artel_core.extensions import (
     CommandHandler,
     Extension,
     HookDispatcher,
@@ -16,7 +15,8 @@ from worker_core.extensions import (
     load_extensions_async,
     reload_extensions_async,
 )
-from worker_core.tools import Tool
+from artel_core.tools import Tool
+from conftest import MockProvider
 
 # ── Test Extensions ───────────────────────────────────────────────
 
@@ -280,7 +280,7 @@ async def test_on_compaction_hook_fires():
 
 @pytest.mark.asyncio
 async def test_before_tool_call_modifies_args(tmp_workdir):
-    from worker_core.tools.builtins import create_builtin_tools
+    from artel_core.tools.builtins import create_builtin_tools
 
     ext = ArgModifyExtension()
     track_ext = SampleExtension()
@@ -386,11 +386,8 @@ def test_load_extensions_returns_tuple():
     assert isinstance(dispatcher, HookDispatcher)
 
 
-def test_discover_extensions_prefers_artel_group_and_falls_back_to_worker(monkeypatch):
+def test_discover_extensions_uses_artel_group(monkeypatch):
     class ArtelExtension(Extension):
-        name = "shared"
-
-    class LegacyExtension(Extension):
         name = "shared"
 
     class LegacyOnlyExtension(Extension):
@@ -406,9 +403,8 @@ def test_discover_extensions_prefers_artel_group_and_falls_back_to_worker(monkey
 
     def fake_entry_points(*, group):
         return {
-            "artel.extensions": [FakeEntryPoint("shared", ArtelExtension)],
-            "worker.extensions": [
-                FakeEntryPoint("shared", LegacyExtension),
+            "artel.extensions": [
+                FakeEntryPoint("shared", ArtelExtension),
                 FakeEntryPoint("legacy-only", LegacyOnlyExtension),
             ],
         }.get(group, [])

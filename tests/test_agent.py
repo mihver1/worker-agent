@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from artel_ai.models import Done, TextDelta, ToolCallDelta, Usage
+from artel_core.agent import AgentEventType, AgentSession
+from artel_core.config import PermissionsConfig
+from artel_core.tools.builtins import create_builtin_tools
 from conftest import MockProvider
-from worker_ai.models import Done, TextDelta, ToolCallDelta, Usage
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.config import PermissionsConfig
-from worker_core.tools.builtins import create_builtin_tools
 
 
 @pytest.mark.asyncio

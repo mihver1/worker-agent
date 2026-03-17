@@ -8,9 +8,9 @@ from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
-from worker_ai.models import Message, Role
-from worker_core.config import WorkerConfig
-from worker_server.server import ServerState
+from artel_ai.models import Message, Role
+from artel_core.config import ArtelConfig
+from artel_server.server import ServerState
 
 
 def _record_class(name: str) -> type[Any]:
@@ -261,7 +261,7 @@ def _patch_acp_server_state(
     state: ServerState,
     titles: dict[str, str],
 ) -> None:
-    import worker_core.cli as cli_mod
+    import artel_core.cli as cli_mod
 
     async def fake_create_state(project_dir: str | None = None) -> ServerState:
         del project_dir
@@ -420,11 +420,11 @@ def _config_option_current_value(config_options: list[Any], option_id: str) -> A
 
 @pytest.mark.asyncio
 async def test_run_acp_scopes_workspace_and_updates_config(monkeypatch, tmp_path):
-    import worker_server.acp as acp_mod
+    import artel_server.acp as acp_mod
 
     captured: dict[str, Any] = {}
     titles: dict[str, str] = {}
-    state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+    state = ServerState(config=ArtelConfig(), default_project_dir=str(tmp_path))
 
     async def fake_run_agent(agent: Any, **kwargs: Any) -> None:
         assert kwargs == {"use_unstable_protocol": True}
@@ -483,12 +483,12 @@ async def test_run_acp_prompt_streams_updates_and_permission_requests(
     monkeypatch,
     tmp_path,
 ):
-    import worker_server.acp as acp_mod
-    import worker_server.server as server_mod
+    import artel_server.acp as acp_mod
+    import artel_server.server as server_mod
 
     captured: dict[str, Any] = {}
     titles: dict[str, str] = {}
-    state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+    state = ServerState(config=ArtelConfig(), default_project_dir=str(tmp_path))
 
     class _Store:
         def __init__(self) -> None:
@@ -654,11 +654,11 @@ async def test_run_acp_prompt_streams_updates_and_permission_requests(
 
 @pytest.mark.asyncio
 async def test_run_acp_load_session_replays_visible_history(monkeypatch, tmp_path):
-    import worker_server.acp as acp_mod
+    import artel_server.acp as acp_mod
 
     captured: dict[str, Any] = {}
     titles: dict[str, str] = {}
-    state = ServerState(config=WorkerConfig(), default_project_dir=str(tmp_path))
+    state = ServerState(config=ArtelConfig(), default_project_dir=str(tmp_path))
     session_id = "existing-session"
     state.session_provider_models[session_id] = state.config.agent.model
     state.session_projects[session_id] = str(tmp_path)

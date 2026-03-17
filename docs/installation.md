@@ -56,7 +56,7 @@ This creates:
 - `.artel/config.toml` in the current project for local overrides
 - `.artel/AGENTS.md` for project-specific instructions
 
-On first run, Artel also migrates legacy Worker config and project state when it finds them.
+On first run, Artel also migrates legacy Artel config and project state when it finds them.
 
 ## Local docs preview
 

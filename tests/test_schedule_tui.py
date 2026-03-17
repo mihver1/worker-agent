@@ -5,9 +5,9 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_tui_schedules_remote_command_lists_runs(monkeypatch):
-    from worker_tui.app import WorkerApp
+    from artel_tui.app import ArtelApp
 
-    app = WorkerApp(remote_url="ws://127.0.0.1:7432", auth_token="tok")
+    app = ArtelApp(remote_url="ws://127.0.0.1:7432", auth_token="tok")
     messages: list[tuple[str, str]] = []
     app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
 

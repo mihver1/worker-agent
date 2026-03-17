@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import pytest
-from worker_ai.models import Done, ToolCallDelta, Usage
-from worker_core.agent import AgentEventType, AgentSession
-from worker_core.rules import add_rule, move_rule
-from worker_core.tools.builtins import BashTool
+from artel_ai.models import Done, ToolCallDelta, Usage
+from artel_core.agent import AgentEventType, AgentSession
+from artel_core.rules import add_rule, move_rule
+from artel_core.tools.builtins import BashTool
 
 
 class _Provider:
@@ -24,7 +24,7 @@ class _Provider:
 
 @pytest.mark.asyncio
 async def test_first_matching_rule_by_order_wins(monkeypatch, tmp_path):
-    from worker_core import config as cfg_mod
+    from artel_core import config as cfg_mod
 
     fake_config = tmp_path / "config"
     monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)

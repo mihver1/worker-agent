@@ -11,7 +11,7 @@ import pytest
 class TestManagedLocalServerIdempotency:
     @pytest.mark.asyncio
     async def test_concurrent_ensure_reuses_single_started_server(self, tmp_path, monkeypatch):
-        import worker_tui.local_server as local_server_mod
+        import artel_tui.local_server as local_server_mod
 
         config = SimpleNamespace(server=SimpleNamespace(auth_token="artel_configured", port=7432))
         started: list[list[str]] = []

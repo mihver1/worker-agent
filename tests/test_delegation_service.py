@@ -2,15 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
+from artel_ai.models import Done, ToolDef, Usage
+from artel_core.agent import AgentEvent, AgentEventType, AgentSession
+from artel_core.bootstrap import RuntimeBootstrap
+from artel_core.config import ArtelConfig
+from artel_core.delegation.registry import reset_registry
+from artel_core.delegation.service import DelegationService
+from artel_core.extensions import ExtensionContext, HookDispatcher
+from artel_core.tools import Tool
 from conftest import MockProvider
-from worker_ai.models import Done, ToolDef, Usage
-from worker_core.agent import AgentEvent, AgentEventType, AgentSession
-from worker_core.bootstrap import RuntimeBootstrap
-from worker_core.config import WorkerConfig
-from worker_core.delegation.registry import reset_registry
-from worker_core.delegation.service import DelegationService
-from worker_core.extensions import ExtensionContext, HookDispatcher
-from worker_core.tools import Tool
 
 
 class _ExtensionTool(Tool):
@@ -45,7 +45,7 @@ async def _fake_bootstrap_runtime(*args, **kwargs) -> RuntimeBootstrap:
 
 
 async def test_delegate_task_runs_and_waits(tmp_path, monkeypatch) -> None:
-    import worker_core.delegation.service as service_mod
+    import artel_core.delegation.service as service_mod
 
     reset_registry()
     monkeypatch.setattr(service_mod, "bootstrap_runtime", _fake_bootstrap_runtime)
@@ -56,7 +56,7 @@ async def test_delegate_task_runs_and_waits(tmp_path, monkeypatch) -> None:
     )
 
     service = DelegationService(
-        ExtensionContext(project_dir=str(tmp_path), runtime="local", config=WorkerConfig())
+        ExtensionContext(project_dir=str(tmp_path), runtime="local", config=ArtelConfig())
     )
     parent_session = AgentSession(
         provider=MockProvider(),
@@ -75,7 +75,7 @@ async def test_delegate_task_runs_and_waits(tmp_path, monkeypatch) -> None:
 
 class _DummyContext:
     def __init__(self) -> None:
-        self.config = WorkerConfig()
+        self.config = ArtelConfig()
         self.config.permissions.edit = "ask"
         self.config.permissions.write = "ask"
         self.config.permissions.bash = "ask"
@@ -107,7 +107,7 @@ def test_config_for_inherit_preserves_parent_permissions() -> None:
 
 
 async def test_inherit_profile_keeps_extensions_and_parent_permission_callback(monkeypatch) -> None:
-    import worker_core.delegation.service as service_mod
+    import artel_core.delegation.service as service_mod
 
     reset_registry()
     captured: dict[str, Any] = {}

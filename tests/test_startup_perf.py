@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 
 def test_ensure_managed_local_server_does_not_block_on_tray_bootstrap(tmp_path, monkeypatch):
-    import worker_tui.local_server as local_server_mod
-    import worker_tui.server_tray as tray_mod
+    import artel_tui.local_server as local_server_mod
+    import artel_tui.server_tray as tray_mod
 
     config = SimpleNamespace(server=SimpleNamespace(auth_token="artel_configured", port=7432))
     tray_started = threading.Event()

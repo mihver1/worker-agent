@@ -5,7 +5,7 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-from worker_core.agent import AgentSession
+from artel_core.agent import AgentSession
 
 # ── Prompt templates ─────────────────────────────────────────────
 
@@ -15,7 +15,7 @@ class TestPrompts:
 
     def test_load_prompts_from_project(self, tmp_path):
         """Project .artel/prompts/*.md are loaded."""
-        from worker_core.prompts import load_prompts
+        from artel_core.prompts import load_prompts
 
         prompts_dir = tmp_path / ".artel" / "prompts"
         prompts_dir.mkdir(parents=True)
@@ -29,8 +29,8 @@ class TestPrompts:
 
     def test_load_prompts_global(self, tmp_path, monkeypatch):
         """Global prompts from CONFIG_DIR/prompts/ are loaded."""
-        import worker_core.config as cfg_mod
-        from worker_core import prompts as prompts_mod
+        import artel_core.config as cfg_mod
+        from artel_core import prompts as prompts_mod
 
         fake_config = tmp_path / "config"
         fake_config.mkdir()
@@ -46,8 +46,8 @@ class TestPrompts:
 
     def test_project_overrides_global(self, tmp_path, monkeypatch):
         """Project prompts override global prompts with the same name."""
-        import worker_core.config as cfg_mod
-        from worker_core import prompts as prompts_mod
+        import artel_core.config as cfg_mod
+        from artel_core import prompts as prompts_mod
 
         fake_config = tmp_path / "config"
         fake_config.mkdir()
@@ -69,7 +69,7 @@ class TestPrompts:
 
     def test_render_prompt_substitution(self):
         """{{variable}} placeholders are replaced."""
-        from worker_core.prompts import render_prompt
+        from artel_core.prompts import render_prompt
 
         tpl = "Hello {{name}}, please review {{file}}"
         result = render_prompt(tpl, {"name": "Alice", "file": "main.py"})
@@ -77,7 +77,7 @@ class TestPrompts:
 
     def test_render_prompt_unknown_vars_preserved(self):
         """Unknown variables are left as-is."""
-        from worker_core.prompts import render_prompt
+        from artel_core.prompts import render_prompt
 
         tpl = "Hello {{name}}, see {{unknown}}"
         result = render_prompt(tpl, {"name": "Bob"})
@@ -85,7 +85,7 @@ class TestPrompts:
 
     def test_render_prompt_no_vars(self):
         """Template without variables is returned unchanged."""
-        from worker_core.prompts import render_prompt
+        from artel_core.prompts import render_prompt
 
         tpl = "Just a plain template"
         assert render_prompt(tpl, None) == tpl
@@ -93,7 +93,7 @@ class TestPrompts:
 
     def test_list_prompts(self, tmp_path):
         """list_prompts returns sorted names."""
-        from worker_core.prompts import list_prompts
+        from artel_core.prompts import list_prompts
 
         prompts_dir = tmp_path / ".artel" / "prompts"
         prompts_dir.mkdir(parents=True)
@@ -112,7 +112,7 @@ class TestSkills:
 
     def test_load_skills_with_frontmatter(self, tmp_path):
         """Skills with YAML-like frontmatter are parsed correctly."""
-        from worker_core.skills import load_skills
+        from artel_core.skills import load_skills
 
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
@@ -137,7 +137,7 @@ class TestSkills:
 
     def test_load_skills_without_frontmatter(self, tmp_path):
         """Skills without frontmatter use filename as name."""
-        from worker_core.skills import load_skills
+        from artel_core.skills import load_skills
 
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
@@ -154,8 +154,8 @@ class TestSkills:
 
     def test_project_skills_override_global(self, tmp_path, monkeypatch):
         """Project skills override global skills with the same name."""
-        import worker_core.config as cfg_mod
-        from worker_core import skills as skills_mod
+        import artel_core.config as cfg_mod
+        from artel_core import skills as skills_mod
 
         fake_config = tmp_path / "config"
         fake_config.mkdir()
@@ -182,7 +182,7 @@ class TestSkills:
 
     def test_build_skills_header(self, tmp_path):
         """Skills header contains all skill names and descriptions."""
-        from worker_core.skills import build_skills_header, load_skills
+        from artel_core.skills import build_skills_header, load_skills
 
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
@@ -204,13 +204,13 @@ class TestSkills:
 
     def test_build_skills_header_empty(self):
         """Empty skills dict produces empty header."""
-        from worker_core.skills import build_skills_header
+        from artel_core.skills import build_skills_header
 
         assert build_skills_header({}) == ""
 
     def test_inject_skill(self, tmp_path):
         """inject_skill appends skill content to system prompt."""
-        from worker_core.skills import Skill, inject_skill
+        from artel_core.skills import Skill, inject_skill
 
         skill = Skill(
             name="test-skill",
@@ -224,7 +224,7 @@ class TestSkills:
 
     def test_list_skills(self, tmp_path):
         """list_skills returns sorted names."""
-        from worker_core.skills import list_skills
+        from artel_core.skills import list_skills
 
         skills_dir = tmp_path / ".artel" / "skills"
         skills_dir.mkdir(parents=True)
@@ -264,7 +264,7 @@ class TestThemes:
 
     def test_builtin_themes_available(self):
         """All four built-in themes exist."""
-        from worker_tui.themes import BUILTIN_THEMES
+        from artel_tui.themes import BUILTIN_THEMES
 
         assert "dark" in BUILTIN_THEMES
         assert "light" in BUILTIN_THEMES
@@ -273,7 +273,7 @@ class TestThemes:
 
     def test_builtin_themes_valid_css(self):
         """Built-in themes contain expected CSS selectors."""
-        from worker_tui.themes import BUILTIN_THEMES
+        from artel_tui.themes import BUILTIN_THEMES
 
         for name, css in BUILTIN_THEMES.items():
             assert "Screen" in css, f"{name} missing Screen selector"
@@ -282,7 +282,7 @@ class TestThemes:
 
     def test_user_theme_override(self, tmp_path, monkeypatch):
         """User themes override built-in ones with the same name."""
-        from worker_tui import themes as themes_mod
+        from artel_tui import themes as themes_mod
 
         fake_config = tmp_path / "config"
         fake_config.mkdir()
@@ -298,7 +298,7 @@ class TestThemes:
 
     def test_user_custom_theme(self, tmp_path, monkeypatch):
         """User can add entirely new themes."""
-        from worker_tui import themes as themes_mod
+        from artel_tui import themes as themes_mod
 
         fake_config = tmp_path / "config"
         fake_config.mkdir()
@@ -314,7 +314,7 @@ class TestThemes:
 
     def test_list_themes(self, tmp_path, monkeypatch):
         """list_themes includes built-in and user themes."""
-        from worker_tui import themes as themes_mod
+        from artel_tui import themes as themes_mod
 
         fake_config = tmp_path / "config"
         fake_config.mkdir()
@@ -331,7 +331,7 @@ class TestThemes:
 
     def test_project_theme_override(self, tmp_path, monkeypatch):
         """Project themes override global user themes."""
-        from worker_tui import themes as themes_mod
+        from artel_tui import themes as themes_mod
 
         fake_config = tmp_path / "config"
         fake_config.mkdir()
@@ -360,14 +360,14 @@ class TestKeybindingsConfig:
 
     def test_default_empty(self):
         """Default keybindings config has no bindings."""
-        from worker_core.config import KeybindingsConfig
+        from artel_core.config import KeybindingsConfig
 
         kb = KeybindingsConfig()
         assert kb.bindings == {}
 
     def test_keybindings_in_config(self, tmp_path):
         """Keybindings section is parsed from config.toml."""
-        from worker_core.config import load_config
+        from artel_core.config import load_config
 
         config_dir = tmp_path / ".artel"
         config_dir.mkdir()
@@ -388,7 +388,7 @@ class TestKeybindingsConfig:
 
     def test_keybindings_missing_section(self, tmp_path):
         """Config without keybindings section uses defaults."""
-        from worker_core.config import load_config
+        from artel_core.config import load_config
 
         config_dir = tmp_path / ".artel"
         config_dir.mkdir()
@@ -405,7 +405,7 @@ class TestFrontmatterParsing:
     """Tests for the frontmatter parser."""
 
     def test_parse_valid(self):
-        from worker_core.skills import _parse_frontmatter
+        from artel_core.skills import _parse_frontmatter
 
         raw = "---\nname: foo\ndescription: bar\n---\n\n# Body"
         meta, body = _parse_frontmatter(raw)
@@ -413,7 +413,7 @@ class TestFrontmatterParsing:
         assert body == "# Body"
 
     def test_parse_no_frontmatter(self):
-        from worker_core.skills import _parse_frontmatter
+        from artel_core.skills import _parse_frontmatter
 
         raw = "# Just a heading\n\nSome text."
         meta, body = _parse_frontmatter(raw)
@@ -421,7 +421,7 @@ class TestFrontmatterParsing:
         assert body == raw.strip()
 
     def test_parse_empty_frontmatter(self):
-        from worker_core.skills import _parse_frontmatter
+        from artel_core.skills import _parse_frontmatter
 
         raw = "---\n---\n\nBody text"
         meta, body = _parse_frontmatter(raw)
@@ -430,7 +430,7 @@ class TestFrontmatterParsing:
 
     def test_parse_multiline_ignored(self):
         """Only key: value lines are parsed."""
-        from worker_core.skills import _parse_frontmatter
+        from artel_core.skills import _parse_frontmatter
 
         raw = "---\nname: test\nsome random line\ndescription: desc\n---\nBody"
         meta, body = _parse_frontmatter(raw)

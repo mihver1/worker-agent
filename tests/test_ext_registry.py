@@ -6,28 +6,28 @@ import json
 from unittest.mock import Mock, patch
 
 import pytest
-from worker_core import ext_registry
-from worker_core.config import RegistryConfig
+from artel_core import ext_registry
+from artel_core.config import RegistryConfig
 
 # ── Fixtures ──────────────────────────────────────────────────────
 
 SAMPLE_ENTRIES = [
     {
-        "name": "worker-ext-foo",
+        "name": "artel-ext-foo",
         "description": "Foo tools",
         "repo": "git+https://example.com/foo.git",
         "tags": ["tools", "demo"],
         "author": "alice",
     },
     {
-        "name": "worker-ext-bar",
+        "name": "artel-ext-bar",
         "description": "Bar integration",
         "repo": "git+https://example.com/bar.git",
         "tags": ["integration"],
         "author": "bob",
     },
     {
-        "name": "worker-ext-mcp",
+        "name": "artel-ext-mcp",
         "description": "MCP client for tools and resources",
         "repo": "git+https://example.com/mcp.git",
         "tags": ["mcp", "tools"],
@@ -53,7 +53,7 @@ def _mock_httpx_get(entries: list[dict], *, fmt: str = "json"):
     resp = Mock()
     resp.content = body.encode("utf-8")
     resp.raise_for_status = Mock()
-    return patch("worker_core.ext_registry.httpx.get", return_value=resp)
+    return patch("artel_core.ext_registry.httpx.get", return_value=resp)
 
 
 # ── fetch_registry ────────────────────────────────────────────────
@@ -64,11 +64,11 @@ class TestFetchRegistry:
         with _mock_httpx_get(SAMPLE_ENTRIES):
             result = ext_registry.fetch_registry("https://r.example.com/ext.json", use_cache=False)
         assert len(result) == 3
-        assert result[0]["name"] == "worker-ext-foo"
+        assert result[0]["name"] == "artel-ext-foo"
 
     def test_returns_empty_for_non_list(self):
         resp = Mock(content=json.dumps({"not": "a list"}).encode(), raise_for_status=Mock())
-        with patch("worker_core.ext_registry.httpx.get", return_value=resp):
+        with patch("artel_core.ext_registry.httpx.get", return_value=resp):
             result = ext_registry.fetch_registry("https://r.example.com/ext.json", use_cache=False)
         assert result == []
 
@@ -79,7 +79,7 @@ class TestFetchRegistry:
                 use_cache=False,
             )
         assert len(result) == 3
-        assert result[0]["name"] == "worker-ext-foo"
+        assert result[0]["name"] == "artel-ext-foo"
 
     def test_writes_cache(self, _isolated_cache):
         with _mock_httpx_get(SAMPLE_ENTRIES):
@@ -95,7 +95,7 @@ class TestFetchRegistry:
             ext_registry.fetch_registry("https://r.example.com/ext.json", use_cache=True)
 
         # Second call should NOT hit httpx
-        with patch("worker_core.ext_registry.httpx.get") as mock_get:
+        with patch("artel_core.ext_registry.httpx.get") as mock_get:
             result = ext_registry.fetch_registry("https://r.example.com/ext.json", use_cache=True)
             mock_get.assert_not_called()
         assert len(result) == 3
@@ -128,7 +128,7 @@ class TestSearchAll:
                 use_cache=False,
             )
         assert len(results) == 1
-        assert results[0].name == "worker-ext-foo"
+        assert results[0].name == "artel-ext-foo"
 
     def test_search_by_tag(self):
         with _mock_httpx_get(SAMPLE_ENTRIES):
@@ -138,7 +138,7 @@ class TestSearchAll:
                 use_cache=False,
             )
         assert len(results) == 1
-        assert results[0].name == "worker-ext-mcp"
+        assert results[0].name == "artel-ext-mcp"
 
     def test_search_by_description(self):
         with _mock_httpx_get(SAMPLE_ENTRIES):
@@ -148,7 +148,7 @@ class TestSearchAll:
                 use_cache=False,
             )
         assert len(results) == 1
-        assert results[0].name == "worker-ext-bar"
+        assert results[0].name == "artel-ext-bar"
 
     def test_search_across_multiple_registries(self):
         entries_a = [SAMPLE_ENTRIES[0]]
@@ -162,15 +162,15 @@ class TestSearchAll:
             raise_for_status=Mock(),
         )
 
-        with patch("worker_core.ext_registry.httpx.get", side_effect=[resp_a, resp_b]):
+        with patch("artel_core.ext_registry.httpx.get", side_effect=[resp_a, resp_b]):
             results = ext_registry.search_all(
                 self._regs("https://a.example.com/ext.json", "https://b.example.com/ext.json"),
-                "worker-ext",
+                "artel-ext",
                 use_cache=False,
             )
         assert len(results) == 2
         names = {r.name for r in results}
-        assert names == {"worker-ext-foo", "worker-ext-bar"}
+        assert names == {"artel-ext-foo", "artel-ext-bar"}
 
     def test_search_no_matches(self):
         with _mock_httpx_get(SAMPLE_ENTRIES):
@@ -182,7 +182,7 @@ class TestSearchAll:
         assert results == []
 
     def test_search_skips_failing_registry(self):
-        with patch("worker_core.ext_registry.httpx.get", side_effect=Exception("network")):
+        with patch("artel_core.ext_registry.httpx.get", side_effect=Exception("network")):
             results = ext_registry.search_all(
                 self._regs("https://broken.example.com/ext.json"),
                 "foo",
@@ -216,9 +216,20 @@ def test_invalidate_cache(_isolated_cache):
 
 
 class TestCliRegistryCommands:
-    def test_registry_list(self):
+    def test_registry_list(self, tmp_path, monkeypatch):
+        from artel_core import cli as cli_mod
+        from artel_core import config as config_mod
+        from artel_core import extensions_admin as admin_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
+
+        fake_config = tmp_path / "config.toml"
+        if fake_config.exists():
+            fake_config.unlink()
+        monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(config_mod, "GLOBAL_CONFIG", fake_config)
+        monkeypatch.setattr(config_mod, "LEGACY_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(config_mod, "LEGACY_GLOBAL_CONFIG", fake_config)
+        monkeypatch.setattr(admin_mod, "GLOBAL_CONFIG", fake_config)
 
         runner = CliRunner()
         result = runner.invoke(cli_mod.cli, ["ext", "registry", "list"])
@@ -228,13 +239,19 @@ class TestCliRegistryCommands:
     def test_registry_add_and_remove(self, tmp_path, monkeypatch):
         import tomllib
 
+        from artel_core import cli as cli_mod
+        from artel_core import config as config_mod
+        from artel_core import extensions_admin as admin_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
-        from worker_core import config as config_mod
 
         fake_config = tmp_path / "config.toml"
-        fake_config.write_text("", encoding="utf-8")
+        if fake_config.exists():
+            fake_config.unlink()
+        monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
         monkeypatch.setattr(config_mod, "GLOBAL_CONFIG", fake_config)
+        monkeypatch.setattr(config_mod, "LEGACY_CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(config_mod, "LEGACY_GLOBAL_CONFIG", fake_config)
+        monkeypatch.setattr(admin_mod, "GLOBAL_CONFIG", fake_config)
 
         runner = CliRunner()
 
@@ -269,16 +286,16 @@ class TestCliRegistryCommands:
         assert not any(r["name"] == "myco" for r in regs)
 
     def test_cannot_remove_official(self):
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
         runner = CliRunner()
         result = runner.invoke(cli_mod.cli, ["ext", "registry", "remove", "official"])
         assert "Cannot remove" in result.output
 
     def test_remove_nonexistent(self):
+        from artel_core import cli as cli_mod
         from click.testing import CliRunner
-        from worker_core import cli as cli_mod
 
         runner = CliRunner()
         result = runner.invoke(cli_mod.cli, ["ext", "registry", "remove", "nosuch"])

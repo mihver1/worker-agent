@@ -1,0 +1,1 @@
+"""Artel web package."""

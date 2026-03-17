@@ -6,8 +6,8 @@ import textwrap
 from pathlib import Path
 
 import pytest
-from worker_core.tools.builtins import create_builtin_tools
-from worker_core.tools.extra_search import AgTool, GlobTool, RipgrepTool, create_extra_tools
+from artel_core.tools.builtins import create_builtin_tools
+from artel_core.tools.extra_search import AgTool, GlobTool, RipgrepTool, create_extra_tools
 
 _FAKE_SEARCH_SCRIPT = """#!/usr/bin/env python3
 from __future__ import annotations
@@ -109,7 +109,7 @@ def _install_fake_binary(bin_dir: Path, name: str) -> None:
 def test_create_extra_tools_only_registers_available_binaries(monkeypatch, tmp_path: Path) -> None:
     paths = {"ag": "/fake/ag", "rg": None}
     monkeypatch.setattr(
-        "worker_core.tools.extra_search.shutil.which",
+        "artel_core.tools.extra_search.shutil.which",
         lambda name: paths.get(name),
     )
 

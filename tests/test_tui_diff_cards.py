@@ -4,7 +4,7 @@ import pytest
 
 
 def test_write_diff_result_keeps_single_tool_lifecycle_card():
-    from worker_core.tool_display import (
+    from artel_core.tool_display import (
         build_file_diff_display,
         format_tool_call_display,
         format_tool_result_display,
@@ -31,7 +31,7 @@ def test_write_diff_result_keeps_single_tool_lifecycle_card():
 
 
 def test_diff_lexer_follows_file_extension():
-    from worker_tui.app import _resolve_diff_lexer
+    from artel_tui.app import _resolve_diff_lexer
 
     lexer = _resolve_diff_lexer("demo.py", "@@ -0,0 +1 @@\n+print(1)\n")
 
@@ -40,11 +40,11 @@ def test_diff_lexer_follows_file_extension():
 
 @pytest.mark.asyncio
 async def test_diff_widget_renders_syntax_highlighted_body():
+    from artel_tui.app import DiffWidget
     from rich.table import Table
     from textual.app import App, ComposeResult
     from textual.visual import RichVisual
     from textual.widgets import Static
-    from worker_tui.app import DiffWidget
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -62,8 +62,8 @@ async def test_diff_widget_renders_syntax_highlighted_body():
 
 @pytest.mark.asyncio
 async def test_tool_card_file_diff_renders_inside_scrollable_container():
+    from artel_tui.app import ToolCard
     from textual.app import App, ComposeResult
-    from worker_tui.app import ToolCard
 
     class TestApp(App[None]):
         def compose(self) -> ComposeResult:
@@ -88,7 +88,7 @@ async def test_tool_card_file_diff_renders_inside_scrollable_container():
 
 
 def test_highlight_diff_code_text_does_not_force_black_background():
-    from worker_tui.app import _highlight_diff_code_text, _resolve_diff_lexer
+    from artel_tui.app import _highlight_diff_code_text, _resolve_diff_lexer
 
     lexer = _resolve_diff_lexer("demo.py", "+def foo():\n")
     text = _highlight_diff_code_text("def foo():", lexer)
