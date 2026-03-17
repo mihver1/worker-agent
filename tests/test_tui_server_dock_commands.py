@@ -235,6 +235,92 @@ async def test_server_select_command_connects_to_saved_server(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
+async def test_server_remove_current_remote_does_not_reappear_on_refresh(monkeypatch, tmp_path):
+    import worker_tui.app as tui_app
+    from worker_core import config as cfg_mod
+    from worker_tui.app import ServerDockNodeData, WorkerApp
+
+    _patch_tui_test_context(monkeypatch)
+    fake_config = tmp_path / "config"
+    monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_config)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".artel").mkdir()
+    monkeypatch.setattr("worker_tui.app.WorkerApp._init_local_session", AsyncMock())
+    monkeypatch.setattr(
+        tui_app,
+        "load_saved_servers",
+        lambda: [
+            tui_app.SavedArtelServer(name="Prod", remote_url="ws://prod:7432", auth_token="tok")
+        ],
+    )
+
+    app = WorkerApp(remote_url="ws://prod:7432", auth_token="tok")
+    messages: list[tuple[str, str]] = []
+    app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
+
+    class _Control:
+        def __init__(self, remote_url: str, auth_token: str = "") -> None:
+            self.remote_url = remote_url
+            self.auth_token = auth_token
+
+        async def list_sessions(self):
+            return {"sessions": []}
+
+    monkeypatch.setattr(tui_app, "RemoteControlClient", _Control)
+
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert len(app._saved_servers) == 1
+
+        await app._run_server_dock_action(
+            ServerDockNodeData(
+                kind="server",
+                remote_url="ws://prod:7432",
+                auth_token="tok",
+                name="Prod",
+            ),
+            "remove",
+        )
+        await pilot.pause()
+
+        assert "ws://prod:7432" in app._dismissed_server_urls
+        assert app._saved_servers == []
+        assert messages[-1] == ("tool", "Removed server: Prod")
+
+        await app._refresh_server_dock()
+        await pilot.pause()
+
+        assert app._saved_servers == []
+
+
+@pytest.mark.asyncio
+async def test_connecting_removed_remote_clears_dismissed_state(monkeypatch, tmp_path):
+    import worker_tui.app as tui_app
+    from worker_tui.app import WorkerApp
+
+    _patch_tui_test_context(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".artel").mkdir()
+    monkeypatch.setattr("worker_tui.app.WorkerApp._init_local_session", AsyncMock())
+    monkeypatch.setattr("worker_tui.app.load_saved_servers", lambda: [])
+
+    app = WorkerApp()
+    app._dismissed_server_urls.add("ws://prod:7432")
+    app._sync_remote_session_state = AsyncMock()  # type: ignore[method-assign]
+    app._sync_remote_extension_commands = AsyncMock()  # type: ignore[method-assign]
+    app._refresh_server_dock = AsyncMock()  # type: ignore[method-assign]
+    messages: list[tuple[str, str]] = []
+    app._add_message = lambda content, role="assistant", **kwargs: messages.append((role, content))  # type: ignore[method-assign]
+
+    await app._connect_to_server("ws://prod:7432", auth_token="tok", save=False)
+
+    assert "ws://prod:7432" not in app._dismissed_server_urls
+    assert app.remote_url == "ws://prod:7432"
+    assert app.auth_token == "tok"
+    assert messages[-1] == ("tool", "Connected to Artel @ prod:7432")
+
+
+@pytest.mark.asyncio
 async def test_dock_input_submit_adds_and_connects_server(monkeypatch, tmp_path):
     from worker_tui.app import DockInputSubmitted, WorkerApp
 

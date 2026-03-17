@@ -1885,6 +1885,7 @@ class WorkerApp(App):
         self._pending_attachments: list[ImageAttachment] = []
         self._server_dock_visible: bool = True
         self._saved_servers: list[SavedArtelServer] = []
+        self._dismissed_server_urls: set[str] = set()
         self._pending_remote_oauth: dict[str, str] | None = None
         self._pending_rule_editor_existing: Any = None
         self._sidebar_visible: bool = False
@@ -2103,7 +2104,13 @@ class WorkerApp(App):
             self._set_server_dock_status(f"Refreshed {data.name or data.remote_url}")
             return
         if action == "remove" and data.remote_url:
-            self._saved_servers = remove_saved_server(data.remote_url)
+            removed_url = data.remote_url.strip()
+            self._dismissed_server_urls.add(removed_url)
+            self._saved_servers = remove_saved_server(removed_url)
+            if self.remote_url.strip() == removed_url:
+                self._saved_servers = [
+                    server for server in self._saved_servers if server.remote_url.strip() != removed_url
+                ]
             await self._refresh_server_dock()
             self._add_message(f"Removed server: {data.name or data.remote_url}", role="tool")
             return
@@ -2203,17 +2210,24 @@ class WorkerApp(App):
         root = tree.root
         root.expand()
 
-        if self.remote_url:
-            active_name = default_server_name(self.remote_url)
-            active_token = self.auth_token
-            if not any(server.remote_url == self.remote_url for server in self._saved_servers):
-                self._saved_servers = upsert_saved_server(
-                    SavedArtelServer(
-                        name=active_name, remote_url=self.remote_url, auth_token=active_token
-                    )
+        active_remote_url = self.remote_url.strip()
+        rendered_servers = [
+            server
+            for server in self._saved_servers
+            if server.remote_url.strip() not in self._dismissed_server_urls
+        ]
+        if active_remote_url and not any(
+            server.remote_url == active_remote_url for server in rendered_servers
+        ):
+            rendered_servers.append(
+                SavedArtelServer(
+                    name=default_server_name(active_remote_url),
+                    remote_url=active_remote_url,
+                    auth_token=self.auth_token,
                 )
+            )
 
-        if not self._saved_servers:
+        if not rendered_servers:
             root.add_leaf(
                 "No saved servers. Use /server-add or the Add button.",
                 data=ServerDockNodeData(kind="info", name="empty"),
@@ -2221,10 +2235,9 @@ class WorkerApp(App):
             dock.set_status("No saved Artel servers")
             return
 
-        active_remote_url = self.remote_url.strip()
-        active_session_id = self._remote_session_id.strip() if self.remote_url else ""
+        active_session_id = self._remote_session_id.strip() if active_remote_url else ""
 
-        for server in self._saved_servers:
+        for server in sorted(rendered_servers, key=lambda item: item.name.lower()):
             server_label = server.name
             if server.remote_url == active_remote_url:
                 server_label = f"● {server_label}"
@@ -5558,6 +5571,7 @@ class WorkerApp(App):
         if not normalized_url:
             self._add_message("Missing remote URL.", role="error")
             return
+        self._dismissed_server_urls.discard(normalized_url)
         self.remote_url = normalized_url
         self.auth_token = auth_token
         self._remote_control_client = None
@@ -6753,7 +6767,13 @@ class WorkerApp(App):
         if server is None:
             self._add_message(f"Saved server not found: {target}", role="error")
             return
-        self._saved_servers = remove_saved_server(server.remote_url)
+        removed_url = server.remote_url.strip()
+        self._dismissed_server_urls.add(removed_url)
+        self._saved_servers = remove_saved_server(removed_url)
+        if self.remote_url.strip() == removed_url:
+            self._saved_servers = [
+                item for item in self._saved_servers if item.remote_url.strip() != removed_url
+            ]
         await self._refresh_server_dock()
         self._add_message(f"Removed server: {server.name}", role="tool")
 
