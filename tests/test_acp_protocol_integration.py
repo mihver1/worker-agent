@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -84,13 +86,25 @@ async def _start_acp_subprocess(
     cwd: str,
     env: dict[str, str],
 ) -> asyncio.subprocess.Process:
+    repo_root = Path(__file__).resolve().parents[1]
+    pythonpath_entries = [
+        str(repo_root / "packages" / "artel-core" / "src"),
+        str(repo_root / "packages" / "artel-server" / "src"),
+        str(repo_root / "packages" / "artel-ai" / "src"),
+        str(repo_root / "packages" / "artel-tui" / "src"),
+    ]
+    existing_pythonpath = env.get("PYTHONPATH", "")
+    if existing_pythonpath:
+        pythonpath_entries.append(existing_pythonpath)
+    child_env = env.copy()
+    child_env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     return await asyncio.create_subprocess_exec(
         sys.executable,
         "-m",
         "artel_core.cli",
         "acp",
         cwd=cwd,
-        env=env,
+        env=child_env,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -997,5 +1011,331 @@ _providers.create_default_registry = _patched_create_default_registry
             and update.get("status") == "completed"
             for update in tool_updates
         )
+    finally:
+        await _terminate_process(proc)
+
+
+@pytest.mark.asyncio
+async def test_artel_acp_accepts_image_content_blocks_for_vision_models(tmp_path):
+    home_dir = tmp_path / "home"
+    project_dir = tmp_path / "project"
+    support_dir = tmp_path / "support"
+    home_dir.mkdir()
+    project_dir.mkdir()
+    support_dir.mkdir()
+
+    (project_dir / ".artel").mkdir()
+    (project_dir / ".artel" / "config.toml").write_text(
+        """
+[agent]
+model = "mock/mock-vision"
+
+[providers.mock]
+type = "mock"
+requires_api_key = false
+
+[providers.mock.models.mock-vision]
+name = "Mock Vision"
+context_window = 32000
+supports_tools = true
+supports_vision = true
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (support_dir / "mock_provider_runtime.py").write_text(
+        """
+from __future__ import annotations
+
+from pathlib import Path
+
+from artel_ai.models import Done, ModelInfo, TextDelta, Usage
+from artel_ai.provider import Provider
+
+
+class MockRuntimeProvider(Provider):
+    name = "mock"
+
+    async def stream_chat(
+        self,
+        model,
+        messages,
+        *,
+        tools=None,
+        temperature=0.0,
+        max_tokens=None,
+        thinking_level="off",
+    ):
+        del model, tools, temperature, max_tokens, thinking_level
+        user_message = messages[-1]
+        attachments = user_message.attachments or []
+        assert user_message.content == "Look at this image"
+        assert len(attachments) == 1
+        attachment = attachments[0]
+        assert attachment.mime_type == "image/png"
+        assert Path(attachment.path).exists()
+        yield TextDelta(content=f"image:{attachment.name}")
+        yield Done(usage=Usage(input_tokens=3, output_tokens=5))
+
+    def list_models(self):
+        return [
+            ModelInfo(
+                id="mock-vision",
+                provider="mock",
+                name="Mock Vision",
+                context_window=32000,
+                supports_tools=True,
+                supports_vision=True,
+            )
+        ]
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (support_dir / "sitecustomize.py").write_text(
+        """
+from mock_provider_runtime import MockRuntimeProvider
+import artel_ai.providers as _providers
+
+_original_create_default_registry = _providers.create_default_registry
+
+
+def _patched_create_default_registry():
+    registry = _original_create_default_registry()
+    registry.register("mock", MockRuntimeProvider)
+    return registry
+
+
+_providers.create_default_registry = _patched_create_default_registry
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONPATH"] = (
+        f"{support_dir}{os.pathsep}{env['PYTHONPATH']}"
+        if env.get("PYTHONPATH")
+        else str(support_dir)
+    )
+
+    proc = await _start_acp_subprocess(cwd=str(project_dir), env=env)
+    try:
+        await _send_json(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {"fs": {"readTextFile": True}},
+                    "clientInfo": {"name": "pytest", "version": "0"},
+                },
+            },
+        )
+        init_messages = await _read_json_messages_until(proc, response_id=0)
+        assert init_messages[-1]["result"]["agentCapabilities"]["promptCapabilities"]["image"] is True
+
+        await _send_json(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "session/new",
+                "params": {
+                    "cwd": str(project_dir),
+                    "mcpServers": [],
+                },
+            },
+        )
+        new_messages = await _read_json_messages_until(proc, response_id=1)
+        session_id = new_messages[-1]["result"]["sessionId"]
+
+        await _send_json(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": session_id,
+                    "prompt": [
+                        {"type": "text", "text": "Look at this image"},
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "data": base64.b64encode(b"png-data").decode("ascii"),
+                        },
+                    ],
+                },
+            },
+        )
+        prompt_messages = await _read_json_messages_until(proc, response_id=2, timeout_seconds=10.0)
+        prompt_response = prompt_messages[-1]
+        assert "error" not in prompt_response
+        updates = _session_updates(prompt_messages)
+        assert any(
+            update.get("sessionUpdate") == "agent_message_chunk"
+            and "image:" in update.get("content", {}).get("text", "")
+            for update in updates
+        )
+    finally:
+        await _terminate_process(proc)
+
+
+@pytest.mark.asyncio
+async def test_artel_acp_rejects_image_content_blocks_for_non_vision_models(tmp_path):
+    home_dir = tmp_path / "home"
+    project_dir = tmp_path / "project"
+    support_dir = tmp_path / "support"
+    home_dir.mkdir()
+    project_dir.mkdir()
+    support_dir.mkdir()
+
+    (project_dir / ".artel").mkdir()
+    (project_dir / ".artel" / "config.toml").write_text(
+        """
+[agent]
+model = "mock/mock-text"
+
+[providers.mock]
+type = "mock"
+requires_api_key = false
+
+[providers.mock.models.mock-text]
+name = "Mock Text"
+context_window = 32000
+supports_tools = true
+supports_vision = false
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (support_dir / "mock_provider_runtime.py").write_text(
+        """
+from __future__ import annotations
+
+from artel_ai.models import Done, ModelInfo, TextDelta, Usage
+from artel_ai.provider import Provider
+
+
+class MockRuntimeProvider(Provider):
+    name = "mock"
+
+    async def stream_chat(
+        self,
+        model,
+        messages,
+        *,
+        tools=None,
+        temperature=0.0,
+        max_tokens=None,
+        thinking_level="off",
+    ):
+        del model, messages, tools, temperature, max_tokens, thinking_level
+        yield TextDelta(content="should-not-run")
+        yield Done(usage=Usage(input_tokens=1, output_tokens=1))
+
+    def list_models(self):
+        return [
+            ModelInfo(
+                id="mock-text",
+                provider="mock",
+                name="Mock Text",
+                context_window=32000,
+                supports_tools=True,
+                supports_vision=False,
+            )
+        ]
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    (support_dir / "sitecustomize.py").write_text(
+        """
+from mock_provider_runtime import MockRuntimeProvider
+import artel_ai.providers as _providers
+
+_original_create_default_registry = _providers.create_default_registry
+
+
+def _patched_create_default_registry():
+    registry = _original_create_default_registry()
+    registry.register("mock", MockRuntimeProvider)
+    return registry
+
+
+_providers.create_default_registry = _patched_create_default_registry
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    env = os.environ.copy()
+    env["HOME"] = str(home_dir)
+    env["PYTHONUNBUFFERED"] = "1"
+    env["PYTHONPATH"] = (
+        f"{support_dir}{os.pathsep}{env['PYTHONPATH']}"
+        if env.get("PYTHONPATH")
+        else str(support_dir)
+    )
+
+    proc = await _start_acp_subprocess(cwd=str(project_dir), env=env)
+    try:
+        await _send_json(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": 1,
+                    "clientCapabilities": {"fs": {"readTextFile": True}},
+                    "clientInfo": {"name": "pytest", "version": "0"},
+                },
+            },
+        )
+        await _read_json_messages_until(proc, response_id=0)
+
+        await _send_json(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "session/new",
+                "params": {
+                    "cwd": str(project_dir),
+                    "mcpServers": [],
+                },
+            },
+        )
+        new_messages = await _read_json_messages_until(proc, response_id=1)
+        session_id = new_messages[-1]["result"]["sessionId"]
+
+        await _send_json(
+            proc,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session/prompt",
+                "params": {
+                    "sessionId": session_id,
+                    "prompt": [
+                        {"type": "text", "text": "Look at this image"},
+                        {
+                            "type": "image",
+                            "mimeType": "image/png",
+                            "data": base64.b64encode(b"png-data").decode("ascii"),
+                        },
+                    ],
+                },
+            },
+        )
+        prompt_messages = await _read_json_messages_until(proc, response_id=2, timeout_seconds=10.0)
+        prompt_response = prompt_messages[-1]
+        assert prompt_response.get("error", {}).get("message") == "Current model does not support image input."
     finally:
         await _terminate_process(proc)

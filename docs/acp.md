@@ -26,6 +26,7 @@ Artel's ACP entrypoint supports the core session flow you need for interactive c
 - initialize and authenticate
 - create, load, list, resume, fork, and cancel sessions
 - send prompts and receive streamed text and reasoning updates
+- send image-bearing prompts through ACP image content blocks when the active model supports vision
 - track tool calls, tool results, and usage updates
 - rename sessions when Artel generates or updates a title
 
@@ -61,6 +62,14 @@ ACP clients can adjust a few session-scoped settings without editing config file
 These controls are exposed as ACP session config options, so a compatible client can present them directly in its UI.
 
 ## Prompt and tool-call behavior
+
+ACP prompts can include normal text blocks plus image content blocks.
+
+Notes:
+
+- image input is accepted only when the active session model supports vision
+- Artel stages ACP image content into attachment files so the normal runtime can consume them like other image attachments
+- slash-command execution remains text-only; image-bearing prompts are treated as normal model turns
 
 During a prompt, Artel streams:
 
