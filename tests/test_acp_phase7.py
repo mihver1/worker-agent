@@ -215,6 +215,7 @@ def _install_fake_acp(monkeypatch: pytest.MonkeyPatch, *, run_agent: Any) -> Non
         "AuthenticateResponse",
         "AvailableCommand",
         "AvailableCommandInput",
+        "AvailableCommandsUpdate",
         "ConfigOptionUpdate",
         "CurrentModeUpdate",
         "ForkSessionResponse",
@@ -466,6 +467,14 @@ async def test_run_acp_scopes_workspace_and_updates_config(monkeypatch, tmp_path
     assert [item.session_id for item in captured["list_sessions"].sessions] == [session_id]
     assert captured["load_session"].models.current_model_id == "mock/mock-model"
     updates = [update for _, update in captured["conn"].updates]
+    available_updates = [
+        update for update in updates if getattr(update, "session_update", "") == "available_commands_update"
+    ]
+    assert len(available_updates) >= 1
+    assert any(
+        any(getattr(command, "name", "") == "wt" for command in getattr(update, "available_commands", []))
+        for update in available_updates
+    )
     assert any(
         getattr(update, "session_update", "") == "current_mode_update"
         and getattr(update, "current_mode_id", "") == "code"

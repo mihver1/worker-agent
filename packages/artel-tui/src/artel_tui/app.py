@@ -15,7 +15,8 @@ import uuid
 import webbrowser
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from enum import StrEnum
 from functools import lru_cache
 from itertools import groupby
 from pathlib import Path
@@ -158,6 +159,33 @@ _RU_QWERTY_KEY_ALIASES: dict[str, str] = {
 _DIFF_SYNTAX_THEME = "ansi_dark"
 _DIFF_PYGMENTS_STYLE = "monokai"
 _MAX_PASTED_IMAGE_REFERENCE_CHARS = 512
+_RESTORED_MESSAGE_LIMIT = 120
+_SESSION_STRIP_VISIBLE_LIMIT = 3
+
+
+class SessionVisualState(StrEnum):
+    IDLE = "idle"
+    THINKING = "thinking"
+    RESPONDING = "responding"
+    TOOL_RUNNING = "tool_running"
+    WAITING_PERMISSION = "waiting_permission"
+    DISCONNECTED = "disconnected"
+
+
+def _session_visual_label(state: SessionVisualState, detail: str = "") -> tuple[str, bool]:
+    if state == SessionVisualState.IDLE:
+        return (detail.strip() or "idle", False)
+    if state == SessionVisualState.THINKING:
+        return (detail.strip() or "thinking", True)
+    if state == SessionVisualState.RESPONDING:
+        return (detail.strip() or "responding", True)
+    if state == SessionVisualState.TOOL_RUNNING:
+        return (detail.strip() or "tool running", True)
+    if state == SessionVisualState.WAITING_PERMISSION:
+        return (detail.strip() or "waiting approval", True)
+    if state == SessionVisualState.DISCONNECTED:
+        return (detail.strip() or "disconnected", False)
+    return (detail.strip() or "idle", False)
 
 
 def _layout_safe_binding_variants(key: str) -> list[str]:
@@ -481,6 +509,7 @@ class SlashCommandSuggestion:
     completion: str = ""
     search_text: str = ""
     current: bool = False
+    category: str = ""
 
 
 @dataclass(slots=True)
@@ -490,6 +519,59 @@ class PendingPermissionRequest:
     tool_name: str
     tool_args: dict[str, Any]
     future: asyncio.Future[str]
+
+
+@dataclass(slots=True)
+class TurnRenderState:
+    widget: Any | None = None
+    reasoning_widget: Any | None = None
+    had_tool_calls: bool = False
+    need_new_reasoning_block: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class WindowSessionSummary:
+    session_id: str
+    title: str = ""
+    project_label: str = ""
+    remote: bool = False
+    state: SessionVisualState = SessionVisualState.IDLE
+    detail: str = ""
+    active: bool = False
+
+
+@dataclass(slots=True)
+class WindowSessionRegistry:
+    local: dict[str, WindowSessionSummary] = field(default_factory=dict)
+    remote: dict[str, WindowSessionSummary] = field(default_factory=dict)
+
+    def update(self, summary: WindowSessionSummary) -> None:
+        target = self.remote if summary.remote else self.local
+        target[summary.session_id] = summary
+
+    def replace_known(self, *, remote: bool, summaries: list[WindowSessionSummary]) -> None:
+        target = self.remote if remote else self.local
+        target.clear()
+        for summary in summaries:
+            target[summary.session_id] = summary
+
+    def set_active(self, *, remote: bool, session_id: str) -> None:
+        target = self.remote if remote else self.local
+        normalized_id = session_id.strip()
+        for key, summary in list(target.items()):
+            target[key] = WindowSessionSummary(
+                session_id=summary.session_id,
+                title=summary.title,
+                project_label=summary.project_label,
+                remote=summary.remote,
+                state=summary.state,
+                detail=summary.detail,
+                active=(summary.session_id == normalized_id),
+            )
+
+    def ordered(self, *, remote: bool) -> list[WindowSessionSummary]:
+        target = self.remote if remote else self.local
+        return sorted(target.values(), key=lambda summary: (0 if summary.active else 1, summary.title.lower(), summary.session_id))
 
 
 @dataclass(frozen=True, slots=True)
@@ -505,65 +587,131 @@ class ServerDockNodeData:
 
 
 BUILTIN_COMMAND_SUGGESTIONS: tuple[SlashCommandSuggestion, ...] = (
-    SlashCommandSuggestion("/help", "show available commands"),
-    SlashCommandSuggestion("/rules", "list configured rules"),
-    SlashCommandSuggestion("/rule", "manage rules"),
-    SlashCommandSuggestion("/rule add", "add a rule via inline editor"),
-    SlashCommandSuggestion("/rule edit", "edit a rule via inline editor"),
-    SlashCommandSuggestion("/rule delete", "delete a rule"),
-    SlashCommandSuggestion("/rule enable", "enable a rule for this session"),
-    SlashCommandSuggestion("/rule disable", "disable a rule for this session"),
-    SlashCommandSuggestion("/rule persist", "change persisted rule state"),
-    SlashCommandSuggestion("/rule move", "move a rule to change precedence"),
-    SlashCommandSuggestion("/rule reset", "reset session rule override"),
-    SlashCommandSuggestion("/model", "show current model or switch model"),
-    SlashCommandSuggestion("/models", "list available models"),
-    SlashCommandSuggestion("/project", "show or change the active project"),
-    SlashCommandSuggestion("/cd", "alias for /project"),
-    SlashCommandSuggestion("/providers", "list supported providers and setup hints"),
-    SlashCommandSuggestion("/connect", "log in to a provider"),
-    SlashCommandSuggestion("/resume", "resume a saved session"),
-    SlashCommandSuggestion("/sessions", "list recent sessions"),
-    SlashCommandSuggestion("/compact", "compact conversation history"),
-    SlashCommandSuggestion("/name", "rename the current session"),
-    SlashCommandSuggestion("/tree", "show the session message tree"),
-    SlashCommandSuggestion("/fork", "fork from a message index"),
-    SlashCommandSuggestion("/prompts", "list prompt templates"),
-    SlashCommandSuggestion("/skill:", "load a skill into the session"),
-    SlashCommandSuggestion("/skills", "list available skills"),
-    SlashCommandSuggestion("/thinking", "set the thinking level"),
-    SlashCommandSuggestion("/theme", "switch the active theme"),
-    SlashCommandSuggestion("/export", "export the session to HTML"),
-    SlashCommandSuggestion("/reload", "reload extensions, prompts, and skills"),
-    SlashCommandSuggestion("/image", "attach an image file to the next message"),
-    SlashCommandSuggestion("/image-paste", "paste an image from the clipboard"),
-    SlashCommandSuggestion("/image-clear", "clear pending image attachments"),
-    SlashCommandSuggestion("/image-remove", "remove a pending image attachment by index"),
-    SlashCommandSuggestion("/copy", "copy the last assistant message"),
-    SlashCommandSuggestion("/server-add", "save an Artel server in the left dock"),
-    SlashCommandSuggestion("/server-remove", "remove a saved Artel server from the left dock"),
-    SlashCommandSuggestion("/server-select", "connect to a saved Artel server by name or URL"),
-    SlashCommandSuggestion("/server-dock", "toggle the left server/project/session dock"),
-    SlashCommandSuggestion("/delegates", "show orchestrated delegated runs in the current window"),
-    SlashCommandSuggestion("/agents", "legacy alias for /delegates"),
-    SlashCommandSuggestion("/mcp", "show MCP config sources, connections, and errors"),
+    SlashCommandSuggestion("/help", "show available commands", category="help"),
+    SlashCommandSuggestion("/rules", "list configured rules", category="rules"),
+    SlashCommandSuggestion("/rule", "manage rules", category="rules"),
+    SlashCommandSuggestion("/rule add", "add a rule via inline editor", category="rules"),
+    SlashCommandSuggestion("/rule edit", "edit a rule via inline editor", category="rules"),
+    SlashCommandSuggestion("/rule delete", "delete a rule", category="rules"),
+    SlashCommandSuggestion("/rule enable", "enable a rule for this session", category="rules"),
+    SlashCommandSuggestion("/rule disable", "disable a rule for this session", category="rules"),
+    SlashCommandSuggestion("/rule persist", "change persisted rule state", category="rules"),
+    SlashCommandSuggestion("/rule move", "move a rule to change precedence", category="rules"),
+    SlashCommandSuggestion("/rule reset", "reset session rule override", category="rules"),
+    SlashCommandSuggestion("/model", "show current model or switch model", category="model"),
+    SlashCommandSuggestion("/models", "list available models", category="model"),
+    SlashCommandSuggestion("/project", "show or change the active project", category="project"),
+    SlashCommandSuggestion("/cd", "alias for /project", category="project"),
+    SlashCommandSuggestion("/providers", "list supported providers and setup hints", category="model"),
+    SlashCommandSuggestion("/connect", "log in to a provider", category="model"),
+    SlashCommandSuggestion("/resume", "resume a saved session", category="session"),
+    SlashCommandSuggestion("/sessions", "list recent sessions", category="session"),
+    SlashCommandSuggestion("/compact", "compact conversation history", category="session"),
+    SlashCommandSuggestion("/name", "rename the current session", category="session"),
+    SlashCommandSuggestion("/tree", "show the session message tree", category="session"),
+    SlashCommandSuggestion("/fork", "fork from a message index", category="session"),
+    SlashCommandSuggestion("/prompts", "list prompt templates", category="prompt"),
+    SlashCommandSuggestion("/skill:", "load a skill into the session", category="prompt"),
+    SlashCommandSuggestion("/skills", "list available skills", category="prompt"),
+    SlashCommandSuggestion("/thinking", "set the thinking level", category="model"),
+    SlashCommandSuggestion("/theme", "switch the active theme", category="ui"),
+    SlashCommandSuggestion("/export", "export the session to HTML", category="session"),
+    SlashCommandSuggestion("/reload", "reload extensions, prompts, and skills", category="ui"),
+    SlashCommandSuggestion("/image", "attach an image file to the next message", category="media"),
+    SlashCommandSuggestion("/image-paste", "paste an image from the clipboard", category="media"),
+    SlashCommandSuggestion("/image-clear", "clear pending image attachments", category="media"),
+    SlashCommandSuggestion("/image-remove", "remove a pending image attachment by index", category="media"),
+    SlashCommandSuggestion("/copy", "copy the last assistant message", category="ui"),
+    SlashCommandSuggestion("/server-add", "save an Artel server in the left dock", category="remote"),
+    SlashCommandSuggestion("/server-remove", "remove a saved Artel server from the left dock", category="remote"),
+    SlashCommandSuggestion("/server-select", "connect to a saved Artel server by name or URL", category="remote"),
+    SlashCommandSuggestion("/server-dock", "toggle the left server/project/session dock", category="ui"),
+    SlashCommandSuggestion("/delegates", "show orchestrated delegated runs in the current window", category="automation"),
+    SlashCommandSuggestion("/agents", "legacy alias for /delegates", category="automation"),
+    SlashCommandSuggestion("/mcp", "show MCP config sources, connections, and errors", category="automation"),
     SlashCommandSuggestion(
-        "/schedules", "inspect and control scheduled tasks on the active server"
+        "/schedules", "inspect and control scheduled tasks on the active server", category="automation"
     ),
-    SlashCommandSuggestion("/wt", "manage git worktrees for the current repository"),
-    SlashCommandSuggestion("/tasks", "show the shared task board"),
-    SlashCommandSuggestion("/task-add", "add a task to the shared task board"),
-    SlashCommandSuggestion("/task-done", "mark a task as done"),
-    SlashCommandSuggestion("/notes", "show operator notes"),
-    SlashCommandSuggestion("/notes-open", "focus the operator notes editor"),
-    SlashCommandSuggestion("/cancel", "cancel the active run"),
-    SlashCommandSuggestion("/server-restart", "restart the managed local Artel server"),
-    SlashCommandSuggestion("/split", "open a cmux split pane"),
-    SlashCommandSuggestion("/browser", "open a cmux browser pane"),
-    SlashCommandSuggestion("/new", "start a new session in the current window"),
-    SlashCommandSuggestion("/clear", "clear chat and start a new session"),
-    SlashCommandSuggestion("/quit", "exit the TUI"),
+    SlashCommandSuggestion("/wt", "manage git worktrees for the current repository", category="project"),
+    SlashCommandSuggestion("/tasks", "show the shared task board", category="automation"),
+    SlashCommandSuggestion("/task-add", "add a task to the shared task board", category="automation"),
+    SlashCommandSuggestion("/task-done", "mark a task as done", category="automation"),
+    SlashCommandSuggestion("/notes", "show operator notes", category="automation"),
+    SlashCommandSuggestion("/notes-open", "focus the operator notes editor", category="ui"),
+    SlashCommandSuggestion("/cancel", "cancel the active run", category="session"),
+    SlashCommandSuggestion("/server-restart", "restart the managed local Artel server", category="remote"),
+    SlashCommandSuggestion("/split", "open a cmux split pane", category="ui"),
+    SlashCommandSuggestion("/browser", "open a cmux browser pane", category="ui"),
+    SlashCommandSuggestion("/new", "start a new session in the current window", category="session"),
+    SlashCommandSuggestion("/clear", "clear chat and start a new session", category="session"),
+    SlashCommandSuggestion("/quit", "exit the TUI", category="help"),
 )
+
+_COMMAND_CATEGORY_ORDER = {
+    "help": 0,
+    "session": 1,
+    "model": 2,
+    "project": 3,
+    "path": 4,
+    "rules": 5,
+    "prompt": 6,
+    "media": 7,
+    "automation": 8,
+    "remote": 9,
+    "ui": 10,
+    "extension": 11,
+}
+
+
+def _command_category_rank(category: str) -> int:
+    return _COMMAND_CATEGORY_ORDER.get(category.strip().lower(), 99)
+
+
+class ComposerHintsBar(Static):
+    """Compact helper line describing the current composer mode."""
+
+    DEFAULT_CSS = """
+    ComposerHintsBar {
+        height: 1;
+        margin: 0 1;
+        padding: 0 1;
+        background: $surface;
+        color: $text-muted;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._mode: str = "prompt"
+        self._attachments: int = 0
+        self._busy: bool = False
+
+    def set_state(self, *, mode: str, attachments: int, busy: bool) -> None:
+        self._mode = mode.strip() or "prompt"
+        self._attachments = max(0, int(attachments))
+        self._busy = bool(busy)
+        self.refresh()
+
+    def render(self) -> Text:
+        parts: list[str] = []
+        if self._mode == "command":
+            parts.append("mode: command")
+            parts.append("Tab completes command arguments")
+        elif self._mode == "shell":
+            parts.append("mode: shell")
+            parts.append("Enter runs on the active host")
+        elif self._mode == "steering":
+            parts.append("mode: steering")
+            parts.append("Your input will steer the active run")
+        else:
+            parts.append("mode: prompt")
+            parts.append("/ for commands")
+            parts.append("@ paths")
+        if self._attachments:
+            suffix = "image" if self._attachments == 1 else "images"
+            parts.append(f"{self._attachments} pending {suffix}")
+        parts.append("Shift+Enter newline")
+        return Text(" │ ".join(parts))
 
 
 class PendingAttachmentsBar(Static):
@@ -721,7 +869,7 @@ class RuleEditorClosed(events.Message):
 
 
 class ServerDockSidebar(Static):
-    """Left dock with saved Artel servers grouped into projects and sessions."""
+    """Left contextual panel with saved Artel servers, projects, and sessions."""
 
     DEFAULT_CSS = """
     ServerDockSidebar {
@@ -766,9 +914,9 @@ class ServerDockSidebar(Static):
     """
 
     def compose(self) -> ComposeResult:
-        yield Static("Servers", id="server-dock-title")
+        yield Static("Context", id="server-dock-title")
         yield Static(
-            "Saved Artel servers grouped as server → project → session",
+            "Servers, projects, and sessions for the active host",
             id="server-dock-help",
         )
         with Horizontal(id="server-dock-actions"):
@@ -805,7 +953,7 @@ class ServerDockSidebar(Static):
 
 
 class BoardSidebar(Static):
-    """Right sidebar with tasks and operator notes."""
+    """Right work-context panel with orchestration, tasks, and operator notes."""
 
     DEFAULT_CSS = """
     BoardSidebar {
@@ -822,13 +970,23 @@ class BoardSidebar(Static):
     BoardSidebar.visible {
         display: block;
     }
-    #board-title, #notes-title {
+    #workspace-title {
         text-style: bold;
         margin-top: 1;
     }
-    #board-help, #notes-help {
+    #workspace-help {
         color: $text-muted;
         margin-bottom: 1;
+    }
+    .workspace-section {
+        margin-bottom: 1;
+    }
+    .workspace-section > CollapsibleTitle {
+        text-style: bold;
+    }
+    #board-help, #notes-help {
+        color: $text-muted;
+        margin: 0 0 1 0;
     }
     #tasks-editor {
         height: 1fr;
@@ -844,13 +1002,24 @@ class BoardSidebar(Static):
     }
     """
 
+    def __init__(self, artel_app: Any | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._artel_app = artel_app
+
     def compose(self) -> ComposeResult:
-        yield Static("Tasks", id="board-title")
-        yield Static("Shared project work board for you and the agent", id="board-help")
-        yield TextArea("", id="tasks-editor")
-        yield Static("Operator Notes", id="notes-title")
-        yield Static("Private scratchpad; agent reads only on request", id="notes-help")
-        yield TextArea("", id="notes-editor")
+        yield Static("Workspace", id="workspace-title")
+        yield Static("Tasks, notes, and orchestration for the active session or project", id="workspace-help")
+        if self._artel_app is not None:
+            from artel_tui.delegation_widget import DelegationStatusWidget
+
+            with Collapsible(title="Orchestration", collapsed=False, classes="workspace-section"):
+                yield DelegationStatusWidget(self._artel_app)
+        with Collapsible(title="Tasks", collapsed=False, classes="workspace-section"):
+            yield Static("Shared project work board for you and the agent", id="board-help")
+            yield TextArea("", id="tasks-editor")
+        with Collapsible(title="Operator notes", collapsed=False, classes="workspace-section"):
+            yield Static("Private scratchpad; agent reads only on request", id="notes-help")
+            yield TextArea("", id="notes-editor")
         yield Static("", id="board-status")
 
     def set_visible(self, visible: bool) -> None:
@@ -1198,6 +1367,121 @@ class ToolCard(Static):
                     )
 
 
+class SessionStrip(Static):
+    """Current-session strip with source, project context, and activity state."""
+
+    DEFAULT_CSS = """
+    SessionStrip {
+        height: 1;
+        background: $panel;
+        color: $text;
+        padding: 0 1;
+        border-bottom: solid $surface-lighten-1;
+    }
+    """
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._session_id: str = ""
+        self._title: str = ""
+        self._project_label: str = ""
+        self._remote: bool = False
+        self._state: SessionVisualState = SessionVisualState.IDLE
+        self._detail: str = ""
+        self._summaries: list[WindowSessionSummary] = []
+
+    def _render_summary(self, summary: WindowSessionSummary) -> str:
+        short_id = summary.session_id[:8] if summary.session_id else ""
+        title = summary.title.strip() or short_id or "new session"
+        if summary.active:
+            project_label = summary.project_label.strip()
+            activity, busy = _session_visual_label(summary.state, summary.detail)
+            state = f"● {activity}" if busy else activity
+            kind = "remote" if summary.remote else "local"
+            label = f"{title} · {short_id}" if title != short_id and short_id else title
+            parts = [f"session: {kind}", label]
+            if project_label:
+                parts.append(project_label)
+            parts.append(state)
+            return f"[{ ' │ '.join(parts) }]"
+        activity, busy = _session_visual_label(summary.state, summary.detail)
+        if summary.state == SessionVisualState.WAITING_PERMISSION:
+            state_icon = "!"
+        elif summary.state == SessionVisualState.DISCONNECTED:
+            state_icon = "×"
+        elif busy:
+            state_icon = "●"
+        else:
+            state_icon = "○"
+        source_icon = "↔" if summary.remote else "•"
+        label = f"{source_icon} {title}"
+        return f"{label} {state_icon}"
+
+    def render(self) -> Text:
+        if self._summaries:
+            visible = self._summaries[:_SESSION_STRIP_VISIBLE_LIMIT]
+            hidden_count = max(0, len(self._summaries) - len(visible))
+            parts = [self._render_summary(summary) for summary in visible]
+            if hidden_count:
+                parts.append(f"+{hidden_count} more")
+            return Text("  ".join(parts))
+        kind = "remote" if self._remote else "local"
+        short_id = self._session_id[:8] if self._session_id else ""
+        title = self._title.strip()
+        if title and short_id:
+            label = f"{title} · {short_id}"
+        else:
+            label = title or short_id or "new session"
+        project_label = self._project_label.strip()
+        activity, busy = _session_visual_label(self._state, self._detail)
+        state = f"● {activity}" if busy else activity
+        parts = [f"session: {kind}", label]
+        if project_label:
+            parts.append(project_label)
+        parts.append(state)
+        return Text(" │ ".join(parts))
+
+    def set_session(
+        self,
+        *,
+        session_id: str,
+        title: str = "",
+        project_label: str = "",
+        remote: bool,
+    ) -> None:
+        self._session_id = session_id.strip()
+        self._title = title.strip()
+        self._project_label = project_label.strip()
+        self._remote = remote
+        self.refresh()
+
+    def set_summaries(self, summaries: list[WindowSessionSummary]) -> None:
+        self._summaries = list(summaries)
+        self.refresh()
+
+    def set_title(self, title: str) -> None:
+        self._title = title.strip()
+        self.refresh()
+
+    def set_session_state(self, state: SessionVisualState, *, detail: str = "") -> None:
+        self._state = state
+        self._detail = detail.strip()
+        self.refresh()
+
+    def set_activity(self, label: str, *, busy: bool) -> None:
+        state = SessionVisualState.IDLE
+        normalized = label.strip().lower()
+        if busy and normalized.startswith("tool:"):
+            state = SessionVisualState.TOOL_RUNNING
+        elif busy and normalized == "responding":
+            state = SessionVisualState.RESPONDING
+        elif busy and normalized.startswith("permission:"):
+            state = SessionVisualState.WAITING_PERMISSION
+        elif busy:
+            state = SessionVisualState.THINKING
+        self.set_session_state(state, detail=label)
+
+
 class StatusFooter(Static):
     """Custom footer showing model, tokens, cost, context %."""
 
@@ -1219,6 +1503,7 @@ class StatusFooter(Static):
         self._total_cost: float = 0.0
         self._context_pct: float = 0.0
         self._cwd: str = ""
+        self._session_state: SessionVisualState = SessionVisualState.IDLE
         self._activity_label: str = "idle"
         self._busy: bool = False
         self._in_cmux: bool = is_cmux()
@@ -1230,8 +1515,8 @@ class StatusFooter(Static):
             if self._thinking_level:
                 model_label = f"{model_label} [{self._thinking_level}]"
             parts.append(model_label)
-        activity = self._activity_label.strip() or "idle"
-        if self._busy:
+        activity, busy = _session_visual_label(self._session_state, self._activity_label)
+        if busy:
             parts.append(f"● {activity}")
         else:
             parts.append(activity)
@@ -1281,10 +1566,24 @@ class StatusFooter(Static):
         self._cwd = cwd
         self.refresh()
 
-    def set_activity(self, label: str, *, busy: bool) -> None:
-        self._activity_label = label.strip() or ("working" if busy else "idle")
-        self._busy = busy
+    def set_session_state(self, state: SessionVisualState, *, detail: str = "") -> None:
+        self._session_state = state
+        self._activity_label = detail.strip()
+        self._busy = state not in {SessionVisualState.IDLE, SessionVisualState.DISCONNECTED}
         self.refresh()
+
+    def set_activity(self, label: str, *, busy: bool) -> None:
+        state = SessionVisualState.IDLE
+        normalized = label.strip().lower()
+        if busy and normalized.startswith("tool:"):
+            state = SessionVisualState.TOOL_RUNNING
+        elif busy and normalized == "responding":
+            state = SessionVisualState.RESPONDING
+        elif busy and normalized.startswith("permission:"):
+            state = SessionVisualState.WAITING_PERMISSION
+        elif busy:
+            state = SessionVisualState.THINKING
+        self.set_session_state(state, detail=label)
 
 
 # ── Permission panel ──────────────────────────────────────────
@@ -1835,8 +2134,14 @@ class ArtelApp(App):
         Binding("ctrl+ч", "server_dock_actions", "Server dock actions", show=False),
         Binding("ctrl+g", "toggle_server_dock", "Toggle server dock", show=False),
         Binding("ctrl+п", "toggle_server_dock", "Toggle server dock", show=False),
+        Binding("ctrl+shift+g", "focus_context", "Focus context panel", show=False),
+        Binding("ctrl+shift+п", "focus_context", "Focus context panel", show=False),
         Binding("ctrl+b", "toggle_sidebar", "Toggle board"),
         Binding("ctrl+и", "toggle_sidebar", "Toggle board", show=False),
+        Binding("ctrl+shift+b", "focus_workspace", "Focus workspace panel", show=False),
+        Binding("ctrl+shift+и", "focus_workspace", "Focus workspace panel", show=False),
+        Binding("ctrl+[", "previous_session", "Previous session", show=False),
+        Binding("ctrl+]", "next_session", "Next session", show=False),
         Binding("ctrl+t", "focus_tasks", "Focus tasks", show=False),
         Binding("ctrl+е", "focus_tasks", "Focus tasks", show=False),
         Binding("ctrl+n", "focus_notes", "Focus notes", show=False),
@@ -1897,6 +2202,11 @@ class ArtelApp(App):
         self._pending_permission_requests: list[PendingPermissionRequest] = []
         self._active_permission_request: PendingPermissionRequest | None = None
         self._run_busy: bool = False
+        self._current_session_title: str = ""
+        self._current_activity_label: str = "idle"
+        self._current_session_remote: bool = bool(remote_url)
+        self._recent_session_summaries: list[WindowSessionSummary] = []
+        self._window_session_registry = WindowSessionRegistry()
         self._assistant_message_history: list[MessageWidget] = []
         self._pending_attachments: list[ImageAttachment] = []
         self._server_dock_visible: bool = True
@@ -1913,6 +2223,7 @@ class ArtelApp(App):
         self._last_loaded_notes_text: str = ""
         self._board_poll_inflight: bool = False
         self._delegation_events_task: asyncio.Task[None] | None = None
+        self._restore_render_inflight: bool = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -1922,19 +2233,21 @@ class ArtelApp(App):
                 yield PermissionPanel(
                     self._resolve_permission_panel_decision, id="permission-panel"
                 )
+                yield SessionStrip(id="session-strip")
                 with VerticalScroll(id="chat-scroll"):
                     yield Vertical(id="chat-container")
                 yield OptionList(id="command-suggestions", compact=True)
                 yield InlineInputPanel(id="inline-input-panel")
                 yield InlineRuleEditorPanel(id="inline-rule-editor-panel")
                 yield PendingAttachmentsBar(id="pending-attachments")
+                yield ComposerHintsBar(id="composer-hints")
                 yield ComposerTextArea(
                     "",
                     placeholder="Type a message… (Enter to send, Shift+Enter for newline)",
                     id="input-bar",
                 )
                 yield StatusFooter(id="status-footer")
-            yield BoardSidebar(id="board-sidebar")
+            yield BoardSidebar(self, id="board-sidebar")
         yield Footer()
 
     async def on_mount(self) -> None:
@@ -1954,7 +2267,6 @@ class ArtelApp(App):
         self._prompts = load_prompts(project_dir)
         self._skills = load_skills(project_dir)
         await self._load_tui_extensions(config)
-        await self._mount_builtin_delegation_widget()
 
         # Apply custom keybindings from config
         for key, action in config.keybindings.bindings.items():
@@ -1970,14 +2282,31 @@ class ArtelApp(App):
         self._saved_servers = load_saved_servers()
         self._auto_collapse_server_dock_for_size()
         self._sync_pending_attachments_bar()
-        await self._load_board_state()
-        await self._refresh_server_dock()
+        self._refresh_composer_hints()
+        if self._server_dock_visible:
+            await self._refresh_server_dock()
+        if self._sidebar_visible:
+            self._schedule_background_task(self._load_board_state(), exclusive=False, thread=False)
+        self._refresh_session_strip()
         self._start_delegation_events()
         self.call_after_refresh(self._focus_input)
 
     def _focus_input(self) -> None:
         """Keep the main input focused for immediate typing."""
         self.query_one("#input-bar", TextArea).focus()
+
+    def _schedule_background_task(
+        self,
+        task: Any,
+        *,
+        exclusive: bool = False,
+        thread: bool = False,
+    ) -> None:
+        try:
+            self.screen
+        except Exception:
+            return
+        getattr(self, "run_" + "work" + "er")(task, exclusive=exclusive, thread=thread)
 
     def _start_delegation_events(self) -> None:
         if self.remote_url:
@@ -2222,8 +2551,14 @@ class ArtelApp(App):
             self._board_sidebar().set_status(text)
 
     async def _refresh_server_dock(self) -> None:
-        dock = self._server_dock()
-        dock.set_visible(self._server_dock_visible)
+        try:
+            dock = self._server_dock()
+        except Exception:
+            return
+        set_visible = getattr(dock, "set_visible", None)
+        if not callable(set_visible):
+            return
+        set_visible(self._server_dock_visible)
         tree = dock.tree()
         tree.clear()
         root = tree.root
@@ -2294,6 +2629,9 @@ class ArtelApp(App):
                     ),
                 )
                 continue
+
+            if server.remote_url == active_remote_url:
+                self._update_remote_known_sessions(sessions)
 
             normalized = sorted(
                 sessions,
@@ -2371,6 +2709,8 @@ class ArtelApp(App):
         return 1.0 if self._sidebar_visible else 3.0
 
     def _poll_board_state(self) -> None:
+        if not self._sidebar_visible:
+            return
         self._schedule_background_task(self._poll_board_state_once, exclusive=False, thread=False)
 
     async def _poll_board_state_once(self) -> None:
@@ -2516,12 +2856,293 @@ class ArtelApp(App):
         elif kind == "operator_notes_appended":
             self._add_message("📝 Appended to operator notes", role="tool")
 
-    def _set_run_activity(self, label: str, *, busy: bool) -> None:
+    def _session_strip(self) -> SessionStrip:
+        return self.query_one("#session-strip", SessionStrip)
+
+    def _normalize_project_label(self, project_dir: str) -> str:
+        project_dir = project_dir.strip()
+        if not project_dir:
+            return ""
+        home = str(Path.home())
+        if project_dir.startswith(home):
+            return "~" + project_dir[len(home) :]
+        return project_dir
+
+    def _session_project_label(self) -> str:
+        project_dir = self._remote_project_dir.strip() if self.remote_url else os.getcwd()
+        return self._normalize_project_label(project_dir)
+
+    def _record_recent_session_summary(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        project_label: str,
+        remote: bool,
+        state: SessionVisualState,
+        detail: str,
+        active: bool,
+    ) -> None:
+        normalized_id = session_id.strip()
+        if not normalized_id:
+            return
+        summary = WindowSessionSummary(
+            session_id=normalized_id,
+            title=title.strip(),
+            project_label=project_label.strip(),
+            remote=remote,
+            state=state,
+            detail=detail.strip(),
+            active=active,
+        )
+        retained = [item for item in self._recent_session_summaries if item.session_id != normalized_id]
+        if active:
+            retained = [
+                WindowSessionSummary(
+                    session_id=item.session_id,
+                    title=item.title,
+                    project_label=item.project_label,
+                    remote=item.remote,
+                    state=item.state,
+                    detail=item.detail,
+                    active=False if item.remote == remote else item.active,
+                )
+                for item in retained
+            ]
+        retained.insert(0, summary)
+        self._recent_session_summaries = retained[:6]
+
+    def _set_registry_active_session(self, *, remote: bool, session_id: str) -> None:
+        normalized_id = session_id.strip()
+        if not normalized_id:
+            return
+        self._window_session_registry.set_active(remote=remote, session_id=normalized_id)
+
+    def _update_registry_summary(
+        self,
+        *,
+        session_id: str,
+        title: str,
+        project_label: str,
+        remote: bool,
+        state: SessionVisualState,
+        detail: str,
+        active: bool,
+    ) -> None:
+        normalized_id = session_id.strip()
+        if not normalized_id:
+            return
+        self._window_session_registry.update(
+            WindowSessionSummary(
+                session_id=normalized_id,
+                title=title.strip(),
+                project_label=project_label.strip(),
+                remote=remote,
+                state=state,
+                detail=detail.strip(),
+                active=active,
+            )
+        )
+        if active:
+            self._set_registry_active_session(remote=remote, session_id=normalized_id)
+
+    def _update_registry_session_state(
+        self,
+        *,
+        session_id: str,
+        remote: bool,
+        state: SessionVisualState,
+        detail: str,
+    ) -> None:
+        normalized_id = session_id.strip()
+        if not normalized_id:
+            return
+        target = self._window_session_registry.remote if remote else self._window_session_registry.local
+        existing = target.get(normalized_id)
+        if existing is None:
+            return
+        self._window_session_registry.update(
+            WindowSessionSummary(
+                session_id=existing.session_id,
+                title=existing.title,
+                project_label=existing.project_label,
+                remote=existing.remote,
+                state=state,
+                detail=detail.strip(),
+                active=existing.active,
+            )
+        )
+
+    def _merge_session_summaries(self, current: WindowSessionSummary) -> list[WindowSessionSummary]:
+        merged: list[WindowSessionSummary] = [current]
+        seen = {current.session_id}
+        registry_summaries = self._window_session_registry.ordered(remote=current.remote)
+        for source in (self._recent_session_summaries, registry_summaries):
+            for summary in source:
+                if summary.session_id in seen:
+                    continue
+                seen.add(summary.session_id)
+                merged.append(summary)
+                if len(merged) >= 6:
+                    return merged
+        return merged
+
+    def _active_strip_summaries(self) -> list[WindowSessionSummary]:
+        session_id = self._remote_session_id if self.remote_url else getattr(self._session, "session_id", "")
+        project_label = self._session_project_label()
+        current_state = SessionVisualState.IDLE
+        label = self._current_activity_label.strip().lower()
+        if self._run_busy and label.startswith("tool:"):
+            current_state = SessionVisualState.TOOL_RUNNING
+        elif self._run_busy and label == "responding":
+            current_state = SessionVisualState.RESPONDING
+        elif self._run_busy and label.startswith("permission:"):
+            current_state = SessionVisualState.WAITING_PERMISSION
+        elif self._run_busy:
+            current_state = SessionVisualState.THINKING
+        elif label == "disconnected":
+            current_state = SessionVisualState.DISCONNECTED
+        current_summary = WindowSessionSummary(
+            session_id=str(session_id or ""),
+            title=self._current_session_title,
+            project_label=project_label,
+            remote=bool(self.remote_url),
+            state=current_state,
+            detail=self._current_activity_label,
+            active=True,
+        )
+        self._record_recent_session_summary(
+            session_id=current_summary.session_id,
+            title=current_summary.title,
+            project_label=current_summary.project_label,
+            remote=current_summary.remote,
+            state=current_summary.state,
+            detail=current_summary.detail,
+            active=True,
+        )
+        self._update_registry_summary(
+            session_id=current_summary.session_id,
+            title=current_summary.title,
+            project_label=current_summary.project_label,
+            remote=current_summary.remote,
+            state=current_summary.state,
+            detail=current_summary.detail,
+            active=True,
+        )
+        return self._merge_session_summaries(current_summary) if current_summary.session_id else []
+
+    def _update_local_known_sessions(self, sessions: list[Any]) -> None:
+        summaries: list[WindowSessionSummary] = []
+        current_session_id = str(getattr(self._session, "session_id", "") or "")
+        existing = {summary.session_id: summary for summary in self._window_session_registry.ordered(remote=False)}
+        for session in sessions[:6]:
+            session_id = str(getattr(session, "id", "") or "").strip()
+            if not session_id:
+                continue
+            previous = existing.get(session_id)
+            summaries.append(
+                WindowSessionSummary(
+                    session_id=session_id,
+                    title=str(getattr(session, "title", "") or "").strip(),
+                    project_label=self._normalize_project_label(str(getattr(session, "project_dir", "") or "")),
+                    remote=False,
+                    state=previous.state if previous is not None else SessionVisualState.IDLE,
+                    detail=previous.detail if previous is not None else "idle",
+                    active=(session_id == current_session_id),
+                )
+            )
+        self._window_session_registry.replace_known(remote=False, summaries=summaries)
+        if current_session_id:
+            self._set_registry_active_session(remote=False, session_id=current_session_id)
+
+    def _update_remote_known_sessions(self, sessions: list[dict[str, Any]]) -> None:
+        summaries: list[WindowSessionSummary] = []
+        current_session_id = self._remote_session_id.strip()
+        existing = {summary.session_id: summary for summary in self._window_session_registry.ordered(remote=True)}
+        for session in sessions[:6]:
+            session_id = str(session.get("id", "") or "").strip()
+            if not session_id:
+                continue
+            previous = existing.get(session_id)
+            summaries.append(
+                WindowSessionSummary(
+                    session_id=session_id,
+                    title=str(session.get("title", "") or "").strip(),
+                    project_label=self._normalize_project_label(str(session.get("project_dir", "") or "")),
+                    remote=True,
+                    state=previous.state if previous is not None else SessionVisualState.IDLE,
+                    detail=previous.detail if previous is not None else "idle",
+                    active=(session_id == current_session_id),
+                )
+            )
+        self._window_session_registry.replace_known(remote=True, summaries=summaries)
+        if current_session_id:
+            self._set_registry_active_session(remote=True, session_id=current_session_id)
+
+    def _refresh_session_strip(self) -> None:
+        try:
+            strip = self._session_strip()
+        except Exception:
+            return
+        set_session = getattr(strip, "set_session", None)
+        set_activity = getattr(strip, "set_activity", None)
+        set_summaries = getattr(strip, "set_summaries", None)
+        if not callable(set_session) or not callable(set_activity):
+            return
+        summaries = self._active_strip_summaries()
+        if callable(set_summaries) and summaries:
+            set_summaries(summaries)
+            return
+        session_id = self._remote_session_id if self.remote_url else getattr(self._session, "session_id", "")
+        set_session(
+            session_id=str(session_id or ""),
+            title=self._current_session_title,
+            project_label=self._session_project_label(),
+            remote=bool(self.remote_url),
+        )
+        set_activity(self._current_activity_label, busy=self._run_busy)
+
+    def _set_current_session_title(self, title: str) -> None:
+        self._current_session_title = title.strip()
+        self._refresh_session_strip()
+
+    def _set_session_visual_state(
+        self,
+        state: SessionVisualState,
+        *,
+        detail: str = "",
+    ) -> None:
+        label, busy = _session_visual_label(state, detail)
         self._run_busy = busy
-        footer = self.query_one("#status-footer", StatusFooter)
-        set_activity = getattr(footer, "set_activity", None)
-        if callable(set_activity):
-            set_activity(label, busy=busy)
+        self._current_activity_label = label
+        try:
+            footer = self.query_one("#status-footer", StatusFooter)
+        except Exception:
+            footer = None
+        if footer is not None:
+            set_state = getattr(footer, "set_session_state", None)
+            if callable(set_state):
+                set_state(state, detail=detail)
+            else:
+                set_activity = getattr(footer, "set_activity", None)
+                if callable(set_activity):
+                    set_activity(label, busy=busy)
+        self._refresh_session_strip()
+        self._refresh_composer_hints()
+
+    def _set_run_activity(self, label: str, *, busy: bool) -> None:
+        normalized = label.strip().lower()
+        if busy and normalized.startswith("tool:"):
+            state = SessionVisualState.TOOL_RUNNING
+        elif busy and normalized == "responding":
+            state = SessionVisualState.RESPONDING
+        elif busy and normalized.startswith("permission:"):
+            state = SessionVisualState.WAITING_PERMISSION
+        elif busy:
+            state = SessionVisualState.THINKING
+        else:
+            state = SessionVisualState.IDLE
+        self._set_session_visual_state(state, detail=label)
 
     def _set_footer_thinking_level(self, level: str) -> None:
         try:
@@ -2558,6 +3179,38 @@ class ArtelApp(App):
     def _composer(self) -> TextArea:
         return self.query_one("#input-bar", TextArea)
 
+    def _composer_hints_bar(self) -> ComposerHintsBar:
+        return self.query_one("#composer-hints", ComposerHintsBar)
+
+    def _refresh_composer_hints(self) -> None:
+        try:
+            composer = self._composer()
+            hints = self._composer_hints_bar()
+        except Exception:
+            return
+        set_state = getattr(hints, "set_state", None)
+        if not callable(set_state) or not hasattr(composer, "text") or not hasattr(composer, "placeholder"):
+            return
+        text = composer.text.strip()
+        mode = "prompt"
+        if self._run_busy:
+            mode = "steering"
+        elif text.startswith("/"):
+            mode = "command"
+        elif text.startswith("!"):
+            mode = "shell"
+        set_state(mode=mode, attachments=len(self._pending_attachments), busy=self._run_busy)
+        if mode == "steering":
+            composer.placeholder = "Steer the active run… (Enter to send, Shift+Enter for newline)"
+        elif mode == "command":
+            composer.placeholder = "Type a command… (Tab completes, Enter applies)"
+        elif mode == "shell":
+            composer.placeholder = "Run a command on the active host…"
+        elif self._pending_attachments:
+            composer.placeholder = "Add an optional prompt for the attached image(s)…"
+        else:
+            composer.placeholder = "Type a message… (/, @, Enter, Shift+Enter)"
+
     def _composer_text(self) -> str:
         return self._composer().text
 
@@ -2575,6 +3228,7 @@ class ArtelApp(App):
             self.query_one("#pending-attachments", PendingAttachmentsBar).set_attachments(
                 self._pending_attachments
             )
+        self._refresh_composer_hints()
 
     def _consume_pending_attachments(self) -> list[ImageAttachment]:
         attachments = list(self._pending_attachments)
@@ -2740,6 +3394,8 @@ class ArtelApp(App):
 
     def _apply_remote_session_state(self, session: dict[str, Any]) -> None:
         footer = self.query_one("#status-footer", StatusFooter)
+        title = str(session.get("title", "")).strip()
+        self._set_current_session_title(title)
         model = str(session.get("model", "")).strip()
         if model:
             self._provider_model = model
@@ -2756,6 +3412,7 @@ class ArtelApp(App):
             exclusive=False,
             thread=False,
         )
+        self._refresh_session_strip()
         overrides = session.get("rule_overrides")
         if isinstance(overrides, dict):
             self._remote_rule_overrides = overrides
@@ -2770,6 +3427,7 @@ class ArtelApp(App):
             try:
                 payload = await self._remote_control().get_server_info()
             except Exception:
+                self._set_session_visual_state(SessionVisualState.DISCONNECTED, detail="disconnected")
                 return
             model = str(payload.get("default_model", "")).strip()
             if model:
@@ -2782,6 +3440,7 @@ class ArtelApp(App):
             if project_dir:
                 self._remote_project_dir = project_dir
                 footer.set_cwd(project_dir)
+            self._refresh_session_strip()
             return
         session = payload.get("session", {})
         self._apply_remote_session_state(session)
@@ -2794,7 +3453,7 @@ class ArtelApp(App):
             try:
                 payload = await self._remote_control().list_sessions()
             except Exception as exc:
-                self._add_message(f"Failed to load remote sessions: {exc}", role="error")
+                self._add_message(f"Failed to load sessions: {exc}", role="error")
             else:
                 sessions = payload.get("sessions", [])
                 if sessions:
@@ -2887,12 +3546,8 @@ class ArtelApp(App):
             self._register_tui_extension_keybindings(ext)
 
     async def _mount_builtin_delegation_widget(self) -> None:
-        from artel_tui.delegation_widget import DelegationStatusWidget
-
-        main = self.query_one("#main-content")
-        input_bar = self.query_one("#input-bar")
-        with suppress(Exception):
-            await main.mount(DelegationStatusWidget(self), before=input_bar)
+        """Deprecated shim: orchestration now lives inside the workspace sidebar."""
+        return
 
     def _register_tui_extension_keybindings(self, ext: Any) -> None:
         """Bind dynamic keybindings exported by TUI extensions."""
@@ -2932,6 +3587,15 @@ class ArtelApp(App):
         if len(clean) <= limit:
             return clean
         return clean[: limit - 1] + "…"
+
+    def _format_command_suggestion_prompt(self, suggestion: SlashCommandSuggestion) -> str:
+        prefix = "✓ " if getattr(suggestion, "current", False) else ""
+        category = str(getattr(suggestion, "category", "") or "").strip().lower()
+        category_prefix = f"[{category}] " if category else ""
+        return (
+            f"{prefix}{category_prefix}{suggestion.value} — "
+            f"{self._truncate_command_description(suggestion.description)}"
+        )
 
     def _current_thinking_level(self) -> str:
         if self._session is not None:
@@ -3020,6 +3684,56 @@ class ArtelApp(App):
                 break
         return suggestions
 
+    def _path_reference_suggestions(self, text: str) -> list[SlashCommandSuggestion]:
+        token = text.rsplit(None, 1)[-1] if text.strip() else text
+        if not token.startswith("@"):
+            return []
+        prefix = token[1:]
+        raw_prefix, was_quoted = self._unquote_path_prefix(prefix)
+        expanded = os.path.expanduser(raw_prefix) if raw_prefix else ""
+        if expanded:
+            base_dir = expanded if os.path.isdir(expanded) else os.path.dirname(expanded)
+            partial = os.path.basename(expanded)
+            if not base_dir:
+                base_dir = "."
+        else:
+            base_dir = os.getcwd()
+            partial = ""
+        try:
+            entries = sorted(os.scandir(base_dir), key=lambda entry: entry.name.lower())
+        except OSError:
+            return []
+        text_prefix = text[: len(text) - len(token)]
+        suggestions: list[SlashCommandSuggestion] = []
+        for entry in entries:
+            if partial and partial.lower() not in entry.name.lower():
+                continue
+            full_path = os.path.abspath(os.path.join(base_dir, entry.name))
+            try:
+                display_path = str(Path(full_path).resolve().relative_to(Path.cwd().resolve()))
+            except Exception:
+                display_path = os.path.expanduser(full_path)
+                if raw_prefix.startswith("~"):
+                    home = str(Path.home())
+                    if display_path.startswith(home):
+                        display_path = "~" + display_path[len(home) :]
+            completion_path = self._quote_completion_path(display_path, force=was_quoted)
+            completion = f"{text_prefix}@{completion_path}"
+            if entry.is_file():
+                completion += " "
+            suggestions.append(
+                SlashCommandSuggestion(
+                    f"@{display_path}",
+                    "insert path reference",
+                    completion=completion,
+                    search_text=display_path.lower(),
+                    category="path",
+                )
+            )
+            if len(suggestions) >= 25:
+                break
+        return suggestions
+
     async def _ensure_model_autocomplete_data(self) -> None:
         if self._model_autocomplete_loaded or self._model_autocomplete_loading:
             return
@@ -3102,6 +3816,7 @@ class ArtelApp(App):
                             search_text=(
                                 f"{index} {session_id} {title} {model} {project_dir}".lower()
                             ),
+                            category="session",
                         )
                     )
                     suggestions.append(
@@ -3112,6 +3827,7 @@ class ArtelApp(App):
                             search_text=(
                                 f"{session_id} {index} {title} {model} {project_dir}".lower()
                             ),
+                            category="session",
                         )
                     )
             elif self._store is not None:
@@ -3193,6 +3909,7 @@ class ArtelApp(App):
                         description,
                         completion=f"/fork {index}",
                         search_text=f"{index} {role} {content}".lower(),
+                        category="session",
                     )
                 )
             self._fork_autocomplete_suggestions = suggestions
@@ -3270,6 +3987,7 @@ class ArtelApp(App):
                     f"set thinking to {level}",
                     completion=f"/thinking {level}",
                     current=(level == current_thinking),
+                    category="model",
                 )
                 for level in self._thinking_levels()
                 if level.startswith(arg.lower())
@@ -3283,6 +4001,7 @@ class ArtelApp(App):
                     "switch theme",
                     completion=f"/theme {theme}",
                     current=(theme.lower() == current_theme),
+                    category="ui",
                 )
                 for theme in self._available_theme_names()
                 if theme.lower().startswith(arg.lower())
@@ -3296,6 +4015,7 @@ class ArtelApp(App):
                     "connect provider",
                     completion=f"/connect {provider_id}",
                     current=(provider_id.lower() == current_provider),
+                    category="model",
                 )
                 for provider_id in self._provider_ids_for_autocomplete()
                 if provider_id.lower().startswith(arg.lower())
@@ -3334,6 +4054,7 @@ class ArtelApp(App):
                         os.path.abspath(os.path.expanduser(display_path))
                         == os.path.abspath(os.path.expanduser(current_project))
                     ),
+                    category="project",
                 )
                 for display_path, completion_path in self._project_path_suggestions(arg)
             ]
@@ -3345,6 +4066,7 @@ class ArtelApp(App):
                     "attach image",
                     completion=f"/image {completion_path}",
                     search_text=display_path.lower(),
+                    category="media",
                 )
                 for display_path, completion_path in self._image_path_suggestions(arg)
             ]
@@ -3383,6 +4105,7 @@ class ArtelApp(App):
                     hint,
                     "open browser pane",
                     completion=f"/browser {hint}",
+                    category="ui",
                 )
                 for hint in browser_hints
                 if hint.startswith(arg.lower())
@@ -3424,6 +4147,7 @@ class ArtelApp(App):
                         completion=f"/model {provider_id}/",
                         search_text=provider_id.lower(),
                         current=(provider_id.lower() == current_provider),
+                        category="model",
                     )
                     for provider_id in provider_matches
                 ]
@@ -3450,6 +4174,7 @@ class ArtelApp(App):
                         ref + " " + self._model_autocomplete_descriptions.get(ref, "")
                     ).lower(),
                     current=self._is_current_model(ref),
+                    category="model",
                 )
                 for ref in model_matches
             ]
@@ -3464,6 +4189,7 @@ class ArtelApp(App):
                 SlashCommandSuggestion(
                     f"/{name}",
                     self._truncate_command_description(template),
+                    category="prompt",
                 )
             )
 
@@ -3474,15 +4200,24 @@ class ArtelApp(App):
                     SlashCommandSuggestion(
                         f"/skill:{skill.name}",
                         self._truncate_command_description(description),
+                        category="prompt",
                     )
                 )
 
         if self._session:
             for name in sorted(self._session.hooks.commands):
-                suggestions.append(SlashCommandSuggestion(f"/{name}", "extension command"))
+                suggestions.append(
+                    SlashCommandSuggestion(f"/{name}", "extension command", category="extension")
+                )
         elif self.remote_url:
             for name in sorted(self._remote_extension_commands):
-                suggestions.append(SlashCommandSuggestion(f"/{name}", "remote extension command"))
+                suggestions.append(
+                    SlashCommandSuggestion(
+                        f"/{name}",
+                        "remote extension command",
+                        category="extension",
+                    )
+                )
 
         deduped: list[SlashCommandSuggestion] = []
         seen: set[str] = set()
@@ -3491,19 +4226,25 @@ class ArtelApp(App):
                 continue
             seen.add(suggestion.value)
             deduped.append(suggestion)
+        deduped.sort(
+            key=lambda suggestion: (
+                _command_category_rank(suggestion.category),
+                suggestion.value.lower(),
+            )
+        )
         return deduped
 
     def _matching_command_suggestions(self, text: str) -> list[SlashCommandSuggestion]:
         query = text.strip().lower()
-        if not query.startswith("/"):
-            return []
-        if " " in query:
-            return self._command_argument_suggestions(text)
-        return [
-            suggestion
-            for suggestion in self._command_suggestions()
-            if suggestion.value.lower().startswith(query)
-        ]
+        if query.startswith("/"):
+            if " " in query:
+                return self._command_argument_suggestions(text)
+            return [
+                suggestion
+                for suggestion in self._command_suggestions()
+                if suggestion.value.lower().startswith(query)
+            ]
+        return self._path_reference_suggestions(text)
 
     def _update_command_menu(self, text: str) -> None:
         menu = self._command_menu()
@@ -3514,15 +4255,7 @@ class ArtelApp(App):
 
         options = [
             Option(
-                (
-                    f"✓ {suggestion.value} — "
-                    f"{self._truncate_command_description(suggestion.description)}"
-                )
-                if getattr(suggestion, "current", False)
-                else (
-                    f"{suggestion.value} — "
-                    f"{self._truncate_command_description(suggestion.description)}"
-                ),
+                self._format_command_suggestion_prompt(suggestion),
                 id=suggestion.completion or suggestion.value,
             )
             for suggestion in matches
@@ -3591,6 +4324,7 @@ class ArtelApp(App):
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
         if event.text_area.id == "input-bar":
+            self._refresh_composer_hints()
             if self._suppress_next_command_menu_update:
                 self._suppress_next_command_menu_update = False
                 self._hide_command_menu()
@@ -3718,7 +4452,14 @@ class ArtelApp(App):
 
         self._provider_model = f"{provider_name}/{model_id}"
         self.sub_title = self._provider_model
+        self._set_current_session_title(
+            (resumed_info.title if resumed_info and resumed_info.title else "").strip()
+        )
+        if self._store is not None:
+            with suppress(Exception):
+                self._update_local_known_sessions(await self._store.list_sessions(limit=6))
         self.query_one("#status-footer", StatusFooter).set_model(self._provider_model)
+        self._refresh_session_strip()
         await self._sync_cmux_session_metadata()
         current_thinking = (
             self._session.thinking_level if self._session is not None else config.agent.thinking
@@ -4158,7 +4899,7 @@ class ArtelApp(App):
                         session = payload.get("session", {})
                         model = str(session.get("model", "")).strip() or "remote"
                     except Exception as exc:
-                        self._add_message(f"Failed to load remote model: {exc}", role="error")
+                        self._add_message(f"Failed to load model: {exc}", role="error")
                         return
                 else:
                     model = self._session.model if self._session else "remote"
@@ -4356,7 +5097,7 @@ class ArtelApp(App):
     async def _cmd_cancel(self) -> None:
         if self.remote_url:
             if not self._run_busy:
-                self._add_message("No active remote run.", role="tool")
+                self._add_message("No active run.", role="tool")
                 return
             try:
                 await self._send_remote_event(
@@ -4366,13 +5107,13 @@ class ArtelApp(App):
                     }
                 )
             except Exception as exc:
-                self._add_message(f"Failed to cancel remote run: {exc}", role="error")
+                self._add_message(f"Failed to cancel run: {exc}", role="error")
                 return
             self._add_message("Cancellation requested.", role="tool")
             return
 
         if not self._session or not self._run_busy:
-            self._add_message("No active local run.", role="tool")
+            self._add_message("No active run.", role="tool")
             return
         self._session.abort()
         self._add_message("Cancellation requested.", role="tool")
@@ -4384,10 +5125,7 @@ class ArtelApp(App):
             self._add_message("Session not initialized.", role="error")
             return
 
-        widget: MessageWidget | None = None
-        reasoning_widget: MessageWidget | None = None
-        had_tool_calls = False
-        need_new_reasoning_block = False
+        state = self._new_turn_render_state()
         footer = self.query_one("#status-footer", StatusFooter)
 
         self._set_run_activity("thinking", busy=True)
@@ -4401,29 +5139,18 @@ class ArtelApp(App):
             )
             async for event in run_iter:
                 if event.type == AgentEventType.REASONING_DELTA:
-                    self._set_run_activity("thinking", busy=True)
-                    if reasoning_widget is None or need_new_reasoning_block:
-                        reasoning_widget = self._add_reasoning_block()
-                        need_new_reasoning_block = False
-                    reasoning_widget.append_content(event.content)
+                    self._append_reasoning_delta(state, event.content)
 
                 elif event.type == AgentEventType.TEXT_DELTA:
-                    self._set_run_activity("responding", busy=True)
-                    if widget is None or had_tool_calls:
-                        widget = self._add_message("", role="assistant")
-                        had_tool_calls = False
-                    widget.append_content(event.content)
+                    self._append_assistant_delta(state, event.content)
 
                 elif event.type == AgentEventType.TOOL_CALL:
-                    had_tool_calls = True
-                    need_new_reasoning_block = True
-                    tool_display = format_tool_call_display(event.tool_name, event.tool_args)
-                    self._start_tool_card(
-                        event.tool_call_id or str(uuid.uuid4()),
-                        title=tool_display.title,
-                        body=tool_display.body,
+                    self._handle_tool_call_event(
+                        state,
+                        tool_name=event.tool_name,
+                        tool_args=event.tool_args,
+                        tool_call_id=event.tool_call_id,
                     )
-                    self._set_run_activity(f"tool: {event.tool_name}", busy=True)
                     await cmux.set_status(
                         "state",
                         f"tool: {event.tool_name}",
@@ -4433,51 +5160,25 @@ class ArtelApp(App):
                     await cmux.log(f"tool: {event.tool_name}", source="artel")
 
                 elif event.type == AgentEventType.TOOL_RESULT:
-                    result_display = format_tool_result_display(
+                    self._handle_tool_result_event(
+                        state,
                         tool_name=event.tool_name,
                         content=event.content,
+                        tool_call_id=event.tool_call_id,
                         is_error=event.is_error,
                         display=event.display,
                     )
-                    self._finish_tool_card(
-                        event.tool_call_id or str(uuid.uuid4()),
-                        title=result_display.title,
-                        body=result_display.body,
-                        markdown=result_display.markdown,
-                        display=event.display,
-                        kind=result_display.kind,
-                        status_badge=result_display.status_badge,
-                        status_variant=result_display.status_variant,
-                    )
-                    self._set_run_activity("thinking", busy=True)
 
                 elif event.type == AgentEventType.ERROR:
-                    self._add_message(event.error, role="error")
-                    await cmux.log(event.error, level="error", source="artel")
+                    await self._handle_local_stream_error(event.error)
 
                 elif event.type == AgentEventType.COMPACT:
                     self._add_message("\U0001f4cb Session auto-compacted.", role="tool")
 
                 elif event.type == AgentEventType.DONE:
-                    if event.usage:
-                        footer.update_usage(
-                            event.usage.input_tokens,
-                            event.usage.output_tokens,
-                            self._input_price,
-                            self._output_price,
-                        )
-                    if self._session:
-                        est = self._session._estimate_tokens()
-                        footer.update_context_pct(est, self._session.context_window)
-                        await cmux.set_status("context", str(est), icon="database", color="#89dceb")
-                        if self._session.context_window > 0:
-                            pct = est / self._session.context_window
-                            await cmux.set_progress(min(pct, 1.0), label=f"ctx {pct:.0%}")
+                    await self._handle_local_done_event(footer, event.usage)
         finally:
-            self._set_run_activity("idle", busy=False)
-            await cmux.set_status("state", "idle", icon="check", color="#a6e3a1")
-            await cmux.notify("Artel", subtitle="Task complete")
-            self._scroll_to_bottom()
+            await self._finalize_local_run()
 
     @work(exclusive=True, thread=False)
     async def _run_remote(
@@ -4493,6 +5194,7 @@ class ArtelApp(App):
                     additional_headers=self._remote_connect_headers(),
                 )
             except Exception as e:
+                self._set_session_visual_state(SessionVisualState.DISCONNECTED, detail="disconnected")
                 self._add_message(f"Connection failed: {e}", role="error")
                 return
 
@@ -4501,14 +5203,12 @@ class ArtelApp(App):
                 json.dumps(self._remote_message_payload(text, attachments=attachments))
             )
         except Exception as e:
+            self._set_session_visual_state(SessionVisualState.DISCONNECTED, detail="disconnected")
             self._add_message(f"Connection error: {e}", role="error")
             self._ws = None
             return
 
-        widget: MessageWidget | None = None
-        reasoning_widget: MessageWidget | None = None
-        had_tool_calls = False
-        need_new_reasoning_block = False
+        state = self._new_turn_render_state()
         footer = self.query_one("#status-footer", StatusFooter)
         self._set_run_activity("thinking", busy=True)
 
@@ -4517,55 +5217,27 @@ class ArtelApp(App):
                 msg = json.loads(raw)
                 msg_type = msg.get("type", "")
                 if msg_type == "reasoning_delta":
-                    self._set_run_activity("thinking", busy=True)
-                    if reasoning_widget is None or need_new_reasoning_block:
-                        reasoning_widget = self._add_reasoning_block()
-                        need_new_reasoning_block = False
-                    reasoning_widget.append_content(msg.get("content", ""))
+                    self._append_reasoning_delta(state, str(msg.get("content", "") or ""))
                 elif msg_type == "text_delta":
-                    self._set_run_activity("responding", busy=True)
-                    if widget is None or had_tool_calls:
-                        widget = self._add_message("", role="assistant")
-                        had_tool_calls = False
-                    widget.append_content(msg.get("content", ""))
+                    self._append_assistant_delta(state, str(msg.get("content", "") or ""))
                 elif msg_type == "tool_call":
-                    had_tool_calls = True
-                    need_new_reasoning_block = True
-                    tool_name = str(msg.get("tool", "")).strip()
+                    tool_name = str(msg.get("tool", "") or "").strip()
                     tool_args = msg.get("args", {})
-                    tool_display = format_tool_call_display(
-                        tool_name,
-                        tool_args if isinstance(tool_args, dict) else {},
+                    self._handle_tool_call_event(
+                        state,
+                        tool_name=tool_name,
+                        tool_args=tool_args if isinstance(tool_args, dict) else {},
+                        tool_call_id=str(msg.get("call_id", "") or uuid.uuid4()),
                     )
-                    self._start_tool_card(
-                        str(msg.get("call_id", "") or uuid.uuid4()),
-                        title=tool_display.title,
-                        body=tool_display.body,
-                    )
-                    self._set_run_activity(f"tool: {tool_name}", busy=True)
                 elif msg_type == "tool_result":
-                    output = str(msg.get("output", "") or "")
-                    result_display = format_tool_result_display(
+                    self._handle_tool_result_event(
+                        state,
                         tool_name=str(msg.get("tool", "") or "tool"),
-                        content=output,
+                        content=str(msg.get("output", "") or ""),
+                        tool_call_id=str(msg.get("call_id", "") or uuid.uuid4()),
                         is_error=bool(msg.get("is_error", False)),
-                        display=msg.get("display")
-                        if isinstance(msg.get("display"), dict)
-                        else None,
+                        display=msg.get("display") if isinstance(msg.get("display"), dict) else None,
                     )
-                    self._finish_tool_card(
-                        str(msg.get("call_id", "") or uuid.uuid4()),
-                        title=result_display.title,
-                        body=result_display.body,
-                        markdown=result_display.markdown,
-                        display=msg.get("display")
-                        if isinstance(msg.get("display"), dict)
-                        else None,
-                        kind=result_display.kind,
-                        status_badge=result_display.status_badge,
-                        status_variant=result_display.status_variant,
-                    )
-                    self._set_run_activity("thinking", busy=True)
                 elif msg_type == "permission_request":
                     await self._handle_remote_permission_request(msg)
                 elif msg_type == "session_updated":
@@ -4595,21 +5267,15 @@ class ArtelApp(App):
                         )
                     break
                 elif msg_type == "done":
-                    usage = msg.get("usage")
-                    if usage:
-                        footer.update_usage(
-                            int(usage.get("input", 0)),
-                            int(usage.get("output", 0)),
-                            self._input_price,
-                            self._output_price,
-                        )
+                    usage = msg.get("usage") if isinstance(msg.get("usage"), dict) else None
+                    self._handle_remote_done_payload(footer, usage)
                     break
         except Exception as e:
+            self._set_session_visual_state(SessionVisualState.DISCONNECTED, detail="disconnected")
             self._add_message(f"Connection error: {e}", role="error")
             self._ws = None
         finally:
-            self._set_run_activity("idle", busy=False)
-            self._scroll_to_bottom()
+            self._finalize_remote_run()
 
     def _auto_collapse_server_dock_for_size(self) -> None:
         with suppress(Exception):
@@ -4649,7 +5315,7 @@ class ArtelApp(App):
             try:
                 payload = await self._remote_control().list_models()
             except Exception as exc:
-                self._add_message(f"Failed to load remote models: {exc}", role="error")
+                self._add_message(f"Failed to load models: {exc}", role="error")
                 return
             providers = payload.get("providers", [])
             lines: list[str] = []
@@ -4710,7 +5376,7 @@ class ArtelApp(App):
             try:
                 payload = await self._remote_control().list_providers()
             except Exception as exc:
-                self._add_message(f"Failed to load remote providers: {exc}", role="error")
+                self._add_message(f"Failed to load providers: {exc}", role="error")
                 return
             entries = [
                 ProviderSetupEntry(
@@ -4738,7 +5404,7 @@ class ArtelApp(App):
                     model_str,
                 )
             except Exception as exc:
-                self._add_message(f"Failed to switch remote model: {exc}", role="error")
+                self._add_message(f"Failed to switch model: {exc}", role="error")
                 return
             session = payload.get("session", {})
             self._apply_remote_session_state(session)
@@ -5089,7 +5755,7 @@ class ArtelApp(App):
             if not self._remote_project_dir:
                 await self._sync_remote_session_state()
             project_dir = self._remote_project_dir or "(unknown)"
-            self._add_message(f"Current remote project: {project_dir}", role="tool")
+            self._add_message(f"Current project: {project_dir}", role="tool")
             return
 
         try:
@@ -5098,7 +5764,7 @@ class ArtelApp(App):
                 arg,
             )
         except Exception as exc:
-            self._add_message(f"Failed to switch remote project: {exc}", role="error")
+            self._add_message(f"Failed to switch project: {exc}", role="error")
             return
 
         session = payload.get("session", {})
@@ -5106,7 +5772,7 @@ class ArtelApp(App):
         await self._load_board_state()
         await self._refresh_server_dock()
         project_dir = str(session.get("project_dir", "")).strip() or arg
-        self._add_message(f"Switched remote project to: {project_dir}", role="tool")
+        self._add_message(f"Switched project to: {project_dir}", role="tool")
 
     async def _cmd_rules(self) -> None:
         if self.remote_url:
@@ -5489,6 +6155,15 @@ class ArtelApp(App):
             return
         self._add_message(render_numbered_text(content), role="tool")
 
+    def _can_change_session_context(self) -> bool:
+        if not self._run_busy:
+            return True
+        self._add_message(
+            "Cannot switch sessions while a run is active. Cancel the run or wait for completion first.",
+            role="tool",
+        )
+        return False
+
     async def _handle_server_dock_selection(self, data: ServerDockNodeData) -> None:
         if data.kind == "session" and data.session_id:
             await self._connect_to_server(
@@ -5517,10 +6192,12 @@ class ArtelApp(App):
         try:
             payload = await self._remote_control().list_sessions()
         except Exception as exc:
-            self._add_message(f"Failed to load remote sessions: {exc}", role="error")
+            self._add_message(f"Failed to load sessions: {exc}", role="error")
             return
 
         sessions = payload.get("sessions", [])
+        if isinstance(sessions, list):
+            self._update_remote_known_sessions([item for item in sessions if isinstance(item, dict)])
         if arg.isdigit():
             idx = int(arg) - 1
             if 0 <= idx < len(sessions):
@@ -5532,7 +6209,7 @@ class ArtelApp(App):
             return
 
         if not sessions:
-            self._add_message("No saved remote sessions.", role="tool")
+            self._add_message("No saved sessions.", role="tool")
             return
 
         lines = ["Recent sessions:"]
@@ -5549,11 +6226,13 @@ class ArtelApp(App):
 
     async def _resume_remote_session(self, session_id: str) -> None:
         """Load a remote session and replace the current chat."""
+        if not self._can_change_session_context():
+            return
         try:
             session_payload = await self._remote_control().get_session(session_id)
             messages_payload = await self._remote_control().get_session_messages(session_id)
         except Exception as exc:
-            self._add_message(f"Failed to resume remote session: {exc}", role="error")
+            self._add_message(f"Failed to resume session: {exc}", role="error")
             return
 
         session = session_payload.get("session", {})
@@ -5568,36 +6247,49 @@ class ArtelApp(App):
         self._active_tool_cards.clear()
         self._tool_call_names.clear()
 
-        for message in messages_payload.get("messages", []):
-            role = str(message.get("role", ""))
-            content = str(message.get("content", ""))
-            reasoning = str(message.get("reasoning", ""))
-            attachments_payload = message.get("attachments", [])
-            attachments = [
-                ImageAttachment(
-                    path=str(item.get("path", "")),
-                    mime_type=str(item.get("mime_type", "image/png") or "image/png"),
-                    name=str(item.get("name", "") or ""),
+        raw_messages = messages_payload.get("messages", [])
+        restored_messages = raw_messages if isinstance(raw_messages, list) else []
+        hidden_count = max(0, len(restored_messages) - _RESTORED_MESSAGE_LIMIT)
+        visible_messages = restored_messages[-_RESTORED_MESSAGE_LIMIT:]
+
+        self._restore_render_inflight = True
+        try:
+            self._render_restore_limit_notice(hidden_count=hidden_count)
+            for message in visible_messages:
+                role = str(message.get("role", ""))
+                content = str(message.get("content", ""))
+                reasoning = str(message.get("reasoning", ""))
+                attachments_payload = message.get("attachments", [])
+                attachments = [
+                    ImageAttachment(
+                        path=str(item.get("path", "")),
+                        mime_type=str(item.get("mime_type", "image/png") or "image/png"),
+                        name=str(item.get("name", "") or ""),
+                    )
+                    for item in attachments_payload
+                    if isinstance(item, dict) and str(item.get("path", "")).strip()
+                ]
+                self._render_restored_message(
+                    role=role,
+                    content=content,
+                    reasoning=reasoning,
+                    attachments=attachments or None,
+                    tool_calls=message.get("tool_calls")
+                    if isinstance(message.get("tool_calls"), list)
+                    else None,
+                    tool_result=message.get("tool_result")
+                    if isinstance(message.get("tool_result"), dict)
+                    else None,
                 )
-                for item in attachments_payload
-                if isinstance(item, dict) and str(item.get("path", "")).strip()
-            ]
-            self._render_restored_message(
-                role=role,
-                content=content,
-                reasoning=reasoning,
-                attachments=attachments or None,
-                tool_calls=message.get("tool_calls")
-                if isinstance(message.get("tool_calls"), list)
-                else None,
-                tool_result=message.get("tool_result")
-                if isinstance(message.get("tool_result"), dict)
-                else None,
-            )
+        finally:
+            self._restore_render_inflight = False
+            self._scroll_to_bottom()
 
         await self._refresh_server_dock()
         title = str(session.get("title", "")).strip() or session_id[:8]
-        self._add_message(f"Resumed remote session: {title}", role="tool")
+        self._set_current_session_title(title)
+        self._refresh_session_strip()
+        self._add_message(f"Resumed session: {title}", role="tool")
 
     async def _connect_to_server(
         self,
@@ -5608,6 +6300,8 @@ class ArtelApp(App):
         project_dir: str = "",
         resume_session_id: str = "",
     ) -> None:
+        if not self._can_change_session_context():
+            return
         normalized_url = remote_url.strip()
         if not normalized_url:
             self._add_message("Missing remote URL.", role="error")
@@ -5615,6 +6309,7 @@ class ArtelApp(App):
         self._dismissed_server_urls.discard(normalized_url)
         self.remote_url = normalized_url
         self.auth_token = auth_token
+        self._set_current_session_title("")
         self._remote_control_client = None
         self._remote_extension_commands = set()
         self._remote_project_dir = ""
@@ -5707,6 +6402,8 @@ class ArtelApp(App):
 
     async def _resume_session(self, session_id: str) -> None:
         """Load a session and replace current chat."""
+        if not self._can_change_session_context():
+            return
         if not self._store or not self._session:
             return
 
@@ -5736,19 +6433,33 @@ class ArtelApp(App):
         self._session.messages.extend(messages)
 
         # Display restored messages
-        for msg in messages:
-            self._render_restored_message(
-                role=msg.role.value,
-                content=msg.content,
-                reasoning=msg.reasoning or "",
-                attachments=msg.attachments,
-                tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls]
-                if msg.tool_calls
-                else None,
-                tool_result=msg.tool_result.model_dump() if msg.tool_result is not None else None,
-            )
+        hidden_count = max(0, len(messages) - _RESTORED_MESSAGE_LIMIT)
+        visible_messages = messages[-_RESTORED_MESSAGE_LIMIT:]
+
+        self._restore_render_inflight = True
+        try:
+            self._render_restore_limit_notice(hidden_count=hidden_count)
+            for msg in visible_messages:
+                self._render_restored_message(
+                    role=msg.role.value,
+                    content=msg.content,
+                    reasoning=msg.reasoning or "",
+                    attachments=msg.attachments,
+                    tool_calls=[tool_call.model_dump() for tool_call in msg.tool_calls]
+                    if msg.tool_calls
+                    else None,
+                    tool_result=msg.tool_result.model_dump() if msg.tool_result is not None else None,
+                )
+        finally:
+            self._restore_render_inflight = False
+            self._scroll_to_bottom()
 
         title = info.title if info else session_id[:8]
+        self._set_current_session_title(title)
+        if self._store is not None:
+            with suppress(Exception):
+                self._update_local_known_sessions(await self._store.list_sessions(limit=6))
+        self._refresh_session_strip()
         self._add_message(f"Resumed session: {title}", role="tool")
 
     @work(exclusive=True, thread=False)
@@ -5803,12 +6514,14 @@ class ArtelApp(App):
             session = payload.get("session")
             if isinstance(session, dict):
                 self._apply_remote_session_state(session)
+            self._set_current_session_title(title)
             self._add_message(f"Session renamed to: {title}", role="tool")
             return
         if not self._store or not self._session:
             self._add_message("No active session.", role="error")
             return
         await self._store.rename_session(self._session.session_id, title)
+        self._set_current_session_title(title)
         self._add_message(f"Session renamed to: {title}", role="tool")
 
     async def _cmd_tree(self) -> None:
@@ -6006,7 +6719,7 @@ class ArtelApp(App):
                 try:
                     payload = await self._remote_control().get_session(self._remote_session_id)
                 except Exception as exc:
-                    self._add_message(f"Failed to load remote thinking level: {exc}", role="error")
+                    self._add_message(f"Failed to load thinking level: {exc}", role="error")
                     return
                 session = payload.get("session", {})
                 level = str(session.get("thinking_level", "")).strip() or "off"
@@ -6180,7 +6893,7 @@ class ArtelApp(App):
             if isinstance(session, dict):
                 self._apply_remote_session_state(session)
             self._add_message(
-                f"Reloaded remote session, {len(self._tui_extensions)} tui extension(s), "
+                f"Reloaded session, {len(self._tui_extensions)} tui extension(s), "
                 f"{len(self._prompts)} prompt(s), {len(self._skills)} skill(s)",
                 role="tool",
             )
@@ -6879,6 +7592,7 @@ class ArtelApp(App):
         title = await self._session.generate_title(text)
         if title:
             await self._store.rename_session(self._session.session_id, title)
+            self._set_current_session_title(title)
 
     # ── Permission callback ────────────────────────────────────
 
@@ -6890,9 +7604,17 @@ class ArtelApp(App):
             return
         if not self._pending_permission_requests:
             self._permission_panel().close_request()
+            self._set_session_visual_state(
+                SessionVisualState.THINKING if self._run_busy else SessionVisualState.IDLE,
+                detail="thinking" if self._run_busy else "idle",
+            )
             self.call_after_refresh(self._focus_input)
             return
         self._active_permission_request = self._pending_permission_requests.pop(0)
+        self._set_session_visual_state(
+            SessionVisualState.WAITING_PERMISSION,
+            detail=f"permission: {self._active_permission_request.tool_name}",
+        )
         self._permission_panel().open_request(
             self._active_permission_request.tool_name,
             self._active_permission_request.tool_args,
@@ -6955,21 +7677,25 @@ class ArtelApp(App):
     def _add_message(self, content: str, role: str = "assistant") -> MessageWidget:
         container = self.query_one("#chat-container", Vertical)
         widget = MessageWidget(content, role=role)
-        widget.set_scroll_callback(self._scroll_to_bottom)
+        if not self._restore_render_inflight:
+            widget.set_scroll_callback(self._scroll_to_bottom)
         container.mount(widget)
         if role == "assistant":
             self._assistant_message_history.append(widget)
-        self._scroll_to_bottom()
+        if not self._restore_render_inflight:
+            self._scroll_to_bottom()
         return widget
 
     def _add_reasoning_block(self, content: str = "") -> MessageWidget:
         container = self.query_one("#chat-container", Vertical)
         widget = MessageWidget(content, role="reasoning")
-        widget.set_scroll_callback(self._scroll_to_bottom)
+        if not self._restore_render_inflight:
+            widget.set_scroll_callback(self._scroll_to_bottom)
         collapsible = Collapsible(widget, title="💡 thinking", collapsed=True)
         container.mount(collapsible)
         self._tool_collapsibles.append(collapsible)
-        self._scroll_to_bottom()
+        if not self._restore_render_inflight:
+            self._scroll_to_bottom()
         return widget
 
     def _start_tool_card(self, call_id: str, *, title: str, body: str = "") -> ToolCard:
@@ -6982,7 +7708,8 @@ class ArtelApp(App):
         normalized_title = title[2:].strip() if title.startswith("⚙ ") else title.strip()
         tool_name = normalized_title.split(" ", 1)[0] if normalized_title else "tool"
         self._tool_call_names[call_id] = tool_name or "tool"
-        self._scroll_to_bottom()
+        if not self._restore_render_inflight:
+            self._scroll_to_bottom()
         return widget
 
     def _finish_tool_card(
@@ -7008,7 +7735,8 @@ class ArtelApp(App):
                 status_badge=status_badge,
                 status_variant=status_variant,
             )
-            self._scroll_to_bottom()
+            if not self._restore_render_inflight:
+                self._scroll_to_bottom()
             return
         container = self.query_one("#chat-container", Vertical)
         widget = ToolCard(
@@ -7025,7 +7753,164 @@ class ArtelApp(App):
         collapsible = Collapsible(widget, title=title, collapsed=False)
         container.mount(collapsible)
         self._tool_collapsibles.append(collapsible)
+        if not self._restore_render_inflight:
+            self._scroll_to_bottom()
+
+    def _new_turn_render_state(self) -> TurnRenderState:
+        return TurnRenderState()
+
+    def _append_reasoning_delta(self, state: TurnRenderState, content: str) -> None:
+        self._set_run_activity("thinking", busy=True)
+        if state.reasoning_widget is None or state.need_new_reasoning_block:
+            state.reasoning_widget = self._add_reasoning_block()
+            state.need_new_reasoning_block = False
+        state.reasoning_widget.append_content(content)
+
+    def _append_assistant_delta(self, state: TurnRenderState, content: str) -> None:
+        self._set_run_activity("responding", busy=True)
+        if state.widget is None or state.had_tool_calls:
+            state.widget = self._add_message("", role="assistant")
+            state.had_tool_calls = False
+        state.widget.append_content(content)
+
+    def _handle_tool_call_event(
+        self,
+        state: TurnRenderState,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        tool_call_id: str,
+    ) -> None:
+        state.had_tool_calls = True
+        state.need_new_reasoning_block = True
+        tool_display = format_tool_call_display(tool_name, tool_args)
+        self._start_tool_card(
+            tool_call_id or str(uuid.uuid4()),
+            title=tool_display.title,
+            body=tool_display.body,
+        )
+        self._set_run_activity(f"tool: {tool_name}", busy=True)
+
+    def _handle_tool_result_event(
+        self,
+        state: TurnRenderState,
+        *,
+        tool_name: str,
+        content: str,
+        tool_call_id: str,
+        is_error: bool,
+        display: dict[str, Any] | None = None,
+    ) -> None:
+        result_display = format_tool_result_display(
+            tool_name=tool_name,
+            content=content,
+            is_error=is_error,
+            display=display,
+        )
+        self._finish_tool_card(
+            tool_call_id or str(uuid.uuid4()),
+            title=result_display.title,
+            body=result_display.body,
+            markdown=result_display.markdown,
+            display=display,
+            kind=result_display.kind,
+            status_badge=result_display.status_badge,
+            status_variant=result_display.status_variant,
+        )
+        self._set_run_activity("thinking", busy=True)
+
+    def _apply_usage_to_footer(
+        self,
+        footer: StatusFooter,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+    ) -> None:
+        footer.update_usage(
+            input_tokens,
+            output_tokens,
+            self._input_price,
+            self._output_price,
+        )
+
+    async def _handle_local_done_event(self, footer: StatusFooter, usage: Any | None) -> None:
+        if usage is not None:
+            self._apply_usage_to_footer(
+                footer,
+                input_tokens=int(getattr(usage, "input_tokens", 0) or 0),
+                output_tokens=int(getattr(usage, "output_tokens", 0) or 0),
+            )
+        if self._session:
+            est = self._session._estimate_tokens()
+            footer.update_context_pct(est, self._session.context_window)
+            await cmux.set_status("context", str(est), icon="database", color="#89dceb")
+            if self._session.context_window > 0:
+                pct = est / self._session.context_window
+                await cmux.set_progress(min(pct, 1.0), label=f"ctx {pct:.0%}")
+
+    def _handle_remote_done_payload(self, footer: StatusFooter, usage: dict[str, Any] | None) -> None:
+        if not usage:
+            return
+        self._apply_usage_to_footer(
+            footer,
+            input_tokens=int(usage.get("input", 0) or 0),
+            output_tokens=int(usage.get("output", 0) or 0),
+        )
+
+    async def _handle_local_stream_error(self, error_text: str) -> None:
+        self._add_message(error_text, role="error")
+        await cmux.log(error_text, level="error", source="artel")
+
+    async def _finalize_local_run(self) -> None:
+        self._set_run_activity("idle", busy=False)
+        await cmux.set_status("state", "idle", icon="check", color="#a6e3a1")
+        await cmux.notify("Artel", subtitle="Task complete")
         self._scroll_to_bottom()
+
+    def _finalize_remote_run(self) -> None:
+        if self._ws is None and self.remote_url:
+            self._set_session_visual_state(SessionVisualState.DISCONNECTED, detail="disconnected")
+        else:
+            self._set_run_activity("idle", busy=False)
+        self._scroll_to_bottom()
+
+    def _render_restore_limit_notice(self, *, hidden_count: int) -> None:
+        if hidden_count <= 0:
+            return
+        noun = "item" if hidden_count == 1 else "items"
+        self._add_message(
+            f"Showing latest {_RESTORED_MESSAGE_LIMIT} restored {noun}; {hidden_count} earlier history item(s) hidden for performance.",
+            role="tool",
+        )
+
+    def _render_restored_reasoning(self, reasoning: str) -> None:
+        compact = " ".join(reasoning.split())
+        if len(compact) > 240:
+            compact = compact[:239] + "…"
+        self._add_message(f"💡 thinking: {compact}", role="tool")
+
+    def _render_restored_tool_call_summary(
+        self,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        tool_call_id: str,
+    ) -> None:
+        tool_display = format_tool_call_display(tool_name, tool_args)
+        self._tool_call_names[tool_call_id] = tool_name
+        self._add_message(tool_display.title, role="tool")
+
+    def _render_restored_tool_result_summary(self, tool_result: dict[str, Any], content: str = "") -> None:
+        tool_call_id = str(tool_result.get("tool_call_id", "") or "")
+        matched_tool_name = self._tool_call_names.get(tool_call_id, "tool")
+        result_display = format_tool_result_display(
+            tool_name=matched_tool_name,
+            content=str(tool_result.get("content", "") or content),
+            is_error=bool(tool_result.get("is_error", False)),
+            display=tool_result.get("display") if isinstance(tool_result.get("display"), dict) else None,
+        )
+        summary = result_display.title if not result_display.body else f"{result_display.title}\n{result_display.body}"
+        self._add_message(summary, role="tool")
 
     def _render_restored_message(
         self,
@@ -7046,7 +7931,7 @@ class ArtelApp(App):
             self._add_message(rendered, role="user")
         elif role == Role.ASSISTANT.value:
             if reasoning:
-                self._add_reasoning_block(reasoning)
+                self._render_restored_reasoning(reasoning)
             if rendered:
                 self._add_message(rendered, role="assistant")
             if tool_calls:
@@ -7058,39 +7943,16 @@ class ArtelApp(App):
                     if not isinstance(tool_args, dict):
                         tool_args = {}
                     tool_call_id = str(tool_call.get("id", "") or uuid.uuid4())
-                    tool_display = format_tool_call_display(tool_name, tool_args)
-                    self._tool_call_names[tool_call_id] = tool_name
-                    self._start_tool_card(
-                        tool_call_id,
-                        title=tool_display.title,
-                        body=tool_display.body,
+                    self._render_restored_tool_call_summary(
+                        tool_name=tool_name,
+                        tool_args=tool_args,
+                        tool_call_id=tool_call_id,
                     )
         elif role == Role.SYSTEM.value and rendered:
             self._add_message("📋 [Restored session]", role="tool")
         elif role == Role.TOOL.value:
             if tool_result:
-                tool_call_id = str(tool_result.get("tool_call_id", "") or "")
-                matched_tool_name = self._tool_call_names.get(tool_call_id, "tool")
-                result_display = format_tool_result_display(
-                    tool_name=matched_tool_name,
-                    content=str(tool_result.get("content", "") or content),
-                    is_error=bool(tool_result.get("is_error", False)),
-                    display=tool_result.get("display")
-                    if isinstance(tool_result.get("display"), dict)
-                    else None,
-                )
-                self._finish_tool_card(
-                    str(tool_result.get("tool_call_id", "") or uuid.uuid4()),
-                    title=result_display.title,
-                    body=result_display.body,
-                    markdown=result_display.markdown,
-                    display=tool_result.get("display")
-                    if isinstance(tool_result.get("display"), dict)
-                    else None,
-                    kind=result_display.kind,
-                    status_badge=result_display.status_badge,
-                    status_variant=result_display.status_variant,
-                )
+                self._render_restored_tool_result_summary(tool_result, content)
             elif rendered:
                 self._add_message(rendered, role="tool")
         elif rendered:
@@ -7112,8 +7974,13 @@ class ArtelApp(App):
         self._add_message("Copied last assistant message to clipboard.", role="tool")
 
     def _scroll_to_bottom(self) -> None:
-        scroll = self.query_one("#chat-scroll", VerticalScroll)
-        scroll.scroll_end(animate=False)
+        try:
+            scroll = self.query_one("#chat-scroll", VerticalScroll)
+        except Exception:
+            return
+        scroll_end = getattr(scroll, "scroll_end", None)
+        if callable(scroll_end):
+            scroll_end(animate=False)
 
     def _remote_connect_headers(self) -> dict[str, str]:
         if not self.auth_token:
@@ -7171,24 +8038,84 @@ class ArtelApp(App):
         self._server_dock_visible = not self._server_dock_visible
         self._server_dock().set_visible(self._server_dock_visible)
         self._set_server_dock_status(
-            "Server dock visible" if self._server_dock_visible else "Server dock hidden"
+            "Context panel visible" if self._server_dock_visible else "Context panel hidden"
         )
+        if self._server_dock_visible:
+            self._schedule_background_task(self._refresh_server_dock(), exclusive=False, thread=False)
+            with suppress(Exception):
+                self._server_dock().tree().focus()
+        else:
+            self._focus_input()
+
+    def action_focus_context(self) -> None:
+        if not self._server_dock_visible:
+            self.action_toggle_server_dock()
+            return
+        with suppress(Exception):
+            self._server_dock().tree().focus()
+            self._set_server_dock_status("Browsing context")
 
     def action_toggle_sidebar(self) -> None:
         self._sidebar_visible = not self._sidebar_visible
         self._board_sidebar().set_visible(self._sidebar_visible)
+        self._board_sidebar().set_status(
+            "Workspace panel visible" if self._sidebar_visible else "Workspace panel hidden"
+        )
         if self._sidebar_visible:
-            self._board_sidebar().set_status("Board visible")
+            self._schedule_background_task(self._load_board_state(), exclusive=False, thread=False)
+            with suppress(Exception):
+                self._board_sidebar().focus_tasks()
+        else:
+            self._focus_input()
+
+    def action_focus_workspace(self) -> None:
+        if not self._sidebar_visible:
+            self.action_toggle_sidebar()
+            return
+        self._board_sidebar().focus_tasks()
+        self._board_sidebar().set_status("Browsing workspace")
+
+    def _schedule_session_switch(self, session_id: str) -> None:
+        if not session_id.strip():
+            return
+        if self.remote_url:
+            self._schedule_background_task(self._resume_remote_session(session_id), exclusive=False, thread=False)
+        else:
+            self._schedule_background_task(self._resume_session(session_id), exclusive=False, thread=False)
+
+    def _cycle_session_summary(self, direction: int) -> None:
+        summaries = self._active_strip_summaries()
+        if len(summaries) <= 1:
+            return
+        active_index = 0
+        for index, summary in enumerate(summaries):
+            if summary.active:
+                active_index = index
+                break
+        target = summaries[(active_index + direction) % len(summaries)]
+        if target.active:
+            return
+        self._schedule_session_switch(target.session_id)
+
+    def action_previous_session(self) -> None:
+        self._cycle_session_summary(-1)
+
+    def action_next_session(self) -> None:
+        self._cycle_session_summary(1)
 
     def action_focus_tasks(self) -> None:
         if not self._sidebar_visible:
             self.action_toggle_sidebar()
+            return
         self._board_sidebar().focus_tasks()
+        self._board_sidebar().set_status("Editing tasks")
 
     def action_focus_notes(self) -> None:
         if not self._sidebar_visible:
             self.action_toggle_sidebar()
+            return
         self._board_sidebar().focus_notes()
+        self._board_sidebar().set_status("Editing operator notes")
 
     async def action_quit(self) -> None:
         """Override default quit to clean up async resources."""
@@ -7222,6 +8149,8 @@ class ArtelApp(App):
             self._ws = None
 
     async def action_clear(self) -> None:
+        if not self._can_change_session_context():
+            return
         container = self.query_one("#chat-container", Vertical)
         container.remove_children()
         self._tool_collapsibles.clear()
@@ -7231,6 +8160,7 @@ class ArtelApp(App):
         if self.remote_url:
             self._remote_session_id = str(uuid.uuid4())
             self._remote_rule_overrides = {}
+            self._set_current_session_title("")
             await self._sync_remote_session_state()
         if self._session:
             self._local_rule_overrides = SessionRuleOverrides.empty()
@@ -7244,9 +8174,13 @@ class ArtelApp(App):
                     project_dir=os.getcwd(),
                     thinking_level=self._session.thinking_level,
                 )
+                with suppress(Exception):
+                    self._update_local_known_sessions(await self._store.list_sessions(limit=6))
             self._session.session_id = new_id
             self._session.messages = self._session.messages[:1]
+            self._set_current_session_title("")
             self._set_footer_thinking_level(str(self._session.thinking_level))
+            self._refresh_session_strip()
         await self._load_board_state()
         await self._refresh_server_dock()
         self.call_after_refresh(self._focus_input)

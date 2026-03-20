@@ -50,6 +50,16 @@ def test_mkdocs_nav_references_existing_pages() -> None:
         "extensions.md",
         "cli.md",
         "web.md",
+        "rfc/acp-first-architecture.md",
+        "rfc/acp-first-discovery.md",
+        "rfc/acp-first-gap-matrix.md",
+        "rfc/acp-first-backlog.md",
+        "rfc/canonical-session-event-vocabulary.md",
+        "rfc/acp-image-attachment-decision.md",
+        "rfc/control-plane-capability-classification.md",
+        "rfc/artel-tui-refresh-inspired-by-toad.md",
+        "rfc/artel-tui-refresh-backlog.md",
+        "rfc/true-multisession-tui-window-model.md",
     }
     assert expected_pages.issubset(set(referenced_pages))
 

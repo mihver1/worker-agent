@@ -979,6 +979,326 @@ class TestStatusFooter:
         assert "idle" in rendered
         assert "● thinking" not in rendered
 
+    def test_set_session_state_waiting_permission(self, monkeypatch):
+        import artel_core.cmux as cmux_mod
+
+        monkeypatch.setattr(cmux_mod, "_CMUX_BIN", "")
+        monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
+
+        from artel_tui.app import SessionVisualState, StatusFooter
+
+        footer = StatusFooter()
+        footer.set_session_state(SessionVisualState.WAITING_PERMISSION, detail="permission: bash")
+        assert "● permission: bash" in str(footer.render())
+
+    def test_set_session_state_disconnected(self, monkeypatch):
+        import artel_core.cmux as cmux_mod
+
+        monkeypatch.setattr(cmux_mod, "_CMUX_BIN", "")
+        monkeypatch.delenv("CMUX_WORKSPACE_ID", raising=False)
+
+        from artel_tui.app import SessionVisualState, StatusFooter
+
+        footer = StatusFooter()
+        footer.set_session_state(SessionVisualState.DISCONNECTED, detail="disconnected")
+        assert "disconnected" in str(footer.render())
+        assert "●" not in str(footer.render())
+
+
+class TestRestoreRenderMode:
+    def test_add_message_skips_auto_scroll_during_restore(self):
+        from artel_tui.app import ArtelApp
+
+        class _Container:
+            def mount(self, widget) -> None:
+                pass
+
+        app = ArtelApp()
+        app.query_one = lambda selector, _cls=None: _Container()  # type: ignore[method-assign]
+        scroll_calls: list[str] = []
+        app._scroll_to_bottom = lambda: scroll_calls.append("scroll")  # type: ignore[method-assign]
+
+        app._restore_render_inflight = True
+        app._add_message("hello", role="assistant")
+        assert scroll_calls == []
+
+        app._restore_render_inflight = False
+        app._add_message("world", role="assistant")
+        assert scroll_calls == ["scroll"]
+
+
+class TestWindowSessionRegistry:
+    def test_set_active_marks_only_one_summary_active(self):
+        from artel_tui.app import SessionVisualState, WindowSessionRegistry, WindowSessionSummary
+
+        registry = WindowSessionRegistry()
+        registry.replace_known(
+            remote=True,
+            summaries=[
+                WindowSessionSummary(session_id="s1", title="One", remote=True, state=SessionVisualState.IDLE),
+                WindowSessionSummary(session_id="s2", title="Two", remote=True, state=SessionVisualState.IDLE),
+            ],
+        )
+        registry.set_active(remote=True, session_id="s2")
+        ordered = registry.ordered(remote=True)
+        assert ordered[0].session_id == "s2"
+        assert ordered[0].active is True
+        assert ordered[1].active is False
+
+    def test_remote_known_sessions_preserve_existing_state(self):
+        from artel_tui.app import ArtelApp, SessionVisualState, WindowSessionSummary
+
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        app._window_session_registry.replace_known(
+            remote=True,
+            summaries=[
+                WindowSessionSummary(
+                    session_id="s1",
+                    title="One",
+                    project_label="/srv/one",
+                    remote=True,
+                    state=SessionVisualState.WAITING_PERMISSION,
+                    detail="permission: bash",
+                    active=False,
+                )
+            ],
+        )
+        app._update_remote_known_sessions([
+            {"id": "s1", "title": "One", "project_dir": "/srv/one"},
+            {"id": "s2", "title": "Two", "project_dir": "/srv/two"},
+        ])
+        summaries = {summary.session_id: summary for summary in app._window_session_registry.ordered(remote=True)}
+        assert summaries["s1"].state == SessionVisualState.WAITING_PERMISSION
+        assert summaries["s1"].detail == "permission: bash"
+        assert summaries["s2"].state == SessionVisualState.IDLE
+
+
+class TestSessionStrip:
+    def test_render_multiple_session_summaries(self):
+        from artel_tui.app import SessionStrip, SessionVisualState, WindowSessionSummary
+
+        strip = SessionStrip()
+        strip.set_summaries(
+            [
+                WindowSessionSummary(
+                    session_id="active-session-1234",
+                    title="Active",
+                    project_label="~/app",
+                    remote=False,
+                    state=SessionVisualState.THINKING,
+                    detail="thinking",
+                    active=True,
+                ),
+                WindowSessionSummary(
+                    session_id="other-session-5678",
+                    title="Other",
+                    project_label="/srv/proj",
+                    remote=True,
+                    state=SessionVisualState.IDLE,
+                    detail="idle",
+                    active=False,
+                ),
+            ]
+        )
+
+        rendered = str(strip.render())
+        assert "[session: local │ Active · active-s │ ~/app │ ● thinking]" in rendered
+        assert "↔ Other ○" in rendered
+
+    def test_render_overflow_indicator_for_many_sessions(self):
+        from artel_tui.app import SessionStrip, SessionVisualState, WindowSessionSummary
+
+        strip = SessionStrip()
+        strip.set_summaries(
+            [
+                WindowSessionSummary(session_id=f"s{i}", title=f"Session {i}", remote=bool(i % 2), state=SessionVisualState.IDLE, detail="idle", active=(i == 0))
+                for i in range(5)
+            ]
+        )
+        rendered = str(strip.render())
+        assert "+2 more" in rendered
+
+    def test_render_local_busy_state(self):
+        from artel_tui.app import SessionStrip
+
+        strip = SessionStrip()
+        strip.set_session(
+            session_id="abc123456789",
+            title="My Session",
+            project_label="~/project",
+            remote=False,
+        )
+        strip.set_activity("thinking", busy=True)
+
+        rendered = str(strip.render())
+        assert "session: local" in rendered
+        assert "My Session" in rendered
+        assert "abc12345" in rendered
+        assert "~/project" in rendered
+        assert "● thinking" in rendered
+
+    def test_render_waiting_permission_state(self):
+        from artel_tui.app import SessionStrip, SessionVisualState
+
+        strip = SessionStrip()
+        strip.set_session(
+            session_id="abc123456789",
+            title="My Session",
+            project_label="~/project",
+            remote=False,
+        )
+        strip.set_session_state(SessionVisualState.WAITING_PERMISSION, detail="permission: bash")
+
+        rendered = str(strip.render())
+        assert "session: local" in rendered
+        assert "My Session" in rendered
+        assert "abc12345" in rendered
+        assert "~/project" in rendered
+        assert "● permission: bash" in rendered
+
+    def test_render_disconnected_state(self):
+        from artel_tui.app import SessionStrip, SessionVisualState
+
+        strip = SessionStrip()
+        strip.set_session(
+            session_id="abc123456789",
+            title="Remote Session",
+            project_label="/srv/project",
+            remote=True,
+        )
+        strip.set_session_state(SessionVisualState.DISCONNECTED, detail="disconnected")
+
+        rendered = str(strip.render())
+        assert "session: remote" in rendered
+        assert "Remote Session" in rendered
+        assert "abc12345" in rendered
+        assert "/srv/project" in rendered
+        assert "disconnected" in rendered
+        assert "●" not in rendered
+
+    @pytest.mark.asyncio
+    async def test_app_updates_session_strip(self, monkeypatch):
+        from artel_tui.app import ArtelApp, SessionStrip, SessionVisualState, WindowSessionSummary
+
+        _patch_tui_test_context(monkeypatch)
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._remote_session_id = "remote-session-1234"
+            app._window_session_registry.replace_known(
+                remote=True,
+                summaries=[
+                    WindowSessionSummary(
+                        session_id="other-session-5678",
+                        title="Other Session",
+                        project_label="/srv/other",
+                        remote=True,
+                        state=SessionVisualState.IDLE,
+                        detail="idle",
+                        active=False,
+                    )
+                ],
+            )
+            app._set_current_session_title("Remote Session")
+            app._set_run_activity("thinking", busy=True)
+            await pilot.pause()
+            strip = app.query_one("#session-strip", SessionStrip)
+            rendered = str(strip.render())
+            assert "session: remote" in rendered
+            assert "Remote Session" in rendered
+            assert "remote-s" in rendered
+            assert "Other Session" in rendered
+            assert "● thinking" in rendered
+
+    @pytest.mark.asyncio
+    async def test_permission_request_sets_waiting_permission_state(self, monkeypatch):
+        from artel_tui.app import ArtelApp, SessionStrip
+
+        _patch_tui_test_context(monkeypatch)
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        async with app.run_test(size=(80, 24)) as pilot:
+            await pilot.pause()
+            decision_task = asyncio.create_task(
+                app._request_permission_decision("bash", {"command": "printf hello"})
+            )
+            await pilot.pause()
+            strip = app.query_one("#session-strip", SessionStrip)
+            assert "● permission: bash" in str(strip.render())
+            app._resolve_permission_panel_decision("once")
+            await decision_task
+
+    def test_previous_next_session_actions_switch_between_known_sessions(self):
+        from artel_tui.app import ArtelApp, SessionVisualState, WindowSessionSummary
+
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        app._window_session_registry.replace_known(
+            remote=True,
+            summaries=[
+                WindowSessionSummary(
+                    session_id="remote-two",
+                    title="Remote Two",
+                    project_label="/srv/two",
+                    remote=True,
+                    state=SessionVisualState.IDLE,
+                    detail="idle",
+                    active=False,
+                )
+            ],
+        )
+        app._remote_session_id = "remote-one"
+        app._current_session_title = "Remote One"
+        seen: list[str] = []
+        app._schedule_session_switch = lambda session_id: seen.append(session_id)  # type: ignore[method-assign]
+
+        app.action_next_session()
+        app.action_previous_session()
+
+        assert seen == ["remote-two", "remote-two"]
+
+
+class TestComposerHintsBar:
+    def test_render_command_mode_with_attachments(self):
+        from artel_tui.app import ComposerHintsBar
+
+        bar = ComposerHintsBar()
+        bar.set_state(mode="command", attachments=2, busy=False)
+        rendered = str(bar.render())
+        assert "mode: command" in rendered
+        assert "2 pending images" in rendered
+        assert "Shift+Enter newline" in rendered
+
+    @pytest.mark.asyncio
+    async def test_app_updates_composer_hints_and_placeholder(self, monkeypatch):
+        from artel_tui.app import ArtelApp, ComposerHintsBar
+        from textual.widgets import TextArea
+
+        _patch_tui_test_context(monkeypatch)
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            input_bar = app.query_one("#input-bar", TextArea)
+            hints = app.query_one("#composer-hints", ComposerHintsBar)
+
+            assert "mode: prompt" in str(hints.render())
+            assert "/ for commands" in str(hints.render())
+
+            input_bar.load_text("/model")
+            await pilot.pause()
+            assert "mode: command" in str(hints.render())
+            assert "Type a command" in input_bar.placeholder
+
+            app._pending_attachments = [SimpleNamespace(path="/tmp/a.png", name="a.png")]
+            app._sync_pending_attachments_bar()
+            input_bar.load_text("")
+            await pilot.pause()
+            assert "1 pending image" in str(hints.render())
+            assert "attached image" in input_bar.placeholder
+
+            app._set_run_activity("thinking", busy=True)
+            await pilot.pause()
+            assert "mode: steering" in str(hints.render())
+            assert "Steer the active run" in input_bar.placeholder
+
 
 # ── Bash !/!! tests ───────────────────────────────────────────────
 
@@ -1576,7 +1896,8 @@ class TestBoardSidebar:
         monkeypatch.setattr(tui_app, "RemoteControlClient", _Control)
 
         app = ArtelApp()
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
             await pilot.pause()
             dock = app.query_one("#server-dock-sidebar", ServerDockSidebar)
             tree = dock.tree()
@@ -1605,6 +1926,7 @@ class TestBoardSidebar:
 
             sidebar = app.query_one("#board-sidebar", BoardSidebar)
             assert not sidebar.has_class("visible")
+            assert str(sidebar.query_one("#workspace-title").render()) == "Workspace"
 
             app.action_toggle_sidebar()
             await pilot.pause()
@@ -1793,7 +2115,8 @@ class TestBoardSidebar:
         monkeypatch.setattr(tui_app, "RemoteControlClient", _Control)
 
         app = ArtelApp()
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
             await pilot.pause()
             project = app._server_dock().tree().root.children[0].children[0].data
             actions = app._server_dock_actions_for(project)
@@ -1841,7 +2164,8 @@ class TestBoardSidebar:
 
         app = ArtelApp()
         app._run_server_dock_action = AsyncMock()  # type: ignore[method-assign]
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
             await pilot.pause()
             project = app._server_dock().tree().root.children[0].children[0].data
             app._server_dock_selected_data = lambda: project  # type: ignore[method-assign]
@@ -1911,7 +2235,8 @@ class TestBoardSidebar:
 
         app._connect_to_server = fake_connect  # type: ignore[method-assign]
 
-        async with app.run_test() as pilot:
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
             await pilot.pause()
             dock = app.query_one("#server-dock-sidebar", ServerDockSidebar)
             tree = dock.tree()
@@ -1952,14 +2277,17 @@ class TestBoardSidebar:
             app.action_toggle_server_dock()
             await pilot.pause()
             assert app._server_dock_visible is not initial_server_dock
+            assert app.query_one("#server-dock-tree").has_focus
 
             app.action_toggle_server_dock()
             await pilot.pause()
             assert app._server_dock_visible is initial_server_dock
+            assert app.query_one("#input-bar").has_focus
 
             await pilot.press("ctrl+и")
             await pilot.pause()
             assert app._sidebar_visible is True
+            assert app.query_one("#tasks-editor").has_focus
 
             await pilot.press("ctrl+т")
             await pilot.pause()
@@ -1968,6 +2296,32 @@ class TestBoardSidebar:
             await pilot.press("ctrl+shift+с")
             await pilot.pause()
             assert copied == ["copied reply"]
+
+    @pytest.mark.asyncio
+    async def test_focus_context_and_workspace_actions(self, monkeypatch, tmp_path):
+        from artel_tui.app import ArtelApp
+
+        _patch_tui_test_context(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".artel").mkdir()
+        monkeypatch.setattr("artel_tui.app.ArtelApp._init_local_session", AsyncMock())
+
+        app = ArtelApp()
+        async with app.run_test(size=(120, 40)) as pilot:
+            await pilot.pause()
+            app._server_dock_visible = False
+            app._server_dock().set_visible(False)
+            app.action_focus_context()
+            await pilot.pause()
+            assert app._server_dock_visible is True
+            assert app.query_one("#server-dock-tree").has_focus
+
+            app._sidebar_visible = False
+            app._board_sidebar().set_visible(False)
+            app.action_focus_workspace()
+            await pilot.pause()
+            assert app._sidebar_visible is True
+            assert app.query_one("#tasks-editor").has_focus
 
     @pytest.mark.asyncio
     async def test_notes_open_focuses_notes_editor(self, monkeypatch, tmp_path):
@@ -2067,6 +2421,23 @@ class TestTuiAutocompleteIntegration:
             assert input_bar.has_focus
 
     @pytest.mark.asyncio
+    async def test_hidden_workspace_sidebar_defers_board_load_until_opened(self, monkeypatch):
+        from artel_tui.app import ArtelApp
+
+        _patch_tui_test_context(monkeypatch)
+
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        app._load_board_state = AsyncMock()  # type: ignore[method-assign]
+        app._refresh_server_dock = AsyncMock()  # type: ignore[method-assign]
+
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app._load_board_state.assert_not_awaited()  # type: ignore[attr-defined]
+            app.action_toggle_sidebar()
+            await pilot.pause()
+            assert app._load_board_state.await_count >= 1  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
     async def test_slash_command_suggestions_filter_and_tab_complete(self, monkeypatch):
         from artel_tui.app import ArtelApp
         from textual.widgets import OptionList, TextArea
@@ -2097,12 +2468,46 @@ class TestTuiAutocompleteIntegration:
             assert suggestion_ids == [
                 "/model",
                 "/models",
+                "/mcp",
             ]
+            assert str(suggestions.get_option_at_index(0).prompt).startswith("[model] /model —")
 
             await pilot.press("tab")
             await pilot.pause()
 
             assert input_bar.text == "/model"
+            assert not suggestions.has_class("visible")
+
+    @pytest.mark.asyncio
+    async def test_path_reference_suggestions_filter_and_tab_complete(self, monkeypatch, tmp_path):
+        from artel_tui.app import ArtelApp
+        from textual.widgets import OptionList, TextArea
+
+        _patch_tui_test_context(monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "README.md").write_text("hello\n", encoding="utf-8")
+        (tmp_path / "docs").mkdir()
+
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+            input_bar = app.query_one("#input-bar", TextArea)
+            input_bar.load_text("@REA")
+            await pilot.pause()
+
+            suggestions = app.query_one("#command-suggestions", OptionList)
+            assert suggestions.has_class("visible")
+            suggestion_ids = [
+                suggestions.get_option_at_index(i).id for i in range(suggestions.option_count)
+            ]
+            assert suggestion_ids == ["@README.md "]
+            assert str(suggestions.get_option_at_index(0).prompt).startswith("[path] @README.md —")
+
+            await pilot.press("tab")
+            await pilot.pause()
+
+            assert input_bar.text == "@README.md "
             assert not suggestions.has_class("visible")
 
     @pytest.mark.asyncio
@@ -2459,7 +2864,7 @@ class TestTuiAutocompleteIntegration:
 
             suggestions = app.query_one("#command-suggestions", OptionList)
             prompt = suggestions.get_option_at_index(0).prompt
-            assert str(prompt).startswith("✓ dracula —")
+            assert str(prompt).startswith("✓ [ui] dracula —")
 
     @pytest.mark.asyncio
     async def test_slash_command_suggestions_navigate_past_first_five_items(self, monkeypatch):
@@ -2953,6 +3358,36 @@ class TestRemoteModeCommandRouting:
         assert app._remote_project_dir == "/srv/fallback/project"
 
     @pytest.mark.asyncio
+    async def test_sync_remote_session_state_marks_disconnected_when_remote_is_unreachable(self):
+        from artel_tui.app import ArtelApp, SessionVisualState
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                raise RuntimeError(f"missing session: {session_id}")
+
+            async def get_server_info(self):
+                raise RuntimeError("server unreachable")
+
+        class _Footer:
+            def __init__(self):
+                self.state = None
+                self.detail = ""
+
+            def set_session_state(self, state, *, detail: str = "") -> None:
+                self.state = state
+                self.detail = detail
+
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: footer  # type: ignore[method-assign]
+
+        await app._sync_remote_session_state()
+
+        assert footer.state == SessionVisualState.DISCONNECTED
+        assert footer.detail == "disconnected"
+
+    @pytest.mark.asyncio
     async def test_model_command_reads_remote_session_state(self):
         from artel_tui.app import ArtelApp
 
@@ -3016,7 +3451,7 @@ class TestRemoteModeCommandRouting:
         assert footer.model == "openai/gpt-4.1"
         assert footer.cwd == "/srv/projects/demo"
         assert seen_messages[-1] == (
-            "Switched remote project to: /srv/projects/demo",
+            "Switched project to: /srv/projects/demo",
             "tool",
         )
 
@@ -3216,7 +3651,7 @@ class TestRemoteModeCommandRouting:
         assert seen_messages == [
             ("hello", "user"),
             ("world", "assistant"),
-            ("Resumed remote session: Remote issue", "tool"),
+            ("Resumed session: Remote issue", "tool"),
         ]
 
     @pytest.mark.asyncio
@@ -3287,40 +3722,79 @@ class TestRemoteModeCommandRouting:
             container if selector == "#chat-container" else footer
         )
         seen_messages: list[tuple[str, str]] = []
-        started_tool_cards: list[tuple[str, str, str]] = []
-        finished_tool_cards: list[tuple[str, str, str]] = []
         app._add_message = (  # type: ignore[method-assign]
             lambda content, role="assistant": seen_messages.append((content, role))
         )
-        app._start_tool_card = (  # type: ignore[method-assign]
-            lambda call_id, *, title, body="": started_tool_cards.append((call_id, title, body))
-        )
-
-        def _finish_tool_card(
-            call_id,
-            *,
-            title,
-            body,
-            markdown=False,
-            display=None,
-            kind="text",
-            status_badge="",
-            status_variant="neutral",
-        ):
-            del markdown, display, kind, status_badge, status_variant
-            finished_tool_cards.append((call_id, title, body))
-
-        app._finish_tool_card = _finish_tool_card  # type: ignore[method-assign]
 
         await app._cmd_resume("remote-1")
 
         assert seen_messages == [
             ("hello", "user"),
             ("I'll inspect that", "assistant"),
-            ("Resumed remote session: Remote issue", "tool"),
+            ("⚙ read README.md", "tool"),
+            ("✓ read\n1|# Title", "tool"),
+            ("Resumed session: Remote issue", "tool"),
         ]
-        assert started_tool_cards == [("tc1", "⚙ read README.md", "")]
-        assert finished_tool_cards == [("tc1", "✓ read", "1|# Title")]
+
+    @pytest.mark.asyncio
+    async def test_resume_command_restores_only_recent_remote_history(self):
+        from artel_tui.app import ArtelApp, _RESTORED_MESSAGE_LIMIT
+
+        class _RemoteClient:
+            async def get_session(self, session_id: str):
+                return {
+                    "session": {
+                        "id": session_id,
+                        "title": "Remote issue",
+                        "model": "openai/gpt-4.1",
+                        "project_dir": "/srv/project",
+                    }
+                }
+
+            async def list_session_commands(self, session_id: str):
+                return {"commands": []}
+
+            async def get_session_tasks(self, session_id: str):
+                return {"content": ""}
+
+            async def get_session_notes(self, session_id: str):
+                return {"content": ""}
+
+            async def get_session_messages(self, session_id: str):
+                return {
+                    "messages": [
+                        {"role": "user", "content": f"msg-{index}"}
+                        for index in range(_RESTORED_MESSAGE_LIMIT + 5)
+                    ]
+                }
+
+        class _Container:
+            def remove_children(self) -> None:
+                pass
+
+        class _Footer:
+            def set_model(self, model: str) -> None:
+                pass
+
+            def set_cwd(self, cwd: str) -> None:
+                pass
+
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        app._remote_control_client = _RemoteClient()
+        setattr(app, 'run_' + 'work' + 'er', lambda *args, **kwargs: None)  # type: ignore[method-assign]
+        container = _Container()
+        footer = _Footer()
+        app.query_one = lambda selector, _cls=None: (container if selector == "#chat-container" else footer)  # type: ignore[method-assign]
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = lambda content, role="assistant": seen_messages.append((content, role))  # type: ignore[method-assign]
+        app._scroll_to_bottom = lambda: None  # type: ignore[method-assign]
+
+        await app._cmd_resume("remote-1")
+
+        assert seen_messages[0][0].startswith("Showing latest")
+        rendered_users = [content for content, role in seen_messages if role == "user"]
+        assert "msg-0" not in rendered_users
+        assert f"msg-{_RESTORED_MESSAGE_LIMIT + 4}" in rendered_users
 
     @pytest.mark.asyncio
     async def test_resume_command_restores_remote_reasoning_blocks(self):
@@ -3378,21 +3852,17 @@ class TestRemoteModeCommandRouting:
             container if selector == "#chat-container" else footer
         )
         seen_messages: list[tuple[str, str]] = []
-        seen_reasoning: list[str] = []
         app._add_message = (  # type: ignore[method-assign]
             lambda content, role="assistant": seen_messages.append((content, role))
-        )
-        app._add_reasoning_block = (  # type: ignore[method-assign]
-            lambda content="": seen_reasoning.append(content)
         )
 
         await app._cmd_resume("remote-1")
 
-        assert seen_reasoning == ["first thought"]
         assert seen_messages == [
             ("hello", "user"),
+            ("💡 thinking: first thought", "tool"),
             ("world", "assistant"),
-            ("Resumed remote session: Remote issue", "tool"),
+            ("Resumed session: Remote issue", "tool"),
         ]
 
     @pytest.mark.asyncio
@@ -3429,21 +3899,17 @@ class TestRemoteModeCommandRouting:
             container = _Container()
             app.query_one = lambda selector, _cls=None: container  # type: ignore[method-assign]
             seen_messages: list[tuple[str, str]] = []
-            seen_reasoning: list[str] = []
             app._add_message = (  # type: ignore[method-assign]
                 lambda content, role="assistant": seen_messages.append((content, role))
-            )
-            app._add_reasoning_block = (  # type: ignore[method-assign]
-                lambda content="": seen_reasoning.append(content)
             )
 
             await app._resume_session("local-1")
         finally:
             await store.close()
 
-        assert seen_reasoning == ["first thought"]
         assert seen_messages == [
             ("hello", "user"),
+            ("💡 thinking: first thought", "tool"),
             ("world", "assistant"),
             ("Resumed session: Local issue", "tool"),
         ]
@@ -3494,30 +3960,9 @@ class TestRemoteModeCommandRouting:
             container = _Container()
             app.query_one = lambda selector, _cls=None: container  # type: ignore[method-assign]
             seen_messages: list[tuple[str, str]] = []
-            started_tool_cards: list[tuple[str, str, str]] = []
-            finished_tool_cards: list[tuple[str, str, str]] = []
             app._add_message = (  # type: ignore[method-assign]
                 lambda content, role="assistant": seen_messages.append((content, role))
             )
-            app._start_tool_card = (  # type: ignore[method-assign]
-                lambda call_id, *, title, body="": started_tool_cards.append((call_id, title, body))
-            )
-
-            def _finish_tool_card(
-                call_id,
-                *,
-                title,
-                body,
-                markdown=False,
-                display=None,
-                kind="text",
-                status_badge="",
-                status_variant="neutral",
-            ):
-                del markdown, display, kind, status_badge, status_variant
-                finished_tool_cards.append((call_id, title, body))
-
-            app._finish_tool_card = _finish_tool_card  # type: ignore[method-assign]
 
             await app._resume_session("local-1")
         finally:
@@ -3526,10 +3971,55 @@ class TestRemoteModeCommandRouting:
         assert seen_messages == [
             ("hello", "user"),
             ("I'll inspect that", "assistant"),
+            ("⚙ read README.md", "tool"),
+            ("✓ read\n1|# Title", "tool"),
             ("Resumed session: Local issue", "tool"),
         ]
-        assert started_tool_cards == [("tc1", "⚙ read README.md", "")]
-        assert finished_tool_cards == [("tc1", "✓ read", "1|# Title")]
+
+    @pytest.mark.asyncio
+    async def test_resume_command_restores_only_recent_local_history(self, tmp_path):
+        from artel_ai.models import Message, Role
+        from artel_core.sessions import SessionStore
+        from artel_tui.app import ArtelApp, _RESTORED_MESSAGE_LIMIT
+
+        class _Container:
+            def remove_children(self) -> None:
+                pass
+
+        class _Session:
+            def __init__(self):
+                self.session_id = "current-session"
+                self.messages = [Message(role=Role.SYSTEM, content="system")]
+                self.thinking_level = "off"
+
+        store = SessionStore(str(tmp_path / "sessions.db"))
+        await store.open()
+        try:
+            await store.create_session("local-1", "openai/gpt-4.1", title="Local issue")
+            for index in range(_RESTORED_MESSAGE_LIMIT + 5):
+                await store.add_message("local-1", Message(role=Role.USER, content=f"msg-{index}"))
+
+            app = ArtelApp()
+            app._store = store
+            app._session = _Session()
+            app._provider_model = "openai/gpt-4.1"
+            app._tool_collapsibles = []
+            container = _Container()
+            app.query_one = lambda selector, _cls=None: container  # type: ignore[method-assign]
+            seen_messages: list[tuple[str, str]] = []
+            app._add_message = (  # type: ignore[method-assign]
+                lambda content, role="assistant": seen_messages.append((content, role))
+            )
+            app._scroll_to_bottom = lambda: None  # type: ignore[method-assign]
+
+            await app._resume_session("local-1")
+        finally:
+            await store.close()
+
+        assert seen_messages[0][0].startswith("Showing latest")
+        rendered_users = [content for content, role in seen_messages if role == "user"]
+        assert "msg-0" not in rendered_users
+        assert f"msg-{_RESTORED_MESSAGE_LIMIT + 4}" in rendered_users
 
     @pytest.mark.asyncio
     async def test_resume_command_restores_local_thinking_level(self, tmp_path):
@@ -3740,7 +4230,7 @@ class TestRemoteModeCommandRouting:
         assert footer.model == "openai/gpt-4.1"
         assert footer.cwd == "/srv/project"
         assert seen_messages[-1] == (
-            "Reloaded remote session, 2 tui extension(s), 1 prompt(s), 1 skill(s)",
+            "Reloaded session, 2 tui extension(s), 1 prompt(s), 1 skill(s)",
             "tool",
         )
 
@@ -4113,6 +4603,46 @@ class TestRemoteModeCommandRouting:
         assert steer_calls == ["please change approach"]
         assert ("please change approach", "user") in user_messages
         assert ("Steering queued.", "tool") in user_messages
+
+    @pytest.mark.asyncio
+    async def test_busy_session_blocks_remote_resume(self):
+        from artel_tui.app import ArtelApp
+
+        app = ArtelApp(remote_url="ws://localhost:7432")
+        app._run_busy = True
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = lambda content, role="assistant": seen_messages.append((content, role))  # type: ignore[method-assign]
+        app._remote_control_client = SimpleNamespace(
+            get_session=AsyncMock(),
+            get_session_messages=AsyncMock(),
+        )
+
+        await app._resume_remote_session("remote-1")
+
+        assert seen_messages == [
+            (
+                "Cannot switch sessions while a run is active. Cancel the run or wait for completion first.",
+                "tool",
+            )
+        ]
+
+    @pytest.mark.asyncio
+    async def test_busy_session_blocks_clear(self):
+        from artel_tui.app import ArtelApp
+
+        app = ArtelApp()
+        app._run_busy = True
+        seen_messages: list[tuple[str, str]] = []
+        app._add_message = lambda content, role="assistant": seen_messages.append((content, role))  # type: ignore[method-assign]
+
+        await app.action_clear()
+
+        assert seen_messages == [
+            (
+                "Cannot switch sessions while a run is active. Cancel the run or wait for completion first.",
+                "tool",
+            )
+        ]
 
     @pytest.mark.asyncio
     async def test_busy_remote_input_is_sent_as_steering(self, monkeypatch):

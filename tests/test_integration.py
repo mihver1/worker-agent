@@ -1901,6 +1901,76 @@ class TestWebSocketProtocol:
         await asyncio.wait_for(task, timeout=1.0)
         assert controller.running is False
 
+    @pytest.mark.asyncio
+    async def test_two_sessions_can_run_concurrently_on_one_websocket(self):
+        from artel_core.agent import AgentSession
+
+        started_one = asyncio.Event()
+        started_two = asyncio.Event()
+        finish_one = asyncio.Event()
+        finish_two = asyncio.Event()
+
+        class _ConcurrentSession(AgentSession):
+            def __init__(self, *args, started: asyncio.Event, finish: asyncio.Event, **kwargs):
+                super().__init__(*args, **kwargs)
+                self._started = started
+                self._finish = finish
+
+            async def run(self, user_message: str, *, attachments=None):
+                from artel_core.agent import AgentEvent, AgentEventType
+
+                del attachments
+                self._started.set()
+                await self._finish.wait()
+                yield AgentEvent(type=AgentEventType.TEXT_DELTA, content=f"done:{user_message}")
+                yield AgentEvent(
+                    type=AgentEventType.DONE,
+                    usage=Usage(input_tokens=1, output_tokens=1),
+                )
+
+        state = ServerState(config=ArtelConfig())
+        state.sessions["session-one"] = _ConcurrentSession(
+            provider=MockProvider(),
+            model="test",
+            tools=[],
+            started=started_one,
+            finish=finish_one,
+        )
+        state.sessions["session-two"] = _ConcurrentSession(
+            provider=MockProvider(),
+            model="test",
+            tools=[],
+            started=started_two,
+            finish=finish_two,
+        )
+
+        ws = FakeWebSocket()
+        client_task = asyncio.create_task(handle_client(ws, state))  # type: ignore[arg-type]
+        try:
+            ws.inject(json.dumps({"type": "message", "session_id": "session-one", "content": "one"}))
+            await asyncio.wait_for(started_one.wait(), timeout=1.0)
+            ws.inject(json.dumps({"type": "message", "session_id": "session-two", "content": "two"}))
+            await asyncio.wait_for(started_two.wait(), timeout=1.0)
+
+            assert state.session_controllers["session-one"].running is True
+            assert state.session_controllers["session-two"].running is True
+
+            finish_one.set()
+            finish_two.set()
+
+            async def _wait_for_done_count(expected: int) -> None:
+                while True:
+                    messages = [json.loads(message) for message in ws.sent]
+                    done_count = sum(1 for message in messages if message.get("type") == "status" and message.get("busy") is False)
+                    if done_count >= expected:
+                        return
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(_wait_for_done_count(2), timeout=1.0)
+        finally:
+            ws.close_input()
+            await asyncio.wait_for(client_task, timeout=1.0)
+
 
 # ── Extension Discovery ──────────────────────────────────────────
 

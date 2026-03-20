@@ -62,3 +62,14 @@ nav:
   - Reference:
       - CLI: cli.md
       - Web status: web.md
+  - RFCs:
+      - ACP-native architecture: rfc/acp-first-architecture.md
+      - ACP-first discovery: rfc/acp-first-discovery.md
+      - ACP-first gap matrix: rfc/acp-first-gap-matrix.md
+      - ACP-first implementation backlog: rfc/acp-first-backlog.md
+      - Canonical session event vocabulary: rfc/canonical-session-event-vocabulary.md
+      - ACP image and attachment decision: rfc/acp-image-attachment-decision.md
+      - Control-plane capability classification: rfc/control-plane-capability-classification.md
+      - Artel TUI refresh inspired by Toad: rfc/artel-tui-refresh-inspired-by-toad.md
+      - Artel TUI refresh backlog: rfc/artel-tui-refresh-backlog.md
+      - True multi-session TUI window model: rfc/true-multisession-tui-window-model.md

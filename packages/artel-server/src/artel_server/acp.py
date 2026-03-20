@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
+import mimetypes
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlparse
 
+from artel_ai.models import ImageAttachment
 from artel_core.config import load_config
 from artel_core.sessions import SessionStore
 
@@ -22,6 +27,7 @@ _THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh")
 @dataclass(slots=True)
 class _AcpSessionRuntime:
     allow_all: bool = False
+    commands_announced: bool = False
     pending_tool_calls: list[tuple[str, str, dict[str, Any]]] = field(default_factory=list)
     prompt_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     permission_broker: Any | None = None
@@ -59,35 +65,118 @@ def _iso_timestamp(value: str | None) -> str | None:
     return parsed.isoformat().replace("+00:00", "Z")
 
 
+def _get_block_attr(block: Any, *names: str) -> Any:
+    for name in names:
+        if isinstance(block, dict) and name in block:
+            value = block.get(name)
+            if value is not None:
+                return value
+        value = getattr(block, name, None)
+        if value is not None:
+            return value
+    return None
+
+
 def _extract_block_text(block: Any) -> str:
-    text = getattr(block, "text", None)
+    text = _get_block_attr(block, "text")
     if isinstance(text, str) and text.strip():
         return text
 
-    resource = getattr(block, "resource", None)
+    resource = _get_block_attr(block, "resource")
     if resource is not None:
-        resource_text = getattr(resource, "text", None)
+        resource_text = _get_block_attr(resource, "text")
         if isinstance(resource_text, str) and resource_text.strip():
             return resource_text
-        contents = getattr(resource, "contents", None)
-        contents_text = getattr(contents, "text", None)
+        contents = _get_block_attr(resource, "contents")
+        contents_text = _get_block_attr(contents, "text")
         if isinstance(contents_text, str) and contents_text.strip():
             return contents_text
-        uri = getattr(resource, "uri", None)
+        uri = _get_block_attr(resource, "uri")
         if isinstance(uri, str) and uri.strip():
             return f"[resource] {uri}"
 
-    uri = getattr(block, "uri", None)
+    uri = _get_block_attr(block, "uri")
     if isinstance(uri, str) and uri.strip():
         return f"[resource] {uri}"
     return ""
 
 
-def _prompt_to_text(prompt: list[Any]) -> str:
-    parts = [
-        part.strip() for part in (_extract_block_text(block) for block in prompt) if part.strip()
-    ]
-    return "\n\n".join(parts)
+def _attachment_staging_dir(state: server_mod.ServerState, session_id: str) -> Path:
+    if state.store is not None:
+        return Path(state.store.db_path).expanduser().resolve().parent / "acp-attachments" / session_id
+    return Path.cwd() / ".artel" / "acp-attachments" / session_id
+
+
+def _attachment_suffix_for_mime(mime_type: str) -> str:
+    guessed = mimetypes.guess_extension(mime_type or "")
+    return guessed or ".img"
+
+
+def _file_uri_to_path(uri: str) -> str | None:
+    parsed = urlparse(uri)
+    if parsed.scheme != "file":
+        return None
+    path = unquote(parsed.path or "")
+    if not path:
+        return None
+    return str(Path(path).expanduser().resolve())
+
+
+def _image_attachment_from_block(
+    block: Any,
+    *,
+    state: server_mod.ServerState,
+    session_id: str,
+) -> ImageAttachment:
+    mime_type = str(_get_block_attr(block, "mime_type", "mimeType") or "image/png").strip() or "image/png"
+    uri = str(_get_block_attr(block, "uri") or "").strip()
+    file_path = _file_uri_to_path(uri) if uri else None
+    if file_path:
+        resolved = Path(file_path)
+        return ImageAttachment(
+            path=str(resolved),
+            mime_type=mime_type,
+            name=resolved.name,
+        )
+
+    raw_data = _get_block_attr(block, "data")
+    if not isinstance(raw_data, str) or not raw_data.strip():
+        raise RuntimeError("ACP image blocks must include image data or a file:// URI.")
+    try:
+        decoded = base64.b64decode(raw_data, validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise RuntimeError("ACP image block data must be valid base64.") from exc
+
+    target_dir = _attachment_staging_dir(state, session_id)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    suffix = _attachment_suffix_for_mime(mime_type)
+    file_name = f"{uuid.uuid4().hex}{suffix}"
+    target_path = target_dir / file_name
+    target_path.write_bytes(decoded)
+    return ImageAttachment(
+        path=str(target_path),
+        mime_type=mime_type,
+        name=Path(urlparse(uri).path).name if uri else file_name,
+    )
+
+
+def _prompt_to_text_and_attachments(
+    prompt: list[Any],
+    *,
+    state: server_mod.ServerState,
+    session_id: str,
+) -> tuple[str, list[ImageAttachment]]:
+    parts: list[str] = []
+    attachments: list[ImageAttachment] = []
+    for block in prompt:
+        block_type = str(_get_block_attr(block, "type") or "").strip().lower()
+        if block_type == "image":
+            attachments.append(_image_attachment_from_block(block, state=state, session_id=session_id))
+            continue
+        part = _extract_block_text(block).strip()
+        if part:
+            parts.append(part)
+    return "\n\n".join(parts), attachments
 
 
 def _text_chunks(text: str, *, chunk_size: int = 4096) -> list[str]:
@@ -194,10 +283,21 @@ async def run_acp() -> None:
         )
         from acp.contrib.permissions import PermissionBroker
         from acp.contrib.tool_calls import ToolCallTracker
+        try:
+            from acp.exceptions import RequestError
+        except ImportError:
+            class RequestError(RuntimeError):
+                def __init__(self, code: int, message: str, data: Any | None = None) -> None:
+                    super().__init__(message)
+                    self.code = code
+                    self.data = data
         from acp.interfaces import Client
         from acp.schema import (
             AgentCapabilities,
             AuthenticateResponse,
+            AvailableCommand,
+            AvailableCommandInput,
+            AvailableCommandsUpdate,
             ConfigOptionUpdate,
             CurrentModeUpdate,
             Implementation,
@@ -270,6 +370,30 @@ async def run_acp() -> None:
                 state.permission_callbacks[session_id] = _callback
             return runtime
 
+        def _available_commands_update(self) -> AvailableCommandsUpdate:
+            commands = [
+                AvailableCommand(
+                    name=spec.name,
+                    description=spec.description,
+                    input=AvailableCommandInput(hint=spec.hint) if spec.hint else None,
+                )
+                for spec in available_acp_commands()
+            ]
+            return AvailableCommandsUpdate(
+                session_update="available_commands_update",
+                available_commands=commands,
+            )
+
+        async def _announce_available_commands(self, session_id: str) -> None:
+            runtime = self._runtime(session_id)
+            if runtime.commands_announced:
+                return
+            await self._conn.session_update(
+                session_id=session_id,
+                update=self._available_commands_update(),
+            )
+            runtime.commands_announced = True
+
         def _match_pending_tool_call(
             self,
             runtime: _AcpSessionRuntime,
@@ -321,6 +445,17 @@ async def run_acp() -> None:
                 available_models=await self._available_models(),
                 current_model_id=str(session.get("model", "")).strip() or state.config.agent.model,
             )
+
+        async def _session_supports_vision(self, session_id: str) -> bool:
+            from artel_core.provider_resolver import get_effective_model_info
+
+            session = await server_mod._serialize_session(state, session_id)
+            model_ref = str(session.get("model", "")).strip() or state.config.agent.model
+            if "/" not in model_ref:
+                return False
+            provider_name, model_id = model_ref.split("/", 1)
+            model = await get_effective_model_info(state.config, provider_name, model_id)
+            return bool(model and model.supports_vision)
 
         def _session_mode_state(self, session_id: str) -> SessionModeState:
             runtime = self._runtime(session_id)
@@ -470,7 +605,7 @@ async def run_acp() -> None:
                 protocol_version=protocol_version,
                 agent_capabilities=AgentCapabilities(
                     load_session=True,
-                    prompt_capabilities=PromptCapabilities(embedded_context=True),
+                    prompt_capabilities=PromptCapabilities(embedded_context=True, image=True),
                     session_capabilities=SessionCapabilities(
                         fork=SessionForkCapabilities(),
                         list=SessionListCapabilities(),
@@ -523,6 +658,7 @@ async def run_acp() -> None:
             project_dir = str(serialized.get("project_dir", "")).strip()
             if project_dir and not _workspace_matches(project_dir, requested_dir):
                 return None
+            await self._announce_available_commands(session_id)
             await self._replay_session_history(session_id)
             return LoadSessionResponse(**(await self._session_response_payload(session_id)))
 
@@ -638,11 +774,19 @@ async def run_acp() -> None:
             del kwargs
             serialized = await self._ensure_session_known(session_id, create_if_missing=False)
             runtime = self._runtime(session_id)
-            content = _prompt_to_text(prompt)
-            if not content.strip():
+            content, attachments = _prompt_to_text_and_attachments(
+                prompt,
+                state=state,
+                session_id=session_id,
+            )
+            if not content.strip() and not attachments:
                 return PromptResponse(stop_reason="end_turn")
+            if attachments and not await self._session_supports_vision(session_id):
+                raise RequestError(-32000, "Current model does not support image input.")
 
-            slash_result = await maybe_handle_slash_command(state, session_id, content)
+            slash_result = None
+            if not attachments:
+                slash_result = await maybe_handle_slash_command(state, session_id, content)
             if slash_result is not None:
                 await self._conn.session_update(
                     session_id=session_id,
@@ -692,7 +836,8 @@ async def run_acp() -> None:
                 initial_title = str(serialized.get("title", "")).strip()
 
                 try:
-                    async for event in session.run(content):
+                    run_iter = session.run(content, attachments=attachments) if attachments else session.run(content)
+                    async for event in run_iter:
                         if event.type == server_mod.AgentEventType.TEXT_DELTA:
                             await self._conn.session_update(
                                 session_id=session_id,
@@ -852,6 +997,7 @@ async def run_acp() -> None:
             project_dir = str(serialized.get("project_dir", "")).strip()
             if project_dir and not _workspace_matches(project_dir, requested_dir):
                 raise RuntimeError(f"Session not in workspace: {session_id}")
+            await self._announce_available_commands(session_id)
             await self._replay_session_history(session_id)
             from acp.schema import ResumeSessionResponse
 

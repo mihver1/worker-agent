@@ -57,6 +57,12 @@ async def test_status_widget_loads_remote_session_runs() -> None:
     assert runs == [{"id": "run-1", "status": "completed", "task": "Inspect remote state"}]
 
 
+def test_status_widget_skips_poll_when_workspace_sidebar_hidden() -> None:
+    app = SimpleNamespace(remote_url="", _session=SimpleNamespace(session_id="session-1"), _sidebar_visible=False)
+    widget = DelegationStatusWidget(app)
+    assert widget._should_poll() is False
+
+
 def test_delegate_commands_appear_in_command_suggestions():
     from artel_tui.app import ArtelApp
 

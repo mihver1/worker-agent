@@ -47,7 +47,16 @@ class DelegationStatusWidget(Static):
         self.update(Text("Orchestration: idle"))
         self.set_interval(1.0, self._poll)
 
+    def _should_poll(self) -> bool:
+        try:
+            sidebar_visible = bool(getattr(self._artel_app, "_sidebar_visible", False))
+        except Exception:
+            sidebar_visible = False
+        return self.display and sidebar_visible
+
     async def _poll(self) -> None:
+        if not self._should_poll():
+            return
         runs, error = await self._load_runs()
         self.update(Text(self._render_text(runs, error=error)))
 
